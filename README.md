@@ -12,8 +12,8 @@ Returns all AAI-enabled apps discovered on the current machine.
 ```json
 {
   "resources": [
-    { "uri": "app:com.apple.mail", "name": "Mail", "description": "Apple Mail" },
-    { "uri": "app:com.notion.id",  "name": "Notion", "description": "Notion desktop" }
+    { "uri": "app:com.acme.crm",     "name": "Acme CRM",     "description": "Customer relationship management" },
+    { "uri": "app:com.acme.invoice", "name": "Acme Invoice",  "description": "Invoice and billing management" }
   ]
 }
 ```
@@ -31,8 +31,8 @@ Tool name format: `<app-id>:<tool-name>`
 
 ```json
 {
-  "name": "com.apple.mail:send_email",
-  "arguments": { "to": "alice@example.com", "subject": "Hello", "body": "..." }
+  "name": "com.acme.crm:create_contact",
+  "arguments": { "name": "Alice", "email": "alice@example.com", "company": "Example Inc." }
 }
 ```
 
