@@ -1,143 +1,102 @@
-import { readFile, writeFile, mkdir } from 'fs/promises';
-import { existsSync } from 'fs';
-import { join, dirname } from 'path';
-import { homedir } from 'os';
+import { AaiError } from "../errors/errors.js";
+import { startOAuthFlow } from "./oauth.js";
+import type { SecureStorage } from "../storage/secure-storage/interface.js";
+import type { AaiJson } from "../types/aai-json.js";
 
-import { logger } from '../utils/logger.js';
-import type { WebAuth } from '../parsers/schema.js';
-
-export interface TokenData {
+interface StoredTokens {
   access_token: string;
   refresh_token?: string;
   expires_at: number;
-  token_type?: string;
+  token_type: string;
 }
 
+function accountKey(appId: string): string {
+  return `token-${appId}`;
+}
+
+const EXPIRY_MARGIN_MS = 60_000; // refresh 60s before expiry
+
 export class TokenManager {
-  private tokensDir: string;
-  private tokens: Map<string, TokenData> = new Map();
+  constructor(private readonly storage: SecureStorage) {}
 
-  constructor() {
-    this.tokensDir = join(homedir(), '.aai', 'tokens');
+  async storeTokens(appId: string, tokens: StoredTokens): Promise<void> {
+    await this.storage.set(accountKey(appId), JSON.stringify(tokens));
   }
 
-  async init(): Promise<void> {
-    if (!existsSync(this.tokensDir)) {
-      await mkdir(this.tokensDir, { recursive: true });
-      logger.debug({ path: this.tokensDir }, 'Tokens directory created');
-    }
-  }
-
-  async getToken(appId: string): Promise<TokenData | null> {
-    if (this.tokens.has(appId)) {
-      return this.tokens.get(appId)!;
-    }
-
-    const tokenPath = join(this.tokensDir, `${appId}.json`);
-    if (!existsSync(tokenPath)) {
-      return null;
-    }
-
+  private async loadTokens(appId: string): Promise<StoredTokens | null> {
+    const raw = await this.storage.get(accountKey(appId));
+    if (!raw) return null;
     try {
-      const content = await readFile(tokenPath, 'utf-8');
-      const data = JSON.parse(content) as TokenData;
-      this.tokens.set(appId, data);
-      return data;
-    } catch (error) {
-      logger.warn({ appId, error }, 'Failed to read token file');
+      return JSON.parse(raw) as StoredTokens;
+    } catch {
       return null;
     }
   }
 
-  async saveToken(appId: string, tokenData: TokenData): Promise<void> {
-    this.tokens.set(appId, tokenData);
-    const tokenPath = join(this.tokensDir, `${appId}.json`);
+  async getValidToken(appId: string, descriptor: AaiJson): Promise<string> {
+    const tokens = await this.loadTokens(appId);
 
-    try {
-      await mkdir(dirname(tokenPath), { recursive: true });
-      await writeFile(tokenPath, JSON.stringify(tokenData, null, 2), 'utf-8');
-      logger.debug({ appId }, 'Token saved');
-    } catch (error) {
-      logger.error({ appId, error }, 'Failed to save token');
-      throw error;
+    if (tokens) {
+      const isExpired = Date.now() >= tokens.expires_at - EXPIRY_MARGIN_MS;
+
+      if (!isExpired) {
+        return tokens.access_token;
+      }
+
+      if (tokens.refresh_token && descriptor.auth) {
+        try {
+          const refreshed = await this.refreshToken(
+            tokens.refresh_token,
+            descriptor.auth.oauth2.token_endpoint
+          );
+          await this.storeTokens(appId, refreshed);
+          return refreshed.access_token;
+        } catch {
+          // refresh failed — fall through to full OAuth flow
+        }
+      }
     }
+
+    if (!descriptor.auth) {
+      throw new AaiError("AUTH_REQUIRED", `No auth config in descriptor for ${appId}`);
+    }
+
+    const newTokens = await startOAuthFlow(descriptor);
+    await this.storeTokens(appId, newTokens);
+    return newTokens.access_token;
   }
 
-  async deleteToken(appId: string): Promise<void> {
-    this.tokens.delete(appId);
-    const tokenPath = join(this.tokensDir, `${appId}.json`);
+  private async refreshToken(
+    refreshToken: string,
+    tokenEndpoint: string
+  ): Promise<StoredTokens> {
+    const params = new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+    });
 
-    try {
-      await writeFile(tokenPath, '', 'utf-8');
-      logger.debug({ appId }, 'Token deleted');
-    } catch (error) {
-      logger.warn({ appId, error }, 'Failed to delete token');
-    }
-  }
+    const res = await fetch(tokenEndpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params.toString(),
+    });
 
-  isExpired(token: TokenData): boolean {
-    const now = Date.now();
-    const expires = token.expires_at;
-    return now >= expires - 60000;
-  }
-
-  async resolveAuth(appId: string, authConfig: WebAuth): Promise<{ header?: string; query?: Record<string, string> } | null> {
-    await this.init();
-
-    if (authConfig.type === 'api_key') {
-      const apiKey = process.env[authConfig.env_var];
-      if (!apiKey) {
-        logger.warn({ appId, envVar: authConfig.env_var }, 'API key not found in environment');
-        return null;
-      }
-
-      if (authConfig.key_placement === 'header') {
-        return { header: `${authConfig.key_name}: ${apiKey}` };
-      } else {
-        return { query: { [authConfig.key_name]: apiKey } };
-      }
+    if (!res.ok) {
+      throw new AaiError("AUTH_EXPIRED", `Token refresh failed: HTTP ${res.status}`);
     }
 
-    if (authConfig.type === 'bearer') {
-      const bearerToken = process.env[authConfig.env_var];
-      if (!bearerToken) {
-        logger.warn({ appId, envVar: authConfig.env_var }, 'Bearer token not found in environment');
-        return null;
-      }
+    const data = (await res.json()) as {
+      access_token: string;
+      refresh_token?: string;
+      expires_in?: number;
+      token_type?: string;
+    };
 
-      if (authConfig.token_placement === 'header') {
-        return { header: `${authConfig.token_prefix} ${bearerToken}` };
-      } else {
-        return { query: { access_token: bearerToken } };
-      }
-    }
-
-    if (authConfig.type === 'oauth2') {
-      const token = await this.getToken(appId);
-      if (!token) {
-        return null;
-      }
-
-      if (this.isExpired(token) && token.refresh_token) {
-        logger.info({ appId }, 'Token expired, attempting refresh');
-        return null;
-      }
-
-      if (this.isExpired(token)) {
-        logger.warn({ appId }, 'Token expired and no refresh token available');
-        await this.deleteToken(appId);
-        return null;
-      }
-
-      const tokenValue = token.token_type === 'bearer' ? `${authConfig.token_prefix} ${token.access_token}` : token.access_token;
-
-      if (authConfig.token_placement === 'header') {
-        return { header: tokenValue };
-      } else {
-        return { query: { access_token: token.access_token } };
-      }
-    }
-
-    return null;
+    return {
+      access_token: data.access_token,
+      refresh_token: data.refresh_token,
+      expires_at: Date.now() + (data.expires_in ?? 3600) * 1000,
+      token_type: data.token_type ?? "Bearer",
+    };
   }
 }

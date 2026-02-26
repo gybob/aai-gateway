@@ -39,7 +39,6 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "ajv": "^8.12.0",
     "pino": "^8.17.0",
     "pino-pretty": "^10.3.0",
     "zod": "^3.22.0"

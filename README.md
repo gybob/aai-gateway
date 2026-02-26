@@ -6,7 +6,6 @@ Reference implementation of the [AAI Protocol](https://github.com/gybob/aai-prot
 
 - **MCP Server (stdio)** -- connects to any Agent that supports MCP
 - **Platform automation executors** -- macOS AppleScript/JXA, Windows COM, Linux DBus
-- **Auto-discovery** of system applications with automation support
 - **AI-powered aai.json generation** from app automation interfaces
 - **Web UI** for configuration and call history management
 - **Progressive tool loading** -- avoids context explosion by loading app tools on demand
@@ -30,17 +29,17 @@ Requires Node.js >= 18.
 
 ## CLI Commands
 
-| Command                    | Description                                          |
-| -------------------------- | ---------------------------------------------------- |
-| `aai-gateway --mcp`       | Start as MCP server (stdio) for Agent integration    |
-| `aai-gateway --web`       | Start with Web UI for management                     |
-| `aai-gateway --scan`      | Scan `~/.aai/` for configured applications           |
-| `aai-gateway --discover`  | Auto-discover system apps with automation support    |
-| `aai-gateway --generate <app>` | Use AI to generate `aai.json` for an application |
+| Command                        | Description                                       |
+| ------------------------------ | ------------------------------------------------- |
+| `aai-gateway --mcp`            | Start as MCP server (stdio) for Agent integration |
+| `aai-gateway --web`            | Start with Web UI for management                  |
+| `aai-gateway --scan`           | Scan `~/.aai/` for configured applications        |
+| `aai-gateway --generate <app>` | Use AI to generate `aai.json` for an application  |
 
 ## Agent Configuration
 
 **Cursor / Cline** (MCP settings JSON):
+
 ```json
 {
   "mcpServers": {
@@ -53,6 +52,7 @@ Requires Node.js >= 18.
 ```
 
 **Continue.dev** (`~/.continue/config.ts`):
+
 ```typescript
 mcpServers: {
   aai: {

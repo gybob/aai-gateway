@@ -1,445 +1,172 @@
-import { randomUUID } from 'crypto';
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
   CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js';
+} from "@modelcontextprotocol/sdk/types.js";
 
-import { logger } from '../utils/logger.js';
-import { loadConfig } from '../config/config-loader.js';
-import type { GatewayConfig } from '../config/config-loader.js';
-import { AppRegistry, scanAllPaths } from '../config/discovery.js';
-import { Errors, AutomationError } from '../errors/errors.js';
-import { MacOSExecutor } from '../executors/macos.js';
-import { WindowsExecutor } from '../executors/windows.js';
-import { LinuxExecutor } from '../executors/linux.js';
-import { WebExecutor } from '../executors/web.js';
-import { getCurrentPlatform } from '../executors/base.js';
-import type { AutomationExecutor } from '../executors/base.js';
-import { validateParamTypes } from '../executors/param-transform.js';
-import { withRetry } from '../utils/retry.js';
-import { WebServer } from '../web/server.js';
-import { metrics } from '../utils/metrics.js';
-import { startConfigWatcher } from '../config/watcher.js';
-import { RateLimiter } from '../utils/rate-limiter.js';
-import { ResultCache } from '../utils/cache.js';
-import { TokenManager } from '../auth/token-manager.js';
-import { RegistryLoader } from '../config/registry-loader.js';
+import { logger } from "../utils/logger.js";
+import { AaiError } from "../errors/errors.js";
+import { createDesktopDiscovery } from "../discovery/index.js";
+import { fetchWebDescriptor } from "../discovery/web.js";
+import { createSecureStorage } from "../storage/secure-storage/index.js";
+import { createConsentDialog } from "../consent/dialog/index.js";
+import { ConsentManager } from "../consent/manager.js";
+import { createIpcExecutor } from "../executors/ipc/index.js";
+import { executeWebTool } from "../executors/web.js";
+import { TokenManager } from "../auth/token-manager.js";
+import type { DiscoveredDesktopApp } from "../discovery/interface.js";
+import type { AaiJson } from "../types/aai-json.js";
 
-export class AAIGateway {
-  private server: Server;
-  private config: GatewayConfig | null = null;
-  private registry: AppRegistry = new AppRegistry();
-  private executors: Map<string, AutomationExecutor> = new Map();
-  private webServer: WebServer | null = null;
-  private scanInterval: NodeJS.Timeout | null = null;
-  private rateLimiter: RateLimiter | null = null;
-  private cache: ResultCache = new ResultCache();
-  private tokenManager: TokenManager;
-  private registryLoader: RegistryLoader | null = null;
+export class AaiGatewayServer {
+  private readonly server: Server;
+  private readonly desktopRegistry = new Map<string, DiscoveredDesktopApp>();
+  private consentManager!: ConsentManager;
+  private tokenManager!: TokenManager;
 
   constructor() {
     this.server = new Server(
-      {
-        name: 'aai-gateway',
-        version: '0.1.0',
-      },
-      {
-        capabilities: {
-          resources: {},
-          tools: {},
-        },
-      }
+      { name: "aai-gateway", version: "0.1.0" },
+      { capabilities: { resources: {}, tools: {} } }
     );
-
-    this.tokenManager = new TokenManager();
-    this.initializeExecutors();
     this.setupHandlers();
   }
 
-  private initializeExecutors(): void {
-    const platform = getCurrentPlatform();
-    this.tokenManager = new TokenManager();
+  async initialize(): Promise<void> {
+    const storage = createSecureStorage();
+    const dialog = createConsentDialog();
+    this.consentManager = new ConsentManager(storage, dialog);
+    this.tokenManager = new TokenManager(storage);
 
-    if (platform === 'macos') {
-      this.executors.set('applescript', new MacOSExecutor());
-      this.executors.set('jxa', new MacOSExecutor());
-    } else if (platform === 'windows') {
-      this.executors.set('com', new WindowsExecutor());
-    } else if (platform === 'linux') {
-      this.executors.set('dbus', new LinuxExecutor());
+    // Scan desktop apps
+    try {
+      const discovery = createDesktopDiscovery();
+      const apps = await discovery.scan();
+      for (const app of apps) {
+        this.desktopRegistry.set(app.appId, app);
+      }
+      logger.info({ count: apps.length }, "Desktop apps discovered");
+    } catch (err) {
+      if (AaiError.isAaiError(err) && err.code === "NOT_IMPLEMENTED") {
+        logger.warn("Desktop discovery not supported on this platform");
+      } else {
+        logger.error({ err }, "Desktop discovery failed");
+      }
     }
-
-    const webExecutor = new WebExecutor(this.tokenManager);
-    this.executors.set('restapi', webExecutor);
   }
 
   private setupHandlers(): void {
+    // resources/list — returns discovered desktop apps
     this.server.setRequestHandler(ListResourcesRequestSchema, async () => {
-      const apps = this.registry.getAll();
-
-      return {
-        resources: apps.map((app) => ({
-          uri: `app:${app.appId}`,
-          name: app.name,
-          description: app.description ?? `${app.name} application`,
-          mimeType: 'application/aai+json',
-        })),
-      };
+      const resources = Array.from(this.desktopRegistry.values()).map((app) => ({
+        uri: `app:${app.appId}`,
+        name: app.name,
+        description: app.description,
+        mimeType: "application/aai+json",
+      }));
+      return { resources };
     });
 
+    // resources/read — by app URI or web URL
     this.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
       const uri = request.params.uri;
+      let descriptor: AaiJson;
 
-      if (!uri.startsWith('app:')) {
-        throw new Error(`Invalid resource URI: ${uri}`);
-      }
-
-      const appId = uri.slice(4);
-      const app = this.registry.get(appId);
-
-      if (!app) {
-        throw Errors.appNotFound(appId);
+      if (uri.startsWith("app:")) {
+        const appId = uri.slice(4);
+        const app = this.desktopRegistry.get(appId);
+        if (!app) {
+          throw new AaiError("UNKNOWN_APP", `App '${appId}' not found in registry`);
+        }
+        descriptor = app.descriptor;
+      } else if (uri.startsWith("https://") || uri.startsWith("http://")) {
+        descriptor = await fetchWebDescriptor(uri);
+      } else {
+        throw new AaiError("INVALID_REQUEST", `Unknown URI scheme: ${uri}`);
       }
 
       return {
         contents: [
           {
             uri,
-            mimeType: 'application/json',
-            text: JSON.stringify(app.config, null, 2),
+            mimeType: "application/json",
+            text: JSON.stringify(descriptor, null, 2),
           },
         ],
       };
     });
 
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => {
-      const tools: Array<{
-        name: string;
-        description: string;
-        inputSchema: object;
-      }> = [];
-
-      const platform = getCurrentPlatform();
-      const apps = this.registry.getAll();
-
-      for (const app of apps) {
-        const platformConfig = app.config.platforms[platform];
-
-        if (platformConfig) {
-          for (const tool of platformConfig.tools) {
-            tools.push({
-              name: `${app.appId}:${tool.name}`,
-              description: `[${app.name}] ${tool.description}`,
-              inputSchema: tool.parameters,
-            });
-          }
-        }
-
-        if (app.config.platforms.web) {
-          const webConfig = app.config.platforms.web;
-          for (const tool of webConfig.tools) {
-            tools.push({
-              name: `${app.appId}:${tool.name}`,
-              description: `[${app.name}] ${tool.description}`,
-              inputSchema: tool.parameters,
-            });
-          }
-        }
-      }
-
-      return { tools };
-    });
-
+    // tools/call — name = "<app_id>:<tool_name>"
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
-      const startTime = Date.now();
       const { name, arguments: args } = request.params;
-      const [appId, toolName] = name.split(':');
-
-      if (!appId || !toolName) {
-        throw Errors.invalidParams(`Invalid tool name format: ${name}. Expected: appId:toolName`);
+      const colonIdx = name.indexOf(":");
+      if (colonIdx === -1) {
+        throw new AaiError(
+          "INVALID_REQUEST",
+          `Invalid tool name format '${name}'. Expected: <app_id>:<tool_name>`
+        );
       }
 
-      const app = this.registry.get(appId);
-      if (!app) {
-        throw Errors.appNotFound(appId);
+      const appId = name.slice(0, colonIdx);
+      const toolName = name.slice(colonIdx + 1);
+
+      // Resolve descriptor
+      let descriptor: AaiJson;
+      let appName: string;
+
+      const desktopApp = this.desktopRegistry.get(appId);
+      if (desktopApp) {
+        descriptor = desktopApp.descriptor;
+        appName = desktopApp.name;
+      } else {
+        // treat appId as a URL for web apps
+        descriptor = await fetchWebDescriptor(appId);
+        appName = descriptor.app.name;
       }
 
-      const platform = getCurrentPlatform();
-      const platformConfig = app.config.platforms[platform];
-      const webConfig = app.config.platforms.web;
-
-      let tool: any;
-      let executor: AutomationExecutor | undefined;
-      let script: string | object = '';
-
-      if (platformConfig) {
-        tool = platformConfig.tools.find((t) => t.name === toolName);
-        if (tool) {
-          executor = this.executors.get(platformConfig.automation);
-          if (!executor) {
-            throw Errors.automationNotSupported(platform, platformConfig.automation);
-          }
-          script = 'script' in tool ? tool.script : '';
-        }
+      // Find tool
+      const tool = descriptor.tools.find((t) => t.name === toolName);
+      if (!tool) {
+        throw new AaiError("UNKNOWN_TOOL", `Tool '${toolName}' not found in '${appId}'`);
       }
 
-      if (webConfig && !tool) {
-        tool = webConfig.tools.find((t) => t.name === toolName);
-        if (tool) {
-          executor = this.executors.get('restapi');
-          script = tool;
-        }
+      // Consent check
+      await this.consentManager.checkAndPrompt(descriptor.app.id, appName, {
+        name: toolName,
+        description: tool.description,
+        parameters: tool.parameters,
+      });
+
+      // Execute
+      let result: unknown;
+      if (descriptor.platform === "web") {
+        const accessToken = await this.tokenManager.getValidToken(descriptor.app.id, descriptor);
+        result = await executeWebTool(descriptor, toolName, args ?? {}, accessToken);
+      } else {
+        const ipcExecutor = createIpcExecutor();
+        result = await ipcExecutor.execute(descriptor.app.id, toolName, args ?? {});
       }
 
-      if (!tool || !executor) {
-        throw Errors.toolNotFound(appId, toolName);
-      }
-
-      const validation = validateParamTypes(args ?? {}, tool.parameters);
-      if (!validation.valid) {
-        throw Errors.invalidParams(validation.errors.join('; '));
-      }
-
-      const cacheTtl = 'cache_ttl' in tool ? (tool as any).cache_ttl : undefined;
-      const cacheKey = cacheTtl ? `${appId}:${toolName}:${JSON.stringify(args)}` : undefined;
-
-      if (cacheKey) {
-        const cached = this.cache.get(cacheKey);
-        if (cached) {
-          logger.debug({ cacheKey }, 'Cache hit');
-          return {
-            content: [
-              {
-                type: 'text',
-                text: typeof cached === 'string' ? cached : JSON.stringify(cached, null, 2),
-              },
-            ],
-          };
-        }
-      }
-
-      if (this.rateLimiter && !this.rateLimiter.tryAcquire()) {
-        throw new Error('Rate limit exceeded');
-      }
-
-      try {
-        const result = await withRetry(async () => {
-          return await executor.execute(script, args ?? {}, {
-            timeout: tool.timeout ?? this.config?.defaultTimeout ?? 30,
-          });
-        });
-
-        if (!result.success) {
-          if (this.webServer) {
-            this.webServer.addToHistory({
-              id: randomUUID(),
-              timestamp: new Date(),
-              appId,
-              tool: toolName,
-              params: (args as Record<string, unknown>) ?? {},
-              success: false,
-              error: result.error,
-              duration: Date.now() - startTime,
-            });
-          }
-          metrics.increment('aai_tool_calls_total', {
-            app: appId,
-            tool: toolName,
-            status: 'failure',
-          });
-          return {
-            content: [
-              {
-                type: 'text',
-                text: `Error: ${result.error}`,
-              },
-            ],
-            isError: true,
-          };
-        }
-
-        if (this.webServer) {
-          this.webServer.addToHistory({
-            id: randomUUID(),
-            timestamp: new Date(),
-            appId,
-            tool: toolName,
-            params: (args as Record<string, unknown>) ?? {},
-            success: true,
-            result: result.data,
-            duration: Date.now() - startTime,
-          });
-        }
-
-        if (cacheKey) {
-          this.cache.set(cacheKey, result.data, cacheTtl!);
-        }
-
-        metrics.increment('aai_tool_calls_total', {
-          app: appId,
-          tool: toolName,
-          status: 'success',
-        });
-        metrics.observe('aai_tool_duration_seconds', (Date.now() - startTime) / 1000, {
-          app: appId,
-          tool: toolName,
-        });
-
-        return {
-          content: [
-            {
-              type: 'text',
-              text:
-                typeof result.data === 'string'
-                  ? result.data
-                  : JSON.stringify(result.data, null, 2),
-            },
-          ],
-        };
-      } catch (error) {
-        if (this.webServer) {
-          this.webServer.addToHistory({
-            id: randomUUID(),
-            timestamp: new Date(),
-            appId,
-            tool: toolName,
-            params: (args as Record<string, unknown>) ?? {},
-            success: false,
-            error: error instanceof Error ? error.message : String(error),
-            duration: Date.now() - startTime,
-          });
-        }
-        metrics.increment('aai_tool_calls_total', {
-          app: appId,
-          tool: toolName,
-          status: 'error',
-        });
-        if (AutomationError.isAutomationError(error)) {
-          return {
-            content: [
-              {
-                type: 'text',
-                text: `${error.message}: ${error.detail ?? ''}`,
-              },
-            ],
-            isError: true,
-          };
-        }
-        throw error;
-      }
+      return {
+        content: [
+          {
+            type: "text",
+            text: typeof result === "string" ? result : JSON.stringify(result, null, 2),
+          },
+        ],
+      };
     });
   }
 
-  async initialize(): Promise<void> {
-    logger.info('Initializing AAI Gateway...');
-
-    this.config = await loadConfig();
-    this.registry = await scanAllPaths(this.config.scanPaths);
-
-    if (this.config.rateLimit) {
-      this.rateLimiter = new RateLimiter(
-        this.config.rateLimit.maxTokens,
-        this.config.rateLimit.refillRate
-      );
-    }
-
-    this.registryLoader = new RegistryLoader(this.config);
-    await this.registryLoader.syncFromRegistry(this.registry);
-
-    await this.tokenManager.init();
-
-    const webExecutor = this.executors.get('restapi') as WebExecutor;
-    if (webExecutor) {
-      for (const app of this.registry.getAll()) {
-        if (app.config.platforms.web) {
-          const webConfig = app.config.platforms.web;
-          webExecutor.registerApp(
-            app.appId,
-            webConfig.base_url,
-            webConfig.auth,
-            webConfig.default_headers ?? {}
-          );
-        }
-      }
-    }
-
-    startConfigWatcher(this.config.scanPaths, async () => {
-      if (!this.config) return;
-      const newRegistry = await scanAllPaths(this.config.scanPaths);
-      this.registry.clear();
-      newRegistry.getAll().forEach((app) => this.registry.register(app));
-      logger.info('Configuration reloaded from file change');
-    });
-
-    logger.info({ appCount: this.registry.size }, 'AAI Gateway initialized');
-
-    if (this.config.enableWebUI) {
-      this.webServer = new WebServer(this.config, this.registry);
-      const port = this.config.httpPort ?? 3000;
-      await this.webServer.start(port);
-    }
-  }
-
-  async start(enableStdio: boolean = true): Promise<void> {
+  async start(): Promise<void> {
     await this.initialize();
-
-    if (enableStdio) {
-      const transport = new StdioServerTransport();
-      await this.server.connect(transport);
-      logger.info('AAI Gateway started (stdio mode)');
-    }
-
-    if (this.config?.enableWebUI) {
-      this.webServer = new WebServer(this.config, this.registry);
-      const port = this.config.httpPort ?? 3000;
-      await this.webServer.start(port);
-    }
-
-    this.startScanInterval();
-  }
-
-  private startScanInterval(): void {
-    if (this.config?.scanIntervalMinutes && this.config.scanIntervalMinutes > 0) {
-      const intervalMs = this.config.scanIntervalMinutes * 60 * 1000;
-      this.scanInterval = setInterval(async () => {
-        logger.info('Starting scheduled scan...');
-        try {
-          if (!this.config) return;
-          const newRegistry = await scanAllPaths(this.config.scanPaths);
-          this.registry.clear();
-          newRegistry.getAll().forEach((app) => this.registry.register(app));
-          logger.info({ appCount: this.registry.size }, 'Scheduled scan complete');
-        } catch (error) {
-          logger.error({ error }, 'Scheduled scan failed');
-        }
-      }, intervalMs);
-      this.scanInterval.unref();
-    }
-  }
-
-  getRegistry(): AppRegistry {
-    return this.registry;
-  }
-
-  getConfig(): GatewayConfig | null {
-    return this.config;
-  }
-
-  enableWebUI(port?: number): void {
-    if (this.config) {
-      this.config.enableWebUI = true;
-      if (port) {
-        this.config.httpPort = port;
-      }
-    }
+    const transport = new StdioServerTransport();
+    await this.server.connect(transport);
+    logger.info("AAI Gateway started (stdio)");
   }
 }
 
-export async function createGateway(): Promise<AAIGateway> {
-  const gateway = new AAIGateway();
-  return gateway;
+export async function createGatewayServer(): Promise<AaiGatewayServer> {
+  return new AaiGatewayServer();
 }
