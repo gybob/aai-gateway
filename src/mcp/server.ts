@@ -4,6 +4,7 @@ import {
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
   CallToolRequestSchema,
+  ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 
 import { logger } from "../utils/logger.js";
@@ -68,6 +69,29 @@ export class AaiGatewayServer {
         mimeType: "application/aai+json",
       }));
       return { resources };
+    });
+
+    // tools/list — returns all discovered tools from all apps
+    this.server.setRequestHandler(ListToolsRequestSchema, async () => {
+      const tools: Array<{
+        name: string;
+        description: string;
+        inputSchema: object;
+      }> = [];
+
+      // Collect tools from all discovered desktop apps
+      for (const app of this.desktopRegistry.values()) {
+        for (const tool of app.descriptor.tools) {
+          tools.push({
+            name: `${app.appId}:${tool.name}`,
+            description: tool.description,
+            inputSchema: tool.parameters ?? { type: "object", properties: {} },
+          });
+        }
+      }
+
+      logger.debug({ toolCount: tools.length }, "tools/list requested");
+      return { tools };
     });
 
     // resources/read — by app URI or web URL

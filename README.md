@@ -6,8 +6,7 @@ Reference implementation of the [AAI Protocol](https://github.com/gybob/aai-prot
 
 ### Key Features
 
-- **Zero intrusion**. Uses existing OS automation (AppleScript, COM, DBus) — no app modification required.
-- **Progressive discovery**. Apps discovered on-demand via MCP resources, avoiding context explosion.
+- **Tool discovery**. All discovered app tools exposed via `tools/list` for seamless MCP client integration.
 - **Native security**. Leverages OS-level consent (TCC, UAC, Polkit) and secure storage (Keychain, Credential Manager).
 - **Cross-platform**. Supports macOS today, Linux and Windows planned.
 
@@ -133,8 +132,7 @@ Use `--dev` when developing AAI-enabled applications in Xcode to discover apps b
 
 ### MCP Interface
 
-AAI Gateway exposes three MCP primitives. Agents discover tools progressively through resources — no `tools/list` — to avoid context explosion.
-
+AAI Gateway exposes standard MCP primitives: `resources/list`, `resources/read`, `tools/list`, and `tools/call`.
 #### `resources/list`
 
 Returns all AAI-enabled apps discovered on the current machine.
@@ -164,6 +162,27 @@ Accepts two URI types:
 - **`https://<domain>`** — fetches `/.well-known/aai.json` from a web service (cached 24h)
 
 Returns the full `aai.json` descriptor including the app's tool list and schemas.
+
+#### `tools/list`
+
+Returns all tools from all discovered apps. Each tool name is prefixed with the app's bundle ID to avoid collisions.
+
+```json
+{
+  "tools": [
+    {
+      "name": "com.acme.crm:create_contact",
+      "description": "Create a new contact in the CRM",
+      "inputSchema": { ... }
+    },
+    {
+      "name": "com.acme.invoice:send_invoice",
+      "description": "Send an invoice to a customer",
+      "inputSchema": { ... }
+    }
+  ]
+}
+```
 
 #### `tools/call`
 

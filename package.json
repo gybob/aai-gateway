@@ -1,10 +1,14 @@
 {
   "name": "aai-gateway",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "AAI Gateway - Agent App Interface Protocol Gateway for direct application capability invocation",
   "type": "module",
   "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "bin": {
     "aai-gateway": "./dist/cli.js"
   },
@@ -32,8 +36,16 @@
     "com",
     "dbus"
   ],
-  "author": "",
+  "author": "Bob",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gybob/aai-gateway.git"
+  },
+  "homepage": "https://github.com/gybob/aai-gateway#readme",
+  "bugs": {
+    "url": "https://github.com/gybob/aai-gateway/issues"
+  },
   "engines": {
     "node": ">=18.0.0"
   },
