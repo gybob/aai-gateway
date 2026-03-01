@@ -68,17 +68,36 @@ Go to `Cursor Settings` -> `MCP` -> `Add new MCP Server`. Name: `aai-gateway`, t
 
 </details>
 
-<details>
-<summary>Windsurf</summary>
+</details>
 
-Add to your Windsurf MCP config:
+<details>
+<summary>OpenCode</summary>
+
+Add to `~/.config/opencode/opencode.json`:
 
 ```json
 {
-  "mcpServers": {
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
     "aai-gateway": {
-      "command": "npx",
-      "args": ["aai-gateway"]
+      "type": "local",
+      "command": ["npx", "aai-gateway"],
+      "enabled": true
+    }
+  }
+}
+```
+
+With `--dev` flag:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "aai-gateway": {
+      "type": "local",
+      "command": ["npx", "aai-gateway", "--dev"],
+      "enabled": true
     }
   }
 }
