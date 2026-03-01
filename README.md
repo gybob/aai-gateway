@@ -1,12 +1,13 @@
 # AAI Gateway
 
-A Model Context Protocol (MCP) server that bridges AI agents to AAI-enabled desktop and web applications. Discovers apps via standard `aai.json` descriptors, invokes them through native IPC or OAuth 2.1 PKCE HTTP, with native consent dialogs and secure credential storage.
+A Model Context Protocol (MCP) server that bridges AI agents to AAI-enabled desktop and web applications. Uses a **guide-based discovery model** that minimizes context explosion while enabling progressive app interaction.
 
 Reference implementation of the [AAI Protocol](https://github.com/gybob/aai-protocol).
 
 ### Key Features
 
-- **Tool discovery**. All discovered app tools exposed via `tools/list` for seamless MCP client integration.
+- **Guide-based discovery**. Apps expose operation guides on demand, keeping context minimal (`O(apps + 2)` instead of `O(apps × tools)`).
+- **Multi-language support**. App names support multiple languages for better user intent matching.
 - **Native security**. Leverages OS-level consent (TCC, UAC, Polkit) and secure storage (Keychain, Credential Manager).
 - **Cross-platform**. Supports macOS today, Linux and Windows planned.
 
@@ -64,8 +65,6 @@ Or add manually to your MCP settings.
 <summary>Cursor</summary>
 
 Go to `Cursor Settings` -> `MCP` -> `Add new MCP Server`. Name: `aai-gateway`, type: `command`, command: `npx aai-gateway`.
-
-</details>
 
 </details>
 
@@ -132,76 +131,113 @@ Use `--dev` when developing AAI-enabled applications in Xcode to discover apps b
 
 ### MCP Interface
 
-AAI Gateway exposes standard MCP primitives: `resources/list`, `resources/read`, `tools/list`, and `tools/call`.
-#### `resources/list`
-
-Returns all AAI-enabled apps discovered on the current machine.
-
-```json
-{
-  "resources": [
-    {
-      "uri": "app:com.acme.crm",
-      "name": "Acme CRM",
-      "description": "Customer relationship management"
-    },
-    {
-      "uri": "app:com.acme.invoice",
-      "name": "Acme Invoice",
-      "description": "Invoice and billing management"
-    }
-  ]
-}
-```
-
-#### `resources/read`
-
-Accepts two URI types:
-
-- **`app:<bundle-id>`** — reads the descriptor for a locally installed desktop app
-- **`https://<domain>`** — fetches `/.well-known/aai.json` from a web service (cached 24h)
-
-Returns the full `aai.json` descriptor including the app's tool list and schemas.
+AAI Gateway exposes **tools only** (no resources). This simplifies the agent workflow and ensures all capabilities are discoverable via `tools/list`.
 
 #### `tools/list`
 
-Returns all tools from all discovered apps. Each tool name is prefixed with the app's bundle ID to avoid collisions.
+Returns all discovered desktop apps plus universal tools:
 
 ```json
 {
   "tools": [
     {
-      "name": "com.acme.crm:create_contact",
-      "description": "Create a new contact in the CRM",
-      "inputSchema": { ... }
+      "name": "app:com.apple.reminders",
+      "description": "【Reminders|提醒事项|Rappels】macOS reminders app. Aliases: todo, 待办. Call to get guide.",
+      "inputSchema": { "type": "object", "properties": {} }
     },
     {
-      "name": "com.acme.invoice:send_invoice",
-      "description": "Send an invoice to a customer",
-      "inputSchema": { ... }
+      "name": "web:discover",
+      "description": "Discover web app guide. Use when user mentions a web service not in list. Supports URL/domain/name.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "url": { "type": "string", "description": "Web app URL, domain, or name" }
+        },
+        "required": ["url"]
+      }
+    },
+    {
+      "name": "aai:exec",
+      "description": "Execute app operation. Use after reading the operation guide.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "app": { "type": "string", "description": "App ID or URL" },
+          "tool": { "type": "string", "description": "Operation name" },
+          "args": { "type": "object", "description": "Operation parameters" }
+        },
+        "required": ["app", "tool"]
+      }
     }
   ]
 }
 ```
 
-#### `tools/call`
+**Context Efficiency**: Only `O(apps + 2)` entries instead of `O(apps × tools)`.
 
-Tool name format: `<app-id>:<tool-name>`
+#### App Tool (`app:*`)
+
+Call `app:<app-id>` to get an operation guide:
 
 ```json
 {
-  "name": "com.acme.crm:create_contact",
-  "arguments": { "name": "Alice", "email": "alice@example.com", "company": "Example Inc." }
+  "name": "app:com.apple.reminders",
+  "arguments": {}
+}
+```
+
+Returns a guide with available operations, parameters, and usage examples.
+
+#### Web Discovery (`web:discover`)
+
+Discover web apps by URL, domain, or name:
+
+```json
+{
+  "name": "web:discover",
+  "arguments": { "url": "notion.com" }
+}
+```
+
+Returns the web app's operation guide.
+
+#### Tool Execution (`aai:exec`)
+
+Execute operations after reading the guide:
+
+```json
+{
+  "name": "aai:exec",
+  "arguments": {
+    "app": "com.apple.reminders",
+    "tool": "create_reminder",
+    "args": {
+      "title": "Submit report",
+      "due": "2024-12-31 15:00"
+    }
+  }
 }
 ```
 
 **Execution flow:**
 
 1. Resolve app descriptor (local registry or web fetch)
-2. Validate tool and arguments
-3. Show native consent dialog — user approves/denies (remembered per tool or globally)
-4. Execute: desktop apps via native IPC, web apps via HTTP with OAuth 2.1 PKCE token
-5. Return result
+2. Show native consent dialog — user approves/denies (remembered per tool or globally)
+3. Execute: desktop apps via native IPC, web apps via HTTP with OAuth 2.1 PKCE token
+4. Return result
+
+### Agent Workflow Example
+
+```
+User: "帮我在提醒事项里创建一个提醒"
+
+Agent:
+1. tools/list → Sees "【Reminders|提醒事项】"
+2. Match "提醒事项" → app:com.apple.reminders
+3. tools/call("app:com.apple.reminders", {}) → Gets operation guide
+4. tools/call("aai:exec", {app, tool, args}) → Executes operation
+5. Returns result to user
+```
 
 ### Platform Support
 
@@ -219,6 +255,19 @@ To make your app discoverable by AAI Gateway, ship an `aai.json` descriptor:
 **macOS:** `<App>.app/Contents/Resources/aai.json`
 
 **Web:** `https://<your-domain>/.well-known/aai.json`
+
+**Multi-language names** (pipe-separated):
+
+```json
+{
+  "app": {
+    "id": "com.example.reminders",
+    "name": "Reminders|提醒事项|Rappels|Erinnerungen",
+    "description": "Task and reminder management",
+    "aliases": ["todo", "task", "待办"]
+  }
+}
+```
 
 See the [AAI Protocol Spec](https://github.com/gybob/aai-protocol) for the full `aai.json` schema.
 
