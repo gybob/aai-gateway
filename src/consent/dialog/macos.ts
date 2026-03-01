@@ -1,33 +1,42 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { ConsentDialog, ConsentDialogInfo, ConsentDialogResult } from "./interface.js";
+import { getSystemLocale, type SupportedLocale } from "../../utils/locale.js";
+import { getTranslations } from "../i18n/translations.js";
 
 const execFileAsync = promisify(execFile);
 
-function buildParamLines(parameters: object): string {
+function buildParamLines(parameters: object, noParamsText: string): string {
   const props = (parameters as { properties?: Record<string, { description?: string }> }).properties ?? {};
   return Object.entries(props)
     .map(([k, v]) => `• ${k}${v.description ? `: ${v.description}` : ""}`)
-    .join("\\n") || "(no parameters)";
+    .join("\\n") || noParamsText;
 }
 
 export class MacOSConsentDialog implements ConsentDialog {
+  private locale: SupportedLocale;
+
+  constructor() {
+    this.locale = getSystemLocale();
+  }
+
   async show(info: ConsentDialogInfo): Promise<ConsentDialogResult> {
-    const paramLines = buildParamLines(info.parameters);
+    const t = getTranslations(this.locale);
+    const paramLines = buildParamLines(info.parameters, t.noParameters);
 
     const authScript = `
-set dialogText to "⚠️ Tool Authorization Request
+set dialogText to "${t.dialogTitle}
 
-App: ${info.appName} (${info.appId})
+${t.appLabel}: ${info.appName} (${info.appId})
 
-Agent requests permission to use:
+${t.requestPermissionLabel}
 
 ${info.toolName}
 ${info.toolDescription}
 
-Parameters:
+${t.parametersLabel}
 ${paramLines}"
-set result to display dialog dialogText buttons {"Deny", "Authorize Tool", "Authorize All"} default button "Authorize Tool" with icon caution
+set result to display dialog dialogText buttons {"${t.buttonDeny}", "${t.buttonAuthorizeTool}", "${t.buttonAuthorizeAll}"} default button "${t.buttonAuthorizeTool}" with icon caution
 set btn to button returned of result
 return btn
 `.trim();
@@ -36,9 +45,9 @@ return btn
     try {
       const { stdout } = await execFileAsync("osascript", ["-e", authScript]);
       const btn = stdout.trim();
-      if (btn === "Authorize All") {
+      if (btn === t.buttonAuthorizeAll) {
         decision = "all";
-      } else if (btn === "Authorize Tool") {
+      } else if (btn === t.buttonAuthorizeTool) {
         decision = "tool";
       } else {
         decision = "deny";
@@ -55,12 +64,13 @@ return btn
     // Ask if user wants to remember the decision
     let remember = false;
     try {
+      const rememberMessage = t.rememberDialogTitle.replace("{toolName}", info.toolName);
       const rememberScript = `
-set r to display dialog "Remember this decision for '${info.toolName}'?" buttons {"No", "Yes"} default button "Yes"
+set r to display dialog "${rememberMessage}" buttons {"${t.rememberButtonNo}", "${t.rememberButtonYes}"} default button "${t.rememberButtonYes}"
 return button returned of r
 `.trim();
       const { stdout: remOut } = await execFileAsync("osascript", ["-e", rememberScript]);
-      remember = remOut.trim() === "Yes";
+      remember = remOut.trim() === t.rememberButtonYes;
     } catch {
       remember = false;
     }

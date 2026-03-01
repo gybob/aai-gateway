@@ -1,7 +1,6 @@
 {
   "name": "aai-gateway",
-  "version": "0.1.2",
-  "description": "AAI Gateway - Agent App Interface Protocol Gateway for direct application capability invocation",
+  "version": "0.2.0",
   "type": "module",
   "main": "dist/index.js",
   "files": [
@@ -14,7 +13,7 @@
   },
   "scripts": {
     "dev": "vite-node src/index.ts",
-    "build": "tsc && vite build",
+    "build": "tsc && vite build && chmod +x dist/cli.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts",
     "lint:fix": "eslint src --ext .ts --fix",

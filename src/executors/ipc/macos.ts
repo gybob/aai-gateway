@@ -39,7 +39,7 @@ export class MacOSIpcExecutor implements IpcExecutor {
     const jsonStr = JSON.stringify(request).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 
     const script = `tell application id "${appId}"
-  «event AAI call» given «class kfil»:"${jsonStr}"
+  «event AAI call» "${jsonStr}"
 end tell`;
 
     let stdout: string;

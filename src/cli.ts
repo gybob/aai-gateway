@@ -4,7 +4,7 @@ import { createGatewayServer } from './mcp/server.js';
 import { createDesktopDiscovery } from './discovery/index.js';
 import { logger } from './utils/logger.js';
 
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 
 interface CliOptions {
   scan: boolean;

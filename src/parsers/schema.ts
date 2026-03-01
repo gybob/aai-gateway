@@ -40,6 +40,7 @@ export const AaiJsonSchema = z.object({
     id: z.string(),
     name: z.string(),
     description: z.string(),
+    aliases: z.array(z.string()).optional(),
   }),
   execution: ExecutionSchema,
   auth: AuthSchema.optional(),

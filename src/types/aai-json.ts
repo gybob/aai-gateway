@@ -4,8 +4,9 @@ export interface AaiJson {
   platform: "macos" | "linux" | "windows" | "web";
   app: {
     id: string;
-    name: string;
+    name: string; // Multi-language names separated by |
     description: string;
+    aliases?: string[];
   };
   execution: {
     type: "ipc" | "http";
