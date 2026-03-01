@@ -4,18 +4,41 @@ import { readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { parseAaiJson } from "../parsers/schema.js";
 import { logger } from "../utils/logger.js";
-import type { DesktopDiscovery, DiscoveredDesktopApp } from "./interface.js";
+import type { DesktopDiscovery, DiscoveredDesktopApp, DiscoveryOptions } from "./interface.js";
 
 const execAsync = promisify(exec);
 
+/** Standard macOS application directories */
+const STANDARD_APP_PATHS = ["/Applications", "~/Applications"];
+
+/** macOS Xcode development build directories */
+const XCODE_DEV_PATHS = [
+  // Xcode DerivedData - standard location for build products
+  "~/Library/Developer/Xcode/DerivedData/*/Build/Products/Debug",
+  "~/Library/Developer/Xcode/DerivedData/*/Build/Products/Release",
+];
 export class MacOSDiscovery implements DesktopDiscovery {
-  async scan(): Promise<DiscoveredDesktopApp[]> {
+  /**
+   * Scan for AAI-enabled desktop applications.
+   * @param options - Discovery options
+   * @param options.devMode - When true, also scans Xcode development build directories
+   */
+  async scan(options?: DiscoveryOptions): Promise<DiscoveredDesktopApp[]> {
+    const searchPaths = [...STANDARD_APP_PATHS];
+
+    // Add development paths if devMode is enabled
+    if (options?.devMode) {
+      searchPaths.push(...XCODE_DEV_PATHS);
+      logger.info("Development mode enabled - scanning Xcode build directories");
+    }
+
+    // Build find command with all search paths
+    const pathArgs = searchPaths.map((p) => `-path "${p}"`).join(" -o ");
+    const findCmd = `find ${pathArgs} -maxdepth 4 -path "*/Contents/Resources/aai.json" 2>/dev/null`;
+
     let stdout: string;
     try {
-      const result = await execAsync(
-        'find /Applications ~/Applications -maxdepth 4 -path "*/Contents/Resources/aai.json" 2>/dev/null',
-        { shell: "/bin/zsh" }
-      );
+      const result = await execAsync(findCmd, { shell: "/bin/zsh" });
       stdout = result.stdout;
     } catch (err: unknown) {
       // find exits non-zero if some dirs are inaccessible; stdout still has results

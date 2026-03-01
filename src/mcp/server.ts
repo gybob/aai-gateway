@@ -8,7 +8,7 @@ import {
 
 import { logger } from "../utils/logger.js";
 import { AaiError } from "../errors/errors.js";
-import { createDesktopDiscovery } from "../discovery/index.js";
+import { createDesktopDiscovery, type DiscoveryOptions } from "../discovery/index.js";
 import { fetchWebDescriptor } from "../discovery/web.js";
 import { createSecureStorage } from "../storage/secure-storage/index.js";
 import { createConsentDialog } from "../consent/dialog/index.js";
@@ -24,8 +24,10 @@ export class AaiGatewayServer {
   private readonly desktopRegistry = new Map<string, DiscoveredDesktopApp>();
   private consentManager!: ConsentManager;
   private tokenManager!: TokenManager;
+  private readonly options: DiscoveryOptions;
 
-  constructor() {
+  constructor(options?: DiscoveryOptions) {
+    this.options = options ?? {};
     this.server = new Server(
       { name: "aai-gateway", version: "0.1.0" },
       { capabilities: { resources: {}, tools: {} } }
@@ -42,7 +44,7 @@ export class AaiGatewayServer {
     // Scan desktop apps
     try {
       const discovery = createDesktopDiscovery();
-      const apps = await discovery.scan();
+      const apps = await discovery.scan(this.options);
       for (const app of apps) {
         this.desktopRegistry.set(app.appId, app);
       }
@@ -167,6 +169,6 @@ export class AaiGatewayServer {
   }
 }
 
-export async function createGatewayServer(): Promise<AaiGatewayServer> {
-  return new AaiGatewayServer();
+export async function createGatewayServer(options?: DiscoveryOptions): Promise<AaiGatewayServer> {
+  return new AaiGatewayServer(options);
 }
