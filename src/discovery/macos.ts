@@ -32,9 +32,10 @@ export class MacOSDiscovery implements DesktopDiscovery {
       logger.info("Development mode enabled - scanning Xcode build directories");
     }
 
-    // Build find command with all search paths
-    const pathArgs = searchPaths.map((p) => `-path "${p}"`).join(" -o ");
-    const findCmd = `find ${pathArgs} -maxdepth 4 -path "*/Contents/Resources/aai.json" 2>/dev/null`;
+    // Build find command: paths go directly as find arguments, ~ needs shell expansion
+    // Use zsh nullglob to handle non-matching globs silently
+    const pathsArg = searchPaths.join(" ");
+    const findCmd = `setopt nullglob 2>/dev/null; find ${pathsArg} -maxdepth 4 -path "*/Contents/Resources/aai.json" 2>/dev/null`;
 
     let stdout: string;
     try {
