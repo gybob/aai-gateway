@@ -1,27 +1,23 @@
-import type { AaiJson } from '../types/aai-json.js';
-
-/**
- * Parse multi-language name string (pipe-separated)
- */
-export function parseMultiLanguageName(name: string): string[] {
-  return name.split('|').map((n) => n.trim());
-}
+import type { AaiJson, InternationalizedName, LanguageTag } from '../types/aai-json.js';
+import { getLocalizedName } from '../types/aai-json.js';
+import { getSystemLocale } from '../utils/locale.js';
 
 /**
  * Generate description for tools/list from app info
  */
 export function generateAppListDescription(app: {
   appId: string;
-  name: string;
+  name: InternationalizedName;
+  defaultLang: LanguageTag;
   description: string;
   aliases?: string[];
 }): string {
-  const names = parseMultiLanguageName(app.name);
-  const allNames = names.join('|');
-  
+  // Collect all names for display
+  const allNames = Object.values(app.name).join('|');
+
   const aliases = app.aliases ?? [];
   const aliasStr = aliases.length > 0 ? ` Aliases: ${aliases.join(', ')}.` : '';
-  
+
   return `【${allNames}】${app.description}.${aliasStr} Call to get guide.`;
 }
 
@@ -34,10 +30,11 @@ export function generateOperationGuide(
   platform: 'desktop' | 'web'
 ): string {
   const sections: string[] = [];
+  const locale = getSystemLocale();
 
   // Header
-  const names = parseMultiLanguageName(descriptor.app.name);
-  sections.push(`# ${names[0]} Operation Guide`);
+  const localizedName = getLocalizedName(descriptor.app.name, locale, descriptor.app.defaultLang);
+  sections.push(`# ${localizedName} Operation Guide`);
   sections.push('');
 
   // App Info
@@ -50,8 +47,38 @@ export function generateOperationGuide(
   sections.push('## Authentication');
   if (platform === 'desktop') {
     sections.push('Uses OS-level consent (TCC). First execution shows native dialog.');
+  } else if (descriptor.auth) {
+    const auth = descriptor.auth;
+    switch (auth.type) {
+      case 'apiKey':
+        sections.push(`Uses API Key authentication.`);
+        if (auth.apiKey.instructions?.short) {
+          sections.push(auth.apiKey.instructions.short);
+        }
+        if (auth.apiKey.obtainUrl) {
+          sections.push(`Get your API key: ${auth.apiKey.obtainUrl}`);
+        }
+        break;
+      case 'appCredential':
+        sections.push(`Uses App Credential authentication (App ID + App Secret).`);
+        if (auth.appCredential.instructions?.short) {
+          sections.push(auth.appCredential.instructions.short);
+        }
+        break;
+      case 'oauth2':
+        sections.push('Uses OAuth 2.1. First execution opens browser for authorization.');
+        break;
+      case 'cookie':
+        sections.push('Uses Cookie authentication. Requires browser login.');
+        if (auth.cookie.loginUrl) {
+          sections.push(`Login URL: ${auth.cookie.loginUrl}`);
+        }
+        break;
+      default:
+        sections.push('Authentication required.');
+    }
   } else {
-    sections.push('Uses OAuth 2.1. First execution opens browser for authorization.');
+    sections.push('No authentication required.');
   }
   sections.push('');
 

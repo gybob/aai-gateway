@@ -10,27 +10,28 @@ import { createSecureStorage } from '../storage/secure-storage/index.js';
 import { createConsentDialog } from '../consent/dialog/index.js';
 import { ConsentManager } from '../consent/manager.js';
 import { createIpcExecutor } from '../executors/ipc/index.js';
-import { executeWebTool } from '../executors/web.js';
+import { executeWebTool, type WebAuthContext } from '../executors/web.js';
 import { TokenManager } from '../auth/token-manager.js';
-import {
-  generateAppListDescription,
-  generateOperationGuide,
-  parseMultiLanguageName,
-} from './guide-generator.js';
+import { CredentialManager } from '../credential/manager.js';
+import { createCredentialDialog } from '../credential/dialog/index.js';
+import { generateAppListDescription, generateOperationGuide } from './guide-generator.js';
 import type { DiscoveredDesktopApp } from '../discovery/interface.js';
 import type { AaiJson } from '../types/aai-json.js';
+import { getLocalizedName } from '../types/aai-json.js';
+import { getSystemLocale } from '../utils/locale.js';
 
 export class AaiGatewayServer {
   private readonly server: Server;
   private readonly desktopRegistry = new Map<string, DiscoveredDesktopApp>();
   private consentManager!: ConsentManager;
   private tokenManager!: TokenManager;
+  private credentialManager!: CredentialManager;
   private readonly options: DiscoveryOptions;
 
   constructor(options?: DiscoveryOptions) {
     this.options = options ?? {};
     this.server = new Server(
-      { name: 'aai-gateway', version: '0.2.0' },
+      { name: 'aai-gateway', version: '0.3.0' },
       { capabilities: { tools: {} } }
     );
     this.setupHandlers();
@@ -39,8 +40,10 @@ export class AaiGatewayServer {
   async initialize(): Promise<void> {
     const storage = createSecureStorage();
     const dialog = createConsentDialog();
+    const credentialDialog = createCredentialDialog();
     this.consentManager = new ConsentManager(storage, dialog);
     this.tokenManager = new TokenManager(storage);
+    this.credentialManager = new CredentialManager(storage, credentialDialog);
 
     // Scan desktop apps
     try {
@@ -73,6 +76,7 @@ export class AaiGatewayServer {
         const description = generateAppListDescription({
           appId: app.appId,
           name: app.descriptor.app.name,
+          defaultLang: app.descriptor.app.defaultLang,
           description: app.descriptor.app.description,
           aliases: app.descriptor.app.aliases,
         });
@@ -114,7 +118,7 @@ export class AaiGatewayServer {
             },
             tool: {
               type: 'string',
-              description: 'Operation name (e.g., create_reminder)',
+              description: 'Operation name (e.g., createReminder)',
             },
             args: {
               type: 'object',
@@ -212,7 +216,8 @@ export class AaiGatewayServer {
       // Treat as web app URL
       const normalizedUrl = this.normalizeUrl(appId);
       descriptor = await fetchWebDescriptor(normalizedUrl);
-      appName = parseMultiLanguageName(descriptor.app.name)[0];
+      const locale = getSystemLocale();
+      appName = getLocalizedName(descriptor.app.name, locale, descriptor.app.defaultLang);
       platform = 'web';
     }
 
@@ -232,8 +237,9 @@ export class AaiGatewayServer {
     // Execute
     let result: unknown;
     if (platform === 'web') {
-      const accessToken = await this.tokenManager.getValidToken(descriptor.app.id, descriptor);
-      result = await executeWebTool(descriptor, toolName, args, accessToken);
+      // Get auth context based on auth type
+      const authContext = await this.getWebAuthContext(descriptor);
+      result = await executeWebTool(descriptor, toolName, args, authContext);
     } else {
       const ipcExecutor = createIpcExecutor();
       result = await ipcExecutor.execute(descriptor.app.id, toolName, args);
@@ -247,6 +253,35 @@ export class AaiGatewayServer {
         },
       ],
     };
+  }
+
+  /**
+   * Get auth context for web execution based on auth type
+   */
+  private async getWebAuthContext(descriptor: AaiJson): Promise<WebAuthContext | undefined> {
+    if (!descriptor.auth) {
+      return undefined;
+    }
+
+    const appId = descriptor.app.id;
+
+    switch (descriptor.auth.type) {
+      case 'oauth2': {
+        // Use TokenManager for OAuth2
+        const accessToken = await this.tokenManager.getValidToken(appId, descriptor);
+        return { headers: { Authorization: `Bearer ${accessToken}` } };
+      }
+      case 'apiKey':
+      case 'cookie':
+      case 'appCredential': {
+        // Use CredentialManager for other auth types
+        const credential = await this.credentialManager.getCredential(descriptor);
+        const headers = this.credentialManager.buildAuthHeaders(descriptor, credential);
+        return { headers };
+      }
+      default:
+        return undefined;
+    }
   }
 
   private normalizeUrl(input: string): string {
