@@ -1,13 +1,13 @@
-import { AaiError } from "../errors/errors.js";
-import { startOAuthFlow } from "./oauth.js";
-import type { SecureStorage } from "../storage/secure-storage/interface.js";
-import type { AaiJson } from "../types/aai-json.js";
+import { AaiError } from '../errors/errors.js';
+import { startOAuthFlow } from './oauth.js';
+import type { SecureStorage } from '../storage/secure-storage/interface.js';
+import type { AaiJson } from '../types/aai-json.js';
 
 interface StoredTokens {
-  access_token: string;
-  refresh_token?: string;
-  expires_at: number;
-  token_type: string;
+  accessToken: string;
+  refreshToken?: string;
+  expiresAt: number;
+  tokenType: string;
 }
 
 function accountKey(appId: string): string {
@@ -34,23 +34,31 @@ export class TokenManager {
   }
 
   async getValidToken(appId: string, descriptor: AaiJson): Promise<string> {
+    // Only handle OAuth2 auth type
+    if (descriptor.auth && descriptor.auth.type !== 'oauth2') {
+      throw new AaiError(
+        'AUTH_REQUIRED',
+        `TokenManager only supports OAuth2 auth, got: ${descriptor.auth.type}`
+      );
+    }
+
     const tokens = await this.loadTokens(appId);
 
     if (tokens) {
-      const isExpired = Date.now() >= tokens.expires_at - EXPIRY_MARGIN_MS;
+      const isExpired = Date.now() >= tokens.expiresAt - EXPIRY_MARGIN_MS;
 
       if (!isExpired) {
-        return tokens.access_token;
+        return tokens.accessToken;
       }
 
-      if (tokens.refresh_token && descriptor.auth) {
+      if (tokens.refreshToken && descriptor.auth?.type === 'oauth2') {
         try {
           const refreshed = await this.refreshToken(
-            tokens.refresh_token,
-            descriptor.auth.oauth2.token_endpoint
+            tokens.refreshToken,
+            descriptor.auth.oauth2.tokenEndpoint
           );
           await this.storeTokens(appId, refreshed);
-          return refreshed.access_token;
+          return refreshed.accessToken;
         } catch {
           // refresh failed — fall through to full OAuth flow
         }
@@ -58,31 +66,28 @@ export class TokenManager {
     }
 
     if (!descriptor.auth) {
-      throw new AaiError("AUTH_REQUIRED", `No auth config in descriptor for ${appId}`);
+      throw new AaiError('AUTH_REQUIRED', `No auth config in descriptor for ${appId}`);
     }
 
     const newTokens = await startOAuthFlow(descriptor);
     await this.storeTokens(appId, newTokens);
-    return newTokens.access_token;
+    return newTokens.accessToken;
   }
 
-  private async refreshToken(
-    refreshToken: string,
-    tokenEndpoint: string
-  ): Promise<StoredTokens> {
+  private async refreshToken(refreshToken: string, tokenEndpoint: string): Promise<StoredTokens> {
     const params = new URLSearchParams({
-      grant_type: "refresh_token",
+      grant_type: 'refresh_token',
       refresh_token: refreshToken,
     });
 
     const res = await fetch(tokenEndpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: params.toString(),
     });
 
     if (!res.ok) {
-      throw new AaiError("AUTH_EXPIRED", `Token refresh failed: HTTP ${res.status}`);
+      throw new AaiError('AUTH_EXPIRED', `Token refresh failed: HTTP ${res.status}`);
     }
 
     const data = (await res.json()) as {
@@ -93,10 +98,10 @@ export class TokenManager {
     };
 
     return {
-      access_token: data.access_token,
-      refresh_token: data.refresh_token,
-      expires_at: Date.now() + (data.expires_in ?? 3600) * 1000,
-      token_type: data.token_type ?? "Bearer",
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token,
+      expiresAt: Date.now() + (data.expires_in ?? 3600) * 1000,
+      tokenType: data.token_type ?? 'Bearer',
     };
   }
 }
