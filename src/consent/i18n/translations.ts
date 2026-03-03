@@ -2,12 +2,13 @@ import type { SupportedLocale } from "../../utils/locale.js";
 
 export interface ConsentDialogTranslations {
   dialogTitle: string;
-  appLabel: string;
-  requestPermissionLabel: string;
-  parametersLabel: string;
-  noParameters: string;
-  buttonDeny: string;
-  buttonAuthorizeTool: string;
+  pendingAppLabel: string;
+  pendingApiLabel: string;
+  apiDescriptionLabel: string;
+  apiParamsLabel: string;
+  noParams: string;
+  buttonCancel: string;
+  buttonAuthorizeOnce: string;
   buttonAuthorizeAll: string;
   rememberDialogTitle: string;
   rememberButtonNo: string;
@@ -15,42 +16,45 @@ export interface ConsentDialogTranslations {
 }
 
 const en: ConsentDialogTranslations = {
-  dialogTitle: "⚠️ Tool Authorization Request",
-  appLabel: "App",
-  requestPermissionLabel: "Agent requests permission to use:",
-  parametersLabel: "Parameters:",
-  noParameters: "(no parameters)",
-  buttonDeny: "Deny",
-  buttonAuthorizeTool: "Authorize Tool",
-  buttonAuthorizeAll: "Authorize All",
+  dialogTitle: "🤖 Agent Authorization Request",
+  pendingAppLabel: "Pending App",
+  pendingApiLabel: "Pending API",
+  apiDescriptionLabel: "Description",
+  apiParamsLabel: "Parameters",
+  noParams: "(none)",
+  buttonCancel: "Cancel",
+  buttonAuthorizeOnce: "Authorize This API",
+  buttonAuthorizeAll: "Authorize All APIs for This App",
   rememberDialogTitle: "Remember this decision for '{toolName}'?",
   rememberButtonNo: "No",
   rememberButtonYes: "Yes",
 };
 
 const zhCN: ConsentDialogTranslations = {
-  dialogTitle: "⚠️ 工具授权请求",
-  appLabel: "应用",
-  requestPermissionLabel: "智能体请求使用：",
-  parametersLabel: "参数：",
-  noParameters: "(无参数)",
-  buttonDeny: "拒绝",
-  buttonAuthorizeTool: "授权工具",
-  buttonAuthorizeAll: "全部授权",
+  dialogTitle: "🤖 智能体授权请求",
+  pendingAppLabel: "待授权应用",
+  pendingApiLabel: "待授权接口",
+  apiDescriptionLabel: "接口说明",
+  apiParamsLabel: "接口参数",
+  noParams: "(无参数)",
+  buttonCancel: "取消",
+  buttonAuthorizeOnce: "仅授权此接口",
+  buttonAuthorizeAll: "授权该应用所有接口",
   rememberDialogTitle: "记住对「{toolName}」的授权决定？",
   rememberButtonNo: "否",
   rememberButtonYes: "是",
 };
 
 const zhTW: ConsentDialogTranslations = {
-  dialogTitle: "⚠️ 工具授權請求",
-  appLabel: "應用程式",
-  requestPermissionLabel: "智慧代理請求使用：",
-  parametersLabel: "參數：",
-  noParameters: "(無參數)",
-  buttonDeny: "拒絕",
-  buttonAuthorizeTool: "授權工具",
-  buttonAuthorizeAll: "全部授權",
+  dialogTitle: "🤖 智慧代理授權請求",
+  pendingAppLabel: "待授權應用程式",
+  pendingApiLabel: "待授權接口",
+  apiDescriptionLabel: "接口說明",
+  apiParamsLabel: "接口參數",
+  noParams: "(無參數)",
+  buttonCancel: "取消",
+  buttonAuthorizeOnce: "僅授權此接口",
+  buttonAuthorizeAll: "授權該應用程式所有接口",
   rememberDialogTitle: "記住對「{toolName}」的授權決定？",
   rememberButtonNo: "否",
   rememberButtonYes: "是",
