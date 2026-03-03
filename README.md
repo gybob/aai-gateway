@@ -10,6 +10,7 @@ Reference implementation of the [AAI Protocol](https://github.com/gybob/aai-prot
 - **Multi-language support**. App names support multiple languages for better user intent matching.
 - **Native security**. Leverages OS-level consent (TCC, UAC, Polkit) and secure storage (Keychain, Credential Manager).
 - **Cross-platform**. Supports macOS today, Linux and Windows planned.
+- **Web app support**. Built-in descriptors for popular web apps (Notion, Yuque, Feishu) with multiple auth types.
 
 ### Requirements
 
@@ -221,10 +222,33 @@ Execute operations after reading the guide:
 
 **Execution flow:**
 
-1. Resolve app descriptor (local registry or web fetch)
+1. Resolve app descriptor (local registry, built-in registry, or web fetch)
 2. Show native consent dialog — user approves/denies (remembered per tool or globally)
-3. Execute: desktop apps via native IPC, web apps via HTTP with OAuth 2.1 PKCE token
-4. Return result
+3. **Auth**: 
+   - Desktop apps: Native IPC
+   - Web apps: OAuth 2.1 PKCE, API Key, App Credential, or Cookie
+4. Execute and return result
+
+### Built-in Web Apps
+
+The gateway includes built-in descriptors for popular web apps:
+
+| App | Auth Type | Description |
+|-----|-----------|-------------|
+| Yuque (语雀) | API Key | Knowledge management platform |
+| Notion | API Key | All-in-one workspace |
+| Feishu (飞书) | App Credential | Enterprise collaboration |
+
+### Web App Authentication
+
+The gateway supports multiple authentication methods for web apps:
+
+| Auth Type | Use Case | User Flow |
+|-----------|----------|-----------|
+| `apikey` | Static API tokens (never expire) | Dialog prompts for token, stored securely |
+| `app_credential` | App ID + Secret (auto-refresh) | Dialog prompts for credentials, token fetched automatically |
+| `oauth2` | OAuth 2.0 with PKCE | Browser-based authorization flow |
+| `cookie` | No official API | Manual cookie extraction from browser |
 
 ### Agent Workflow Example
 

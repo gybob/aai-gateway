@@ -1,30 +1,35 @@
 # AAI Gateway - Agent Maintenance Guide
 
-**Status**: MVP Complete (v0.1.0)
+**Status**: v0.3.0 - Web App Auth Framework Complete
 
 This guide provides instructions for AI Agents (and human developers) working on the AAI Gateway codebase.
 
 ## 1. Project Overview
 
-AAI (Agent App Interface) Gateway acts as a bridge between LLM Agents (via Model Context Protocol) and local applications (via platform-native automation like AppleScript, COM, DBus).
+AAI (Agent App Interface) Gateway acts as a bridge between LLM Agents (via Model Context Protocol) and local applications (via platform-native automation like AppleScript, COM, DBus) **and web applications** (via HTTP with OAuth 2.1 PKCE, API Key, and App Credential auth).
 
-**Goal**: Enable Agents to invoke desktop app capabilities without GUI automation.
+**Goal**: Enable Agents to invoke desktop and web app capabilities without GUI automation.
 
 ## 2. Project Structure
 
 - `src/mcp/`: Core MCP Server implementation (`server.ts`).
+  - `guide-generator.ts`: Operation guide generation for tools/list.
 - `src/executors/`: Platform automation implementations.
-  - `base.ts`: Executor interface.
-  - `macos.ts`: AppleScript/JXA executor.
-  - `windows.ts`: COM executor.
-  - `linux.ts`: DBus executor.
-  - `param-transform.ts`: Parameter substitution logic.
-- `src/config/`: Configuration management.
-  - `discovery.ts`: App discovery (`~/.aai`).
-  - `config-loader.ts`: Gateway config (`~/.aai/config.json`).
-  - `watcher.ts`: Hot-reload logic.
-  - `ai-generator.ts`: LLM-based config generation.
-- `src/web/`: Built-in Web UI server.
+  - `ipc/`: IPC-based executors for desktop apps.
+  - `web.ts`: HTTP executor for web apps with auth context support.
+- `src/discovery/`: App discovery.
+  - `web.ts`: Web descriptor fetching with caching.
+  - `web-registry.ts`: Built-in web app registry.
+  - `descriptors/`: Built-in app descriptors (yuque.ts, notion.ts, feishu.ts).
+  - `macos.ts`: macOS app discovery.
+- `src/auth/`: Authentication.
+  - `oauth.ts`: OAuth 2.1 PKCE flow.
+  - `token-manager.ts`: OAuth token storage and refresh.
+- `src/credential/`: Credential management for non-OAuth auth.
+  - `manager.ts`: Handles apikey, cookie, app_credential auth.
+  - `dialog/`: Platform-specific credential input dialogs.
+- `src/consent/`: User consent management.
+- `src/storage/`: Secure storage (Keychain on macOS).
 - `src/utils/`: Utilities (logger, retry, rate-limiter, metrics, cache).
 - `src/parsers/`: JSON Schema definitions and validation.
 - `tests/`: Test suite (Unit, Integration, E2E, Performance).
@@ -53,15 +58,55 @@ npm start -- --mcp
 node dist/cli.js --mcp
 ```
 
-## 4. Key Maintenance Tasks
+## 4. Protocol Modification Process
 
-### Adding a New Executor
+**CRITICAL**: This project implements the [AAI Protocol](https://github.com/gybob/aai-protocol). Any changes to `aai.json` schema or related types must follow this process:
 
-1. Create `src/executors/<platform>.ts` implementing `AutomationExecutor`.
-2. Register the executor in `src/mcp/server.ts` or `src/executors/base.ts` factory.
-3. Update `src/parsers/schema.ts` to support platform-specific schema in `aai.json`.
+### Workflow
+
+```
+发现需要修改协议 → 反馈给项目负责人 → 项目负责人决定是否修改 aai-protocol → 代码 follow 协议
+```
+
+### Rules
+
+1. **NEVER** add/modify `aai.json` related fields in code without protocol update
+2. **NEVER** add fields like `short_zh`, `detailed_zh` to `AuthInstructions` without protocol approval
+3. Code in `src/types/aai-json.ts` and `src/parsers/schema.ts` must strictly follow the protocol spec
+4. If you find the protocol needs extension, raise the issue first, don't implement in code
+
+### Example
+
+If multi-language instructions are needed:
+1. **WRONG**: Add `short_zh?: string` to `AuthInstructions` in code
+2. **RIGHT**: Propose the change → Protocol updated → Then update code
+
+---
+
+## 5. Key Maintenance Tasks
+### Adding a New Web App Descriptor
+
+1. Create `src/discovery/descriptors/<app>.ts` with:
+   - App metadata (id, name, description, aliases)
+   - Auth configuration (apikey, oauth2, app_credential, or cookie)
+   - Tools list with execution paths
+2. Import and register in `src/discovery/web-registry.ts`.
+3. Test by running `node dist/cli.js` and calling `web:discover` with the app domain.
+
+### Adding a New Auth Type
+
+1. Add type definition in `src/types/aai-json.ts`.
+2. Add validation schema in `src/parsers/schema.ts`.
+3. Update `CredentialManager` in `src/credential/manager.ts` to handle the new type.
+4. Add dialog support in `src/credential/dialog/` if user input is needed.
+5. Update `getWebAuthContext` in `src/mcp/server.ts` to route to correct handler.
+
+### Adding a New Executor (Desktop)
+
+1. Create `src/executors/ipc/<platform>.ts` implementing `IpcExecutor`.
+2. Register the executor in `src/executors/ipc/index.ts` factory.
+3. Update `src/discovery/<platform>.ts` for app discovery.
 4. Update `README.md` documentation.
-
 ### Updating Protocol Schema
 
 1. Modify `src/parsers/schema.ts` (Zod definition).
@@ -73,14 +118,14 @@ node dist/cli.js --mcp
 1. Modify `src/web/server.ts` (currently server-side rendered HTML).
 2. For complex UI updates, consider extracting frontend to separate React app (Phase 5 plan).
 
-## 5. Testing Guidelines
+## 6. Testing Guidelines
 
 - **Unit Tests**: Place in `tests/unit/`. Mock external dependencies (fs, child_process).
 - **Integration Tests**: Place in `tests/integration/`. Test interaction between components.
 - **E2E Tests**: Place in `tests/e2e/`. These require actual platform environment (e.g., macOS with Reminders app).
 - **Performance Tests**: Place in `tests/performance/`.
 
-## 6. Release Process
+## 7. Release Process
 
 1. Update version in `package.json`.
 2. Update `CHANGELOG.md`.
@@ -452,4 +497,121 @@ This protocol is in early design phase. Implementation patterns will evolve as w
 ---
 
 _Last Updated: 2025-02-06_
+---
+
+## Web App Support (v0.2.0)
+
+### Built-in Web Apps
+
+The gateway includes built-in descriptors for popular web apps:
+
+| App | Auth Type | Description |
+|-----|-----------|-------------|
+| Yuque (语雀) | API Key | Knowledge management platform |
+| Notion | API Key | All-in-one workspace |
+| Feishu (飞书) | App Credential | Enterprise collaboration |
+
+### Web App Registry
+
+Built-in descriptors are registered in `src/discovery/web-registry.ts`:
+
+```typescript
+import { notionDescriptor } from './descriptors/notion.js';
+
+WEB_APP_REGISTRY.set('notion.com', notionDescriptor);
+WEB_APP_REGISTRY.set('notion', notionDescriptor);
+```
+
+### Authentication Types
+
+#### 1. API Key (`apikey`)
+
+For services that use static API tokens:
+
+```json
+{
+  "auth": {
+    "type": "apikey",
+    "apikey": {
+      "location": "header",
+      "name": "Authorization",
+      "prefix": "Bearer",
+      "obtain_url": "https://example.com/settings/tokens",
+      "instructions": {
+        "short": "Get your API key from settings",
+        "help_url": "https://example.com/docs/api"
+      }
+    }
+  }
+}
+```
+
+#### 2. App Credential (`app_credential`)
+
+For services that use app ID + secret to obtain tokens:
+
+```json
+{
+  "auth": {
+    "type": "app_credential",
+    "appCredential": {
+      "token_endpoint": "https://api.example.com/auth/token",
+      "token_type": "tenant_access_token",
+      "expires_in": 7200,
+      "instructions": {
+        "short": "Get App ID and Secret from developer console"
+      }
+    }
+  }
+}
+```
+
+#### 3. OAuth 2.0 (`oauth2`)
+
+For services supporting OAuth 2.0 with PKCE:
+
+```json
+{
+  "auth": {
+    "type": "oauth2",
+    "oauth2": {
+      "authorization_endpoint": "https://example.com/oauth/authorize",
+      "token_endpoint": "https://example.com/oauth/token",
+      "scopes": ["read", "write"],
+      "pkce": { "method": "S256" }
+    }
+  }
+}
+```
+
+#### 4. Cookie (`cookie`)
+
+For services without official API:
+
+```json
+{
+  "auth": {
+    "type": "cookie",
+    "cookie": {
+      "login_url": "https://example.com/login",
+      "required_cookies": ["session", "auth_token"],
+      "domain": ".example.com"
+    }
+  }
+}
+```
+
+### Credential Dialog
+
+When credentials are needed, the gateway shows a native dialog:
+
+- **macOS**: Uses `osascript` for native dialog
+- **Windows/Linux**: Not yet implemented
+
+Dialog includes:
+- App name and instructions
+- Help URL button
+- Input field for credential
+
+---
 _Protocol Version: 1.0_
