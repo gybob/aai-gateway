@@ -28,27 +28,43 @@ This innovation enables agents to discover and use thousands of tools without ov
 
 ## How It Works
 
-```
 ┌─────────────────────────────────────────────────────────────────┐
-│                      Agent Workflow                              │
+│                    Desktop App Workflow                         │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
 │  1. tools/list                                                   │
-│     └─→ Returns: ["app:mail", "app:calendar", "web:discover",   │
-│                   "aai:exec"]                                    │
-│         Only 4 entries for 2 apps! (Not 50+ tools)              │
+│     └─→ Returns: ["app:com.apple.mail", "app:com.apple.calendar",
+│                   "web:discover", "aai:exec"]                    │
+│         Only 4 entries! (Not 50+ tools)                          │
 │                                                                  │
 │  2. User: "Send an email to John"                               │
-│     └─→ Agent matches "email" → calls app:mail                  │
+│     └─→ Agent matches "email" → calls app:com.apple.mail         │
 │                                                                  │
 │  3. tools/call("app:com.apple.mail")                            │
-│     └─→ Returns: Operation guide with available tools           │
-│         - sendEmail(to, subject, body)                          │
-│         - readInbox(folder, limit)                              │
+│     └─→ Returns: Operation guide with available tools            │
+│         - sendEmail(to, subject, body)                           │
+│         - readInbox(folder, limit)                               │
 │         - ...                                                    │
 │                                                                  │
-│  4. tools/call("aai:exec", {app, tool: "sendEmail", args})      │
-│     └─→ Executes operation                                       │
+│  4. tools/call("aai:exec", {app, tool: "sendEmail", args})       │
+│     └─→ Executes operation                                        │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│                      Web App Workflow                            │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  1. User: "Search my Notion workspace"                          │
+│     └─→ Agent matches "Notion" → calls web:discover              │
+│                                                                  │
+│  2. tools/call("web:discover", {url: "notion.com"})              │
+│     └─→ Returns: Operation guide with available tools            │
+│         - listDatabases(), queryDatabase(id), search(query)      │
+│         - ...                                                    │
+│                                                                  │
+│  3. tools/call("aai:exec", {app: "notion.com", tool, args})      │
+│     └─→ Executes operation                                        │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -64,8 +80,6 @@ This innovation enables agents to discover and use thousands of tools without ov
 - **Multi-language Support**. App names support multiple languages for better intent matching.
 - **Native Security**. Leverages OS-level consent (TCC, UAC, Polkit) and secure storage (Keychain).
 - **Cross-platform**. macOS today, Linux and Windows planned.
-- **Web App Support**. Built-in descriptors with multiple auth types.
-- **MCP Adapter Layer**. Cold-start support for apps with existing MCP servers.
 
 ## Supported Apps
 
@@ -80,28 +94,15 @@ Apps shipping `aai.json` descriptor:
 
 ### Web Apps (Built-in Descriptors)
 
-Pre-configured web app adapters:
+Pre-configured descriptors for cold-start scenarios when `.well-known/aai.json` is unavailable:
 
-| App               | Auth Type      | Tools                                                     | Description              |
-| ----------------- | -------------- | --------------------------------------------------------- | ------------------------ |
-| **Notion**        | API Key        | listDatabases, queryDatabase, getPage, createPage, search | All-in-one workspace     |
-| **Yuque (语雀)**  | API Key        | getUser, listRepos, getDoc, search                        | Knowledge management     |
-| **Feishu (飞书)** | App Credential | getUserInfo, listDocs, sendMessage, createCalendarEvent   | Enterprise collaboration |
+| App               | Auth Type      | Description              |
+| ----------------- | -------------- | ------------------------ |
+| **Notion**        | API Key        | All-in-one workspace     |
+| **Yuque (语雀)**  | API Key        | Knowledge management     |
+| **Feishu (飞书)** | App Credential | Enterprise collaboration |
 
-### MCP Adapter Layer (Cold Start)
-
-For apps with existing MCP servers, we generate `aai.json` from their MCP tools:
-
-| App          | Original MCP                              | Generated Tools                                    |
-| ------------ | ----------------------------------------- | -------------------------------------------------- |
-| Filesystem   | @modelcontextprotocol/server-filesystem   | readFile, writeFile, listDirectory, searchFiles    |
-| GitHub       | @modelcontextprotocol/server-github       | createIssue, createPullRequest, searchRepositories |
-| Brave Search | @modelcontextprotocol/server-brave-search | search, suggest                                    |
-| Puppeteer    | @modelcontextprotocol/server-puppeteer    | navigate, screenshot, click                        |
-| Slack        | @modelcontextprotocol/server-slack        | sendMessage, listChannels                          |
-| Memory       | @modelcontextprotocol/server-memory       | store, retrieve                                    |
-
-_More adapters being added. [Request an adapter](https://github.com/gybob/aai-gateway/issues)_
+_More built-in descriptors being added. [Request one](https://github.com/gybob/aai-gateway/issues)_
 
 ## Requirements
 
