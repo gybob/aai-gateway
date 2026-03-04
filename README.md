@@ -28,6 +28,7 @@ This innovation enables agents to discover and use thousands of tools without ov
 
 ## How It Works
 
+```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    Desktop App Workflow                         │
 ├─────────────────────────────────────────────────────────────────┤
