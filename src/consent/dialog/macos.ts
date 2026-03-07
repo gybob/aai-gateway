@@ -27,9 +27,10 @@ export class MacOSConsentDialog implements ConsentDialog {
     const t = getTranslations(this.locale);
     const paramLines = buildParamLines(info.parameters, t.noParams);
 
-    // Build dialog text matching the confirmed design:
-    // 智能体授权请求
+    // Build dialog text with caller identity:
+    // ⚠️ Claude Desktop requests tool access
     //
+    // Caller: Claude Desktop
     // 待授权应用：语雀
     // 待授权接口：get_user
     // 接口说明：获取当前用户信息
@@ -37,6 +38,7 @@ export class MacOSConsentDialog implements ConsentDialog {
     const authScript = `
 set dialogText to "${t.dialogTitle}
 
+${t.callerLabel}：${info.callerName}
 ${t.pendingAppLabel}：${info.appName}
 ${t.pendingApiLabel}：${info.toolName}
 ${t.apiDescriptionLabel}：${info.toolDescription}

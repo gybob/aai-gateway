@@ -1,6 +1,7 @@
 import { getCurrentPlatform } from "../../utils/platform.js";
-import { AaiError } from "../../errors/errors.js";
 import { MacOSKeychain } from "./macos.js";
+import { WindowsSecureStorage } from "./windows.js";
+import { LinuxSecureStorage } from "./linux.js";
 import type { SecureStorage } from "./interface.js";
 
 export type { SecureStorage } from "./interface.js";
@@ -10,8 +11,8 @@ export function createSecureStorage(): SecureStorage {
     case "macos":
       return new MacOSKeychain();
     case "linux":
-      throw new AaiError("NOT_IMPLEMENTED", "Linux secure storage not yet supported");
+      return new LinuxSecureStorage();
     case "windows":
-      throw new AaiError("NOT_IMPLEMENTED", "Windows secure storage not yet supported");
+      return new WindowsSecureStorage();
   }
 }

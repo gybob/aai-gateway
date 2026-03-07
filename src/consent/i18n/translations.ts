@@ -2,6 +2,7 @@ import type { SupportedLocale } from "../../utils/locale.js";
 
 export interface ConsentDialogTranslations {
   dialogTitle: string;
+  callerLabel: string;  // "Caller" or "调用方"
   pendingAppLabel: string;
   pendingApiLabel: string;
   apiDescriptionLabel: string;
@@ -17,6 +18,7 @@ export interface ConsentDialogTranslations {
 
 const en: ConsentDialogTranslations = {
   dialogTitle: "🤖 Agent Authorization Request",
+  callerLabel: "Caller",
   pendingAppLabel: "Pending App",
   pendingApiLabel: "Pending API",
   apiDescriptionLabel: "Description",
@@ -32,6 +34,7 @@ const en: ConsentDialogTranslations = {
 
 const zhCN: ConsentDialogTranslations = {
   dialogTitle: "🤖 智能体授权请求",
+  callerLabel: "调用方",
   pendingAppLabel: "待授权应用",
   pendingApiLabel: "待授权接口",
   apiDescriptionLabel: "接口说明",
@@ -47,6 +50,7 @@ const zhCN: ConsentDialogTranslations = {
 
 const zhTW: ConsentDialogTranslations = {
   dialogTitle: "🤖 智慧代理授權請求",
+  callerLabel: "呼叫方",
   pendingAppLabel: "待授權應用程式",
   pendingApiLabel: "待授權接口",
   apiDescriptionLabel: "接口說明",

@@ -1,3 +1,4 @@
+import type { CallerIdentity } from "../types/consent.js";
 import { AaiError, type ConsentRequiredData } from "../errors/errors.js";
 import type { SecureStorage } from "../storage/secure-storage/interface.js";
 import type { ConsentDialog } from "./dialog/interface.js";
@@ -19,8 +20,8 @@ export interface ConsentToolInfo {
   parameters: object;
 }
 
-function accountKey(appId: string): string {
-  return `consent-${appId}`;
+function accountKey(appId: string, callerName: string): string {
+  return `consent-${callerName}-${appId}`;
 }
 
 export class ConsentManager {
@@ -29,8 +30,8 @@ export class ConsentManager {
     private readonly dialog: ConsentDialog
   ) {}
 
-  private async loadRecord(appId: string): Promise<AppConsentRecord> {
-    const raw = await this.storage.get(accountKey(appId));
+  private async loadRecord(appId: string, callerName: string): Promise<AppConsentRecord> {
+    const raw = await this.storage.get(accountKey(appId, callerName));
     if (!raw) return { all_tools: false, tools: {} };
     try {
       return JSON.parse(raw) as AppConsentRecord;
@@ -39,12 +40,12 @@ export class ConsentManager {
     }
   }
 
-  private async saveRecord(appId: string, record: AppConsentRecord): Promise<void> {
-    await this.storage.set(accountKey(appId), JSON.stringify(record));
+  private async saveRecord(appId: string, callerName: string, record: AppConsentRecord): Promise<void> {
+    await this.storage.set(accountKey(appId, callerName), JSON.stringify(record));
   }
 
-  async isGranted(appId: string, toolName: string): Promise<boolean> {
-    const record = await this.loadRecord(appId);
+  async isGranted(appId: string, toolName: string, callerName: string): Promise<boolean> {
+    const record = await this.loadRecord(appId, callerName);
     if (record.all_tools) return true;
     const tool = record.tools[toolName];
     return !!tool?.granted;
@@ -53,9 +54,11 @@ export class ConsentManager {
   async checkAndPrompt(
     appId: string,
     appName: string,
-    toolInfo: ConsentToolInfo
+    toolInfo: ConsentToolInfo,
+    callerIdentity: CallerIdentity
   ): Promise<void> {
-    const record = await this.loadRecord(appId);
+    const callerName = callerIdentity.name || 'Unknown Client';
+    const record = await this.loadRecord(appId, callerName);
 
     if (record.all_tools) return;
 
@@ -74,6 +77,7 @@ export class ConsentManager {
     }
 
     const result = await this.dialog.show({
+      callerName,
       appId,
       appName,
       toolName: toolInfo.name,
@@ -88,7 +92,7 @@ export class ConsentManager {
           granted_at: new Date().toISOString(),
           remember: true,
         };
-        await this.saveRecord(appId, record);
+        await this.saveRecord(appId, callerName, record);
       }
       throw new AaiError("CONSENT_REQUIRED", `User denied consent for tool '${toolInfo.name}'`, {
         app_id: appId,
@@ -102,7 +106,7 @@ export class ConsentManager {
 
     if (result.decision === "all") {
       record.all_tools = true;
-      await this.saveRecord(appId, record);
+      await this.saveRecord(appId, callerName, record);
       return;
     }
 
@@ -112,6 +116,6 @@ export class ConsentManager {
       granted_at: new Date().toISOString(),
       remember: result.remember,
     };
-    await this.saveRecord(appId, record);
+    await this.saveRecord(appId, callerName, record);
   }
 }

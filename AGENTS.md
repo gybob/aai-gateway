@@ -272,6 +272,20 @@ describe('AppleScriptExecutor', () => {
 
 ## Platform-Specific Considerations
 
+**Implementation Status**:
+- **macOS**: ✅ Fully implemented (Discovery, IPC, Consent, Storage)
+- **Linux**: ⚠️ Stub implementations (throws NOT_IMPLEMENTED errors)
+  - Discovery: Scans XDG paths for .desktop files
+  - IPC: DBus via gdbus (stub)
+  - Consent: zenity/kdialog (stub)
+  - Storage: libsecret via secret-tool (stub)
+- **Windows**: ⚠️ Stub implementations (throws NOT_IMPLEMENTED errors)
+  - Discovery: Scans Program Files, AppData for aai.json
+  - IPC: PowerShell COM automation (stub)
+  - Consent: PowerShell MessageBox (stub)
+  - Storage: Windows Credential Manager via cmdkey (stub)
+
+### macOS:
 ### macOS:
 
 - AppleScript uses `${param}` syntax for parameter substitution

@@ -330,9 +330,11 @@ Execute operations after reading the guide:
 | Platform | Discovery                 | IPC Executor    | Consent Dialog    | Secure Storage        |
 | -------- | ------------------------- | --------------- | ----------------- | --------------------- |
 | macOS    | ✅                        | ✅ Apple Events | ✅ osascript      | ✅ Keychain           |
-| Linux    | 🔜                        | 🔜 DBus         | 🔜 zenity/kdialog | 🔜 libsecret          |
-| Windows  | 🔜                        | 🔜 COM          | 🔜 PowerShell     | 🔜 Credential Manager |
+| Linux    | ⚠️ XDG paths              | ⚠️ DBus        | ⚠️ zenity/kdialog | ⚠️ libsecret          |
+| Windows  | ⚠️ Program Files          | ⚠️ COM         | ⚠️ PowerShell     | ⚠️ Credential Manager |
 | Web      | ✅ `.well-known/aai.json` | ✅ HTTP + Auth  | —                 | ✅ (via platform)     |
+
+**Legend**: ✅ Fully implemented | ⚠️ Stub implementation (throws NOT_IMPLEMENTED) | 🔜 Planned
 
 ## For App Developers
 

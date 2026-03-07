@@ -1,6 +1,7 @@
+import type { CallerIdentity } from '../types/consent.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { CallToolRequestSchema, ListToolsRequestSchema, InitializeRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
 import { logger } from '../utils/logger.js';
 import { AaiError } from '../errors/errors.js';
@@ -27,6 +28,7 @@ export class AaiGatewayServer {
   private tokenManager!: TokenManager;
   private credentialManager!: CredentialManager;
   private readonly options: DiscoveryOptions;
+  private callerIdentity: CallerIdentity = { name: 'Unknown Client' };
 
   constructor(options?: DiscoveryOptions) {
     this.options = options ?? {};
@@ -63,6 +65,20 @@ export class AaiGatewayServer {
   }
 
   private setupHandlers(): void {
+    // Extract caller identity from InitializeRequest
+    this.server.setRequestHandler(InitializeRequestSchema, async (request) => {
+      const clientInfo = request.params.clientInfo;
+      this.callerIdentity = {
+        name: clientInfo?.name ?? 'Unknown Client',
+        version: clientInfo?.version,
+      };
+      logger.info({ caller: this.callerIdentity }, 'Caller identity extracted');
+      // Return empty object (initialize response)
+      return {};
+    });
+
+    // tools/list — returns app entries + web:discover + aai:exec
+
     // tools/list — returns app entries + web:discover + aai:exec
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
       const tools: Array<{
@@ -232,7 +248,7 @@ export class AaiGatewayServer {
       name: toolName,
       description: tool.description,
       parameters: tool.parameters,
-    });
+    }, this.callerIdentity);
 
     // Execute
     let result: unknown;
