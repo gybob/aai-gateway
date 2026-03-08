@@ -34,16 +34,18 @@
 
 **AAI Gateway 的解决方案**：
 
+**AAI Gateway 的解决方案**：
+
 ```
 tools/list 只返回:
-├── app:com.apple.reminders  (轻量入口，50 字节)
-├── app:com.apple.mail       (轻量入口，50 字节)
 ├── web:discover             (Web 应用发现)
-└── aai:exec                 (统一执行器)
+├── aai:exec                 (统一执行器)
+├── app:guanchen.worklens    (轻量入口，50 字节)
+└── ...
 
 = 50 apps + 2 工具 = 52 条目 ✅
 
-Agent 按需调用 app:<id> 获取详细操作指南
+Agent 按需调用 web:discover 或 app:<id> 获取操作指南
 ```
 
 **效果**：上下文占用减少 **95%**，Agent 响应更精准、更快速。
@@ -53,29 +55,6 @@ Agent 按需调用 app:<id> 获取详细操作指南
 ## 工作流程
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    桌面应用工作流                                │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  1. tools/list                                                   │
-│     └─→ 返回: ["app:com.apple.mail", "app:com.apple.calendar",  │
-│               "web:discover", "aai:exec"]                        │
-│         仅 4 条目！（而非 50+ 工具）                              │
-│                                                                  │
-│  2. 用户: "发邮件给张三"                                         │
-│     └─→ Agent 匹配 "邮件" → 调用 app:com.apple.mail              │
-│                                                                  │
-│  3. tools/call("app:com.apple.mail")                            │
-│     └─→ 返回: 操作指南                                           │
-│         - sendEmail(to, subject, body)                           │
-│         - readInbox(folder, limit)                               │
-│         - ...                                                    │
-│                                                                  │
-│  4. tools/call("aai:exec", {app, tool: "sendEmail", args})       │
-│     └─→ 执行操作并返回结果                                        │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
-
 ┌─────────────────────────────────────────────────────────────────┐
 │                    Web 应用工作流                                │
 ├─────────────────────────────────────────────────────────────────┤
@@ -89,6 +68,28 @@ Agent 按需调用 app:<id> 获取详细操作指南
 │         - ...                                                    │
 │                                                                  │
 │  3. tools/call("aai:exec", {app: "notion.com", tool, args})      │
+│     └─→ 执行操作并返回结果                                        │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│                    桌面应用工作流                                │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  1. tools/list                                                   │
+│     └─→ 返回: ["app:guanchen.worklens", "web:discover",          │
+│               "aai:exec"]                                        │
+│         仅 3 条目！（而非 50+ 工具）                              │
+│                                                                  │
+│  2. 用户: "查看我的工作任务"                                     │
+│     └─→ Agent 匹配 "worklens" → 调用 app:guanchen.worklens       │
+│                                                                  │
+│  3. tools/call("app:guanchen.worklens")                          │
+│     └─→ 返回: 操作指南                                           │
+│         - listTasks(), getTaskDetail(id), createTask()           │
+│         - ...                                                    │
+│                                                                  │
+│  4. tools/call("aai:exec", {app, tool: "listTasks", args})       │
 │     └─→ 执行操作并返回结果                                        │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
@@ -122,8 +123,7 @@ AAI Gateway 自动扫描系统中安装的应用：
 
 **已适配示例**：
 
-- macOS Reminders: `createReminder`, `listReminders`, `completeReminder`
-
+- Worklens (guanchen.worklens): `listTasks`, `getTaskDetail`, `createTask`
 ---
 
 ## 🔌 零代码接入
@@ -312,16 +312,11 @@ AAI Gateway 仅暴露 **工具**（无资源），简化 Agent 工作流。
 
 ### `tools/list`
 
-返回已发现的桌面应用和通用工具：
+返回已发现的应用和通用工具：
 
 ```json
 {
   "tools": [
-    {
-      "name": "app:com.apple.reminders",
-      "description": "【Reminders|提醒事项】macOS reminders app. Aliases: todo, 待办. Call to get guide.",
-      "inputSchema": { "type": "object", "properties": {} }
-    },
     {
       "name": "web:discover",
       "description": "Discover web app guide. Use when user mentions a web service not in list.",
@@ -345,21 +340,14 @@ AAI Gateway 仅暴露 **工具**（无资源），简化 Agent 工作流。
         },
         "required": ["app", "tool"]
       }
+    },
+    {
+      "name": "app:guanchen.worklens",
+      "description": "【Worklens】macOS task management app. Call to get guide.",
+      "inputSchema": { "type": "object", "properties": {} }
     }
   ]
-}
-```
-
-### `app:<id>` - 获取操作指南
-
-```json
-{
-  "name": "app:com.apple.reminders",
-  "arguments": {}
-}
-```
-
-返回该应用的可用操作、参数和示例。
+}```
 
 ### `web:discover` - 发现 Web 应用
 
@@ -372,17 +360,27 @@ AAI Gateway 仅暴露 **工具**（无资源），简化 Agent 工作流。
 
 返回该 Web 应用的操作指南。
 
+### `app:<id>` - 获取桌面应用操作指南
+
+```json
+{
+  "name": "app:guanchen.worklens",
+  "arguments": {}
+}
+```
+
+返回该桌面应用的可用操作、参数和示例。
+
 ### `aai:exec` - 执行操作
 
 ```json
 {
   "name": "aai:exec",
   "arguments": {
-    "app": "com.apple.reminders",
-    "tool": "createReminder",
+    "app": "notion.com",
+    "tool": "search",
     "args": {
-      "title": "提交报告",
-      "due": "2024-12-31 15:00"
+      "query": "项目文档"
     }
   }
 }
