@@ -285,8 +285,6 @@ describe('AppleScriptExecutor', () => {
   - Consent: PowerShell MessageBox
   - Storage: Windows Credential Manager via cmdkey
 
-### macOS:
-### macOS:
 
 - AppleScript uses `${param}` syntax for parameter substitution
 - First execution triggers TCC authorization popup (document in error messages)
@@ -536,7 +534,7 @@ This protocol is in early design phase. Implementation patterns will evolve as w
 
 ---
 
-_Last Updated: 2025-02-06_
+_Last Updated: 2025-03-08_
 ---
 
 ## Web App Support (v0.2.0)
@@ -646,12 +644,12 @@ For services without official API:
 When credentials are needed, the gateway shows a native dialog:
 
 - **macOS**: Uses `osascript` for native dialog
-- **Windows/Linux**: Not yet implemented
+- **Windows**: Uses PowerShell `Get-Credential` and custom WinForms dialog
+- **Linux**: Uses `zenity` (GNOME) or `kdialog` (KDE)
 
 Dialog includes:
 - App name and instructions
 - Help URL button
 - Input field for credential
-
 ---
 _Protocol Version: 1.0_

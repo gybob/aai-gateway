@@ -315,6 +315,7 @@ The following apps are planned for future integration, organized by priority:
 | **Stripe** | API Key | `api.stripe.com` | Payment processing |
 | **Slack** | OAuth2 / Bot Token | `slack.com/api` | Team messaging and channels |
 | **Jira** | OAuth2 / API Token | `api.atlassian.com` | Issue and project tracking |
+| **Gitee** | API Key | `gitee.com/api/v5` | Code hosting (China) |
 
 #### 🔥 Priority P1 - High Activity
 
@@ -329,6 +330,8 @@ The following apps are planned for future integration, organized by priority:
 | **Asana** | API Key / OAuth2 | `app.asana.com/api/1.0` | Project management |
 | **Discord** | Bot Token / OAuth2 | `discord.com/api/v10` | Community messaging |
 | **GitLab** | API Key / OAuth2 | `gitlab.com/api/v4` | DevOps platform |
+| **DingTalk (钉钉)** | App Credential | `api.dingtalk.com/v1.0` | Enterprise messaging (China) |
+| **WeCom (企业微信)** | App Credential | `qyapi.weixin.qq.com/cgi-bin` | Enterprise WeChat (China) |
 
 #### 📈 Priority P2 - Medium Activity
 
@@ -352,14 +355,17 @@ The following apps are planned for future integration, organized by priority:
 | SendGrid | API Key | Email delivery service |
 | Mailgun | API Key | Email API service |
 | Twilio | API Key | SMS and voice API |
+| Tencent Meeting | OAuth2 / App Credential | Video conferencing (China) |
 
-**Data & Databases:**
+**Data & Storage:**
 
 | App | Auth Type | Description |
 |-----|-----------|-------------|
 | Supabase | API Key | Backend-as-a-Service |
 | PlanetScale | API Key | Serverless MySQL |
 | Neon | API Key | Serverless PostgreSQL |
+| Aliyun Drive | OAuth2 | Cloud storage (China) |
+| Baidu Netdisk | OAuth2 | Cloud storage (China) |
 
 **Payments & Commerce:**
 
@@ -368,6 +374,7 @@ The following apps are planned for future integration, organized by priority:
 | PayPal | OAuth2 | Payment platform |
 | Square | API Key | Payment processing |
 | Shopify | API Key | E-commerce platform |
+| WeChat Pay | App Credential | Payment platform (China) |
 
 #### 🔍 Priority P3 - Search & AI
 
@@ -379,24 +386,6 @@ The following apps are planned for future integration, organized by priority:
 | Perplexity | API Key | `api.perplexity.ai` | AI search engine |
 | Exa | API Key | `api.exa.ai` | AI-powered search |
 | Tavily | API Key | `api.tavily.com` | Search API for AI |
-
-#### 🇨🇳 China Region Services
-
-> Target: 2-3 months | Localized services for Chinese users
-
-| App | Auth Type | Description |
-|-----|-----------|-------------|
-| **Yuque (语雀)** | API Key | ✅ Already supported |
-| **Feishu (飞书)** | App Credential | ✅ Already supported |
-| DingTalk (钉钉) | App Credential | Enterprise messaging |
-| WeCom (企业微信) | App Credential | Enterprise WeChat |
-| Tencent Meeting | OAuth2 / App Credential | Video conferencing |
-| Aliyun Drive | OAuth2 | Cloud storage |
-| Baidu Netdisk | OAuth2 | Cloud storage |
-| Gitee | API Key | Code hosting |
-| WeChat Pay | App Credential | Payment platform |
-
----
 
 #### ❌ Not Suitable for AAI Gateway
 
@@ -414,8 +403,6 @@ The following MCP server types are **NOT suitable** for AAI Gateway as they requ
 ---
 
 Want to see your app prioritized? [Open an issue](https://github.com/gybob/aai-gateway/issues).
----
-
 ## Links
 
 - **[AAI Protocol Spec](https://github.com/gybob/aai-protocol)** - Protocol specification
