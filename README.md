@@ -35,15 +35,14 @@ Traditional MCP servers return all tools on `tools/list`, causing:
 **AAI Gateway's Solution**:
 
 ```
-tools/list only returns:
-├── web:discover             (Web app discovery)
-├── aai:exec                 (Universal executor)
-├── app:guanchen.worklens    (Lightweight entry, ~50 bytes)
-└── ...
+tools/list returns only lightweight entries:
+├── web:discover         → Discover web apps and get their capabilities
+├── app:<desktop-app-id> → Discovered desktop apps (one entry per app)
+└── aai:exec             → Universal executor for all operations
 
 = 50 apps + 2 tools = 52 entries ✅
 
-Agent calls web:discover or app:<id> on-demand to get operation guides
+Agent calls web:discover or app:<id> on-demand to get detailed operation guides
 ```
 
 **Result**: **95% reduction** in context usage, faster and more accurate Agent responses.
@@ -52,42 +51,64 @@ Agent calls web:discover or app:<id> on-demand to get operation guides
 
 ## How It Works
 
+### Web App Discovery & Usage
+
+Web apps are discovered dynamically through descriptors:
+
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    Web App Workflow                              │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
-│  1. User: "Search my Notion workspace"                          │
-│     └─→ Agent matches "Notion" → calls web:discover              │
+│  1. User mentions a web service: "Search my Notion workspace"   │
 │                                                                  │
-│  2. tools/call("web:discover", {url: "notion.com"})              │
-│     └─→ Returns: Operation guide                                 │
-│         - listDatabases(), queryDatabase(id), search(query)      │
+│  2. Agent recognizes "Notion" as a web application              │
+│     └─→ Calls web:discover to fetch Notion's capabilities       │
+│                                                                  │
+│  3. tools/call("web:discover", {url: "notion.com"})              │
+│     └─→ Returns: Operation guide with available tools            │
+│         - listDatabases()                                        │
+│         - queryDatabase(id, filter)                              │
+│         - search(query)                                          │
 │         - ...                                                    │
 │                                                                  │
-│  3. tools/call("aai:exec", {app: "notion.com", tool, args})      │
+│  4. tools/call("aai:exec", {                                     │
+│       app: "notion.com",                                         │
+│       tool: "search",                                            │
+│       args: { query: "project docs" }                            │
+│     })                                                           │
 │     └─→ Executes operation and returns result                     │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
+```
 
+### Desktop App Discovery & Usage
+
+Desktop apps are discovered by scanning the local system:
+
+```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    Desktop App Workflow                          │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
-│  1. tools/list                                                   │
-│     └─→ Returns: ["app:guanchen.worklens", "web:discover",       │
-│                   "aai:exec"]                                    │
-│         Only 3 entries! (not 50+ tools)                          │
+│  1. AAI Gateway scans system for AAI-enabled desktop apps       │
+│     └─→ Found apps appear as app:<id> entries in tools/list     │
 │                                                                  │
-│  2. User: "Show my work tasks"                                  │
-│     └─→ Agent matches "worklens" → calls app:guanchen.worklens   │
+│  2. User mentions a desktop app: "Show my work tasks"           │
+│     └─→ Agent finds matching app:guanchen.worklens              │
 │                                                                  │
 │  3. tools/call("app:guanchen.worklens")                          │
-│     └─→ Returns: Operation guide                                 │
-│         - listTasks(), getTaskDetail(id), createTask()           │
+│     └─→ Returns: Operation guide with available tools            │
+│         - listTasks()                                            │
+│         - getTaskDetail(id)                                      │
+│         - createTask(title, due)                                 │
 │         - ...                                                    │
 │                                                                  │
-│  4. tools/call("aai:exec", {app, tool: "listTasks", args})       │
+│  4. tools/call("aai:exec", {                                     │
+│       app: "guanchen.worklens",                                  │
+│       tool: "listTasks",                                         │
+│       args: {}                                                   │
+│     })                                                           │
 │     └─→ Executes operation and returns result                     │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
@@ -99,7 +120,7 @@ Agent calls web:discover or app:<id> on-demand to get operation guides
 
 ### Web Apps (Built-in Descriptors)
 
-Built-in descriptors for popular web apps, ready to use:
+These web apps have built-in descriptors and work out of the box:
 
 | App               | Auth Type      | Tools | Description                                         |
 | ----------------- | -------------- | ----- | --------------------------------------------------- |
@@ -107,27 +128,41 @@ Built-in descriptors for popular web apps, ready to use:
 | **Yuque (语雀)**  | API Key        | 7     | Alibaba Cloud knowledge management platform         |
 | **Feishu / Lark** | App Credential | 11    | Enterprise collaboration (docs, wiki, IM, calendar) |
 
-> 💡 **Expanding**: [Request a new app](https://github.com/gybob/aai-gateway/issues)
+> 💡 **Adding More**: Any web app can be integrated by providing an `aai.json` descriptor. [Request a built-in descriptor](https://github.com/gybob/aai-gateway/issues)
 
-### Desktop Apps (Auto-discovered)
+### Desktop Apps
 
-AAI Gateway automatically scans installed applications:
+Currently, no desktop apps have built-in descriptors. Desktop apps can be integrated by:
 
-| Platform    | Discovery Path                                    | Status             |
-| ----------- | ------------------------------------------------- | ------------------ |
-| **macOS**   | `/Applications/*.app/Contents/Resources/aai.json` | ✅ Fully supported |
-| **Linux**   | XDG standard paths + DBus                         | ⚠️ In development  |
-| **Windows** | Program Files + COM                               | ⚠️ In development  |
+1. Placing an `aai.json` descriptor in the app bundle
+2. AAI Gateway will automatically discover it on startup
 
-**Integrated Examples**:
+---
 
-- Worklens (guanchen.worklens): `listTasks`, `getTaskDetail`, `createTask`
+## 🔍 App Discovery
+
+### Web App Discovery
+
+AAI Gateway discovers web apps through descriptors in this order:
+
+1. **Built-in Registry** - Check internal registry for known apps (Notion, Yuque, Feishu)
+2. **Remote Fetch** - Fetch `https://<domain>/.well-known/aai.json` from the web app
+
+### Desktop App Discovery
+
+AAI Gateway scans the following paths for `aai.json` descriptors:
+
+| Platform    | Scan Path                               | Status            |
+| ----------- | --------------------------------------- | ----------------- |
+| **macOS**   | `<App>.app/Contents/Resources/aai.json` | ✅ Supported      |
+| **Linux**   | `/usr/share/<app>/aai.json` (XDG paths) | ⚠️ In development |
+| **Windows** | `<App> directory/aai.json`              | ⚠️ In development |
 
 ---
 
 ## 🔌 Zero-Code Integration
 
-Apps conforming to the AAI Protocol can be **seamlessly integrated** with AAI Gateway—no source code modification required.
+Any app can integrate with AAI Gateway by providing an `aai.json` descriptor—no source code changes required.
 
 ### Descriptor Location
 
@@ -311,14 +346,14 @@ AAI Gateway exposes **tools only** (no resources), simplifying the Agent workflo
 
 ### `tools/list`
 
-Returns discovered apps and universal tools:
+Returns discovered desktop apps and universal tools:
 
 ```json
 {
   "tools": [
     {
       "name": "web:discover",
-      "description": "Discover web app guide. Use when user mentions a web service not in list.",
+      "description": "Discover web app capabilities. Call with URL/domain to get operation guide.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -328,8 +363,13 @@ Returns discovered apps and universal tools:
       }
     },
     {
+      "name": "app:guanchen.worklens",
+      "description": "【Worklens】Desktop task management app. Call to get operation guide.",
+      "inputSchema": { "type": "object", "properties": {} }
+    },
+    {
       "name": "aai:exec",
-      "description": "Execute app operation. Use after reading the operation guide.",
+      "description": "Execute app operation. Call after reading the operation guide.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -339,17 +379,14 @@ Returns discovered apps and universal tools:
         },
         "required": ["app", "tool"]
       }
-    },
-    {
-      "name": "app:guanchen.worklens",
-      "description": "【Worklens】macOS task management app. Call to get guide.",
-      "inputSchema": { "type": "object", "properties": {} }
     }
   ]
 }
 ```
 
 ### `web:discover` - Discover Web Apps
+
+Call with a web app URL, domain, or name to get its capabilities:
 
 ```json
 {
@@ -358,9 +395,11 @@ Returns discovered apps and universal tools:
 }
 ```
 
-Returns the web app's operation guide.
+Returns an operation guide with available tools and their parameters.
 
 ### `app:<id>` - Get Desktop App Guide
+
+Call with a discovered desktop app ID to get its capabilities:
 
 ```json
 {
@@ -369,9 +408,13 @@ Returns the web app's operation guide.
 }
 ```
 
-Returns the desktop app's available operations, parameters, and examples.
+Returns an operation guide with available tools and their parameters.
 
 ### `aai:exec` - Execute Operation
+
+Execute an operation after reading the app's operation guide:
+
+**Web App Example**:
 
 ```json
 {
@@ -379,16 +422,27 @@ Returns the desktop app's available operations, parameters, and examples.
   "arguments": {
     "app": "notion.com",
     "tool": "search",
-    "args": {
-      "query": "project docs"
-    }
+    "args": { "query": "project docs" }
+  }
+}
+```
+
+**Desktop App Example**:
+
+```json
+{
+  "name": "aai:exec",
+  "arguments": {
+    "app": "guanchen.worklens",
+    "tool": "listTasks",
+    "args": {}
   }
 }
 ```
 
 **Execution Flow**:
 
-1. Resolve app descriptor (local, built-in, or remote fetch)
+1. Resolve app descriptor (built-in, cached, or remote fetch)
 2. Show native consent dialog — user approves or denies
 3. **Authentication**:
    - Desktop apps: Native IPC (AppleScript/COM/DBus)
