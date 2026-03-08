@@ -3,8 +3,15 @@
 import { createGatewayServer } from './mcp/server.js';
 import { createDesktopDiscovery } from './discovery/index.js';
 import { logger } from './utils/logger.js';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 
-const VERSION = '0.2.0';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const packageJson = JSON.parse(readFileSync(join(__dirname, '../package.json'), 'utf-8'));
+const VERSION = packageJson.version;
+
 
 interface CliOptions {
   scan: boolean;

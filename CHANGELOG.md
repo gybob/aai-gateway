@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1] - 2026-03-07
+
+### Fixed
+
+- Fixed version display: CLI now reads version from package.json dynamically instead of hardcoded value
+
+
 ## [0.1.5] - 2026-03-01
 
 ### Fixed

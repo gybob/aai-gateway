@@ -1,4 +1,7 @@
 import pino from 'pino';
+import { mkdirSync, existsSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error' | 'fatal';
 
@@ -12,6 +15,20 @@ export interface LogContext {
 
 const logLevel = (process.env.AAI_LOG_LEVEL as LogLevel) || 'info';
 
+// MCP requires stdout to be reserved for JSON-RPC messages only.
+// Logs must go to a file to avoid any interference with MCP protocol.
+const logDir = join(homedir(), '.aai', 'logs');
+const logFile = join(logDir, 'gateway.log');
+
+// Ensure log directory exists
+try {
+  if (!existsSync(logDir)) {
+    mkdirSync(logDir, { recursive: true });
+  }
+} catch {
+  // Ignore errors if we can't create log dir
+}
+
 export const logger = pino({
   level: logLevel,
   transport:
@@ -19,9 +36,10 @@ export const logger = pino({
       ? {
           target: 'pino-pretty',
           options: {
-            colorize: true,
+            colorize: false,
             translateTime: 'SYS:standard',
             ignore: 'pid,hostname',
+            destination: logFile, // Output to file instead of stdout
           },
         }
       : undefined,
