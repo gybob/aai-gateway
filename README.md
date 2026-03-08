@@ -306,8 +306,6 @@ The following apps are planned for future integration, organized by priority:
 
 #### 🚀 Priority P0 - High Activity + Simple Integration
 
-> Target: 1-2 weeks | MCP ecosystem's most active Web Apps
-
 | App | Auth Type | API Base | Description |
 |-----|-----------|----------|-------------|
 | **GitHub** | OAuth2 / API Key | `api.github.com` | Code hosting, repositories, issues, PRs |
@@ -318,8 +316,6 @@ The following apps are planned for future integration, organized by priority:
 | **Gitee** | API Key | `gitee.com/api/v5` | Code hosting (China) |
 
 #### 🔥 Priority P1 - High Activity
-
-> Target: 2-4 weeks | Popular SaaS applications
 
 | App | Auth Type | API Base | Description |
 |-----|-----------|----------|-------------|
@@ -334,8 +330,6 @@ The following apps are planned for future integration, organized by priority:
 | **WeCom (企业微信)** | App Credential | `qyapi.weixin.qq.com/cgi-bin` | Enterprise WeChat (China) |
 
 #### 📈 Priority P2 - Medium Activity
-
-> Target: 1-2 months | Project management, communication, data, payments
 
 **Project Management & Collaboration:**
 
@@ -377,8 +371,6 @@ The following apps are planned for future integration, organized by priority:
 | WeChat Pay | App Credential | Payment platform (China) |
 
 #### 🔍 Priority P3 - Search & AI
-
-> Target: 2-3 months | AI-powered search services
 
 | App | Auth Type | API Base | Description |
 |-----|-----------|----------|-------------|
