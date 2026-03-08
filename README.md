@@ -78,6 +78,33 @@ Agent calls web:discover or app:<id> on-demand to get detailed operation guides
 
 ---
 
+## 🔐 Security & Consent
+
+AAI Gateway implements a **caller-aware consent mechanism** to protect user privacy and control:
+
+### Per-Caller Authorization
+
+- **Client Identification**: When an MCP client (Claude Desktop, Cursor, Windsurf, etc.) requests tool access, AAI Gateway identifies the caller from the MCP protocol metadata
+- **Isolated Consent**: Consent decisions are stored **per caller**, meaning authorization granted to Claude Desktop is NOT automatically granted to Cursor
+- **Clear Dialogs**: Consent dialogs clearly show which client is requesting access: "Claude Desktop wants to use: sendEmail"
+- **Re-authorization Required**: Different MCP clients must obtain their own authorization for the same tools
+
+### Consent Flow
+
+```
+1. MCP client (e.g., Cursor) calls a tool for the first time
+2. AAI Gateway checks: Has Cursor been authorized for this tool?
+3. If not → Show consent dialog: "Cursor wants to use: sendEmail"
+4. User decision is stored with caller identity: consents["Cursor"]["com.example.mail"]["sendEmail"]
+5. Next call from Cursor → No dialog (already authorized)
+6. Claude Desktop calls same tool → Consent dialog shown (different caller)
+```
+
+This ensures that each MCP client has explicit user authorization, preventing cross-client authorization leakage.
+
+> 💡 **Note**: Caller identity is informational and not a security boundary. The real security is enforced by the operating system (TCC on macOS, UAC on Windows, etc.).
+---
+
 ## 📱 Supported Apps
 
 These apps have built-in descriptors and work out of the box:

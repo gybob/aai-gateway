@@ -16,9 +16,9 @@
 - [x] 4.2 Modify macOS dialog to display caller name in title and body
 - [x] 4.3 Update i18n translations with caller-related strings
 ## 5. Documentation
-- [ ] 5.1 Update `aai-protocol/spec/security.md` with caller-aware consent flow
-- [ ] 5.2 Update README to mention per-caller consent behavior
+- [x] 5.1 Update `aai-protocol/spec/security.md` with caller-aware consent flow
+- [x] 5.2 Update README to mention per-caller consent behavior
 ## 6. Testing
-- [ ] 6.1 Add unit tests for caller identity extraction
-- [ ] 6.2 Add unit tests for caller-scoped consent storage
-- [ ] 6.3 Add E2E test for multi-client consent scenario
+- [x] 6.1 Add unit tests for caller identity extraction
+- [x] 6.2 Add unit tests for caller-scoped consent storage
+- [x] 6.3 Add E2E test for multi-client consent scenario
