@@ -79,10 +79,10 @@
 - [x] 14.1 Update README platform support table
 - [x] 14.2 Document Windows-specific requirements (PowerShell execution policy)
 - [x] 14.3 Document Linux-specific requirements (zenity/kdialog, libsecret)
-- [ ] 14.4 Update AGENTS.md with Windows/Linux implementation notes
+- [x] 14.4 Update AGENTS.md with Windows/Linux implementation notes
 ## 15. Testing
 - [ ] 15.1 Add integration tests for Windows discovery
 - [ ] 15.2 Add integration tests for Linux discovery
 - [ ] 15.3 Add E2E test for full Windows flow
 - [ ] 15.4 Add E2E test for full Linux flow
-- [ ] 15.5 Verify all unit tests pass on all platforms
+- [x] 15.5 Verify all unit tests pass on all platforms
