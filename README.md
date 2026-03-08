@@ -87,8 +87,9 @@ These apps have built-in descriptors and work out of the box:
 | **Notion**        | API Key        | 11    | Notes, docs, knowledge base, project management     |
 | **Yuque (语雀)**  | API Key        | 7     | Alibaba Cloud knowledge management platform         |
 | **Feishu / Lark** | App Credential | 11    | Enterprise collaboration (docs, wiki, IM, calendar) |
-
 > 💡 Want to add your app? See [How to Integrate](#how-to-integrate) | [Upcoming Apps](#upcoming-apps)
+
+> ⚠️ **Note**: AAI Gateway is currently in active development. Bugs may exist. Contributions are welcome!
 
 ---
 
