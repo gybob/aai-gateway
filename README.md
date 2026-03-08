@@ -256,11 +256,47 @@ For the complete spec, see **[aai.json Descriptor Spec](https://github.com/gybob
 | Platform    | Discovery              | IPC          | Consent   | Storage  |
 | ----------- | ---------------------- | ------------ | --------- | -------- |
 | **macOS**   | Supported              | Apple Events | osascript | Keychain |
-| **Linux**   | XDG paths              | Stub         | Stub      | Stub     |
-| **Windows** | Program Files          | Stub         | Stub      | Stub     |
+| **Linux**   | XDG paths              | DBus (gdbus)  | zenity/kdialog | libsecret |
+| **Windows** | Program Files          | COM (PowerShell) | PowerShell | CredMan  |
 | **Web**     | `.well-known/aai.json` | HTTP         | N/A       | Platform |
 
-> "Stub" means the feature is implemented as a placeholder and throws `NOT_IMPLEMENTED` error.
+> **Note**: Linux and Windows implementations are functional but may require additional testing and refinement. Contributions are welcome!
+
+#### Windows Requirements
+
+- **PowerShell 5.1+** (comes with Windows 10+)
+- **Execution Policy**: Must allow script execution
+  ```powershell
+  # Check current policy
+  Get-ExecutionPolicy
+  
+  # Set to allow local scripts (recommended)
+  Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+  ```
+- **Credential Manager**: Built-in Windows feature, no additional setup needed
+
+#### Linux Requirements
+
+- **DBus**: Usually pre-installed on modern Linux distributions
+- **Dialog Tools**: Install one of the following:
+  ```bash
+  # Ubuntu/Debian
+  sudo apt install zenity  # or kdialog
+  
+  # Fedora
+  sudo dnf install zenity  # or kdialog
+  
+  # Arch Linux
+  sudo pacman -S zenity  # or kdialog
+  ```
+- **libsecret**: For secure credential storage
+  ```bash
+  # Ubuntu/Debian
+  sudo apt install libsecret-tools
+  
+  # Fedora
+  sudo dnf install libsecret
+  ```
 
 ---
 

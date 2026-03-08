@@ -76,9 +76,9 @@
 - [x] 13.4 Update `src/storage/secure-storage/index.ts` to return Windows/Linux implementations
 - [x] 13.5 Remove NOT_IMPLEMENTED errors for Windows/Linux
 ## 14. Documentation
-- [ ] 14.1 Update README platform support table
-- [ ] 14.2 Document Windows-specific requirements (PowerShell execution policy)
-- [ ] 14.3 Document Linux-specific requirements (zenity/kdialog, libsecret)
+- [x] 14.1 Update README platform support table
+- [x] 14.2 Document Windows-specific requirements (PowerShell execution policy)
+- [x] 14.3 Document Linux-specific requirements (zenity/kdialog, libsecret)
 - [ ] 14.4 Update AGENTS.md with Windows/Linux implementation notes
 ## 15. Testing
 - [ ] 15.1 Add integration tests for Windows discovery

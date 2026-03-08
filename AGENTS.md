@@ -274,16 +274,16 @@ describe('AppleScriptExecutor', () => {
 
 **Implementation Status**:
 - **macOS**: ✅ Fully implemented (Discovery, IPC, Consent, Storage)
-- **Linux**: ⚠️ Stub implementations (throws NOT_IMPLEMENTED errors)
+- **Linux**: ✅ Fully implemented
   - Discovery: Scans XDG paths for .desktop files
-  - IPC: DBus via gdbus (stub)
-  - Consent: zenity/kdialog (stub)
-  - Storage: libsecret via secret-tool (stub)
-- **Windows**: ⚠️ Stub implementations (throws NOT_IMPLEMENTED errors)
+  - IPC: DBus via gdbus
+  - Consent: zenity/kdialog
+  - Storage: libsecret via secret-tool
+- **Windows**: ✅ Fully implemented
   - Discovery: Scans Program Files, AppData for aai.json
-  - IPC: PowerShell COM automation (stub)
-  - Consent: PowerShell MessageBox (stub)
-  - Storage: Windows Credential Manager via cmdkey (stub)
+  - IPC: PowerShell COM automation
+  - Consent: PowerShell MessageBox
+  - Storage: Windows Credential Manager via cmdkey
 
 ### macOS:
 ### macOS:
@@ -295,15 +295,41 @@ describe('AppleScriptExecutor', () => {
 
 ### Windows:
 
-- COM requires ProgID registration (e.g., `Outlook.Application`)
-- May require UAC elevation for certain operations
-- Use structured script array: `[{"action": "create", ...}, {"action": "call", ...}]`
+- **Discovery**:
+  - Scans `Program Files` and `AppData` directories for `aai.json` files
+  - Uses PowerShell `Get-ChildItem` with `-Recurse` for deep scanning
+  - Filters by `platform: "windows"` in descriptor
+- **IPC**:
+  - COM automation via PowerShell scripts
+  - Requires ProgID registration (e.g., `Outlook.Application`)
+  - May require UAC elevation for certain operations
+  - Structured script format: `[{"action": "create", ...}, {"action": "call", ...}]`
+- **Consent**:
+  - PowerShell MessageBox for user dialogs
+  - Supports three-button dialogs (Authorize Once/All/Deny)
+  - Follow-up dialog for "Remember this decision"
+- **Storage**:
+  - Windows Credential Manager via `cmdkey` CLI
+  - Stores credentials with target name `aai-gateway/cred/<appId>`
+  - Uses PowerShell/.NET for credential retrieval
 - **Escaping**: `` ` `` → ` `` `, `"` → `` `" ``, `$` → `` `$ ``
 
 ### Linux:
 
-- DBus requires service name, object path, and interface
-- Use session bus (`SessionBus()` in Python)
+- **Discovery**:
+  - Scans XDG paths for `.desktop` files (`/usr/share/applications`, `~/.local/share/applications`)
+  - Parses `X-AAI-Config` from desktop entries to locate `aai.json`
+  - Filters by `platform: "linux"` in descriptor
+- **IPC**:
+  - DBus method invocation via `gdbus` CLI
+  - Requires service name, object path, and interface
+  - Uses session bus for user-level interactions
+- **Consent**:
+  - Uses `zenity` (GNOME) or `kdialog` (KDE) for dialogs
+  - Auto-detects available dialog tool at runtime
+- **Storage**:
+  - Uses `libsecret` via `secret-tool` CLI
+  - Requires `libsecret-tools` package on most distributions
 - **Escaping**: `\` → `\\`, `"` → `\"`
 
 ### Android:
