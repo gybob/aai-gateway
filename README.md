@@ -3,7 +3,7 @@
 ## One MCP. All Apps. Zero Code Changes.
 
 > 通过一个 MCP 服务器，让 AI Agent 接入所有 Web 应用和桌面应用。
-> 符合 AAI 协议的应用可**无缝接入**，无需开放任何源代码，只需提供描述符。
+> 符合 AAI 协议的应用可**无缝接入**，无需开发任何源代码，只需提供描述符。
 
 [![npm version](https://img.shields.io/npm/v/aai-gateway.svg)](https://www.npmjs.com/package/aai-gateway)
 [![License](https://img.shields.io/npm/l/aai-gateway.svg)](https://github.com/gybob/aai-gateway/blob/main/LICENSE)
