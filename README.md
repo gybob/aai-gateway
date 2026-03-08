@@ -2,151 +2,150 @@
 
 ## One MCP. All Apps. Zero Code Changes.
 
-> 通过一个 MCP 服务器，让 AI Agent 接入所有 Web 应用和桌面应用。
-> 符合 AAI 协议的应用可**无缝接入**，无需开发任何源代码，只需提供描述符。
+> A single MCP server that connects AI Agents to all Web and Desktop applications.
+> Apps conforming to the AAI Protocol can be **seamlessly integrated** without developing any source code—just provide a descriptor.
 
 [![npm version](https://img.shields.io/npm/v/aai-gateway.svg)](https://www.npmjs.com/package/aai-gateway)
 [![License](https://img.shields.io/npm/l/aai-gateway.svg)](https://github.com/gybob/aai-gateway/blob/main/LICENSE)
 
 ---
 
-## 为什么选择 AAI Gateway？
+## Why AAI Gateway?
 
-| 传统方案                       | AAI Gateway                               |
-| ------------------------------ | ----------------------------------------- |
-| 每个 App 一个 MCP Server       | **一个 MCP 接入所有应用**                 |
-| 需要修改应用代码               | **零代码接入，只需描述符**                |
-| 一次加载所有工具（上下文爆炸） | **渐进式披露，按需加载**                  |
-| 仅支持特定平台                 | **跨平台：Web + macOS + Windows + Linux** |
+| Traditional Approach                        | AAI Gateway                                       |
+| ------------------------------------------- | ------------------------------------------------- |
+| One MCP Server per App                      | **One MCP for all applications**                  |
+| Requires modifying app code                 | **Zero-code integration, just a descriptor**      |
+| Loads all tools at once (context explosion) | **Progressive disclosure, load on-demand**        |
+| Platform-specific only                      | **Cross-platform: Web + macOS + Windows + Linux** |
 
 ---
 
-## 🚀 核心创新：渐进式披露（Progressive Disclosure）
+## 🚀 Core Innovation: Progressive Disclosure
 
-传统 MCP 服务器在 `tools/list` 时返回所有工具，导致：
-
-```
-50 个应用 × 每应用 20 个工具 = 1000+ 工具条目
-→ 上下文窗口爆炸
-→ Agent 性能下降
-→ 响应精度降低
-```
-
-**AAI Gateway 的解决方案**：
-
-**AAI Gateway 的解决方案**：
+Traditional MCP servers return all tools on `tools/list`, causing:
 
 ```
-tools/list 只返回:
-├── web:discover             (Web 应用发现)
-├── aai:exec                 (统一执行器)
-├── app:guanchen.worklens    (轻量入口，50 字节)
+50 apps × 20 tools per app = 1000+ tool entries
+→ Context window explosion
+→ Agent performance degradation
+→ Reduced response accuracy
+```
+
+**AAI Gateway's Solution**:
+
+```
+tools/list only returns:
+├── web:discover             (Web app discovery)
+├── aai:exec                 (Universal executor)
+├── app:guanchen.worklens    (Lightweight entry, ~50 bytes)
 └── ...
 
-= 50 apps + 2 工具 = 52 条目 ✅
+= 50 apps + 2 tools = 52 entries ✅
 
-Agent 按需调用 web:discover 或 app:<id> 获取操作指南
+Agent calls web:discover or app:<id> on-demand to get operation guides
 ```
 
-**效果**：上下文占用减少 **95%**，Agent 响应更精准、更快速。
+**Result**: **95% reduction** in context usage, faster and more accurate Agent responses.
 
 ---
 
-## 工作流程
+## How It Works
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    Web 应用工作流                                │
+│                    Web App Workflow                              │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
-│  1. 用户: "搜索我的 Notion 空间"                                 │
-│     └─→ Agent 匹配 "Notion" → 调用 web:discover                  │
+│  1. User: "Search my Notion workspace"                          │
+│     └─→ Agent matches "Notion" → calls web:discover              │
 │                                                                  │
 │  2. tools/call("web:discover", {url: "notion.com"})              │
-│     └─→ 返回: 操作指南                                           │
+│     └─→ Returns: Operation guide                                 │
 │         - listDatabases(), queryDatabase(id), search(query)      │
 │         - ...                                                    │
 │                                                                  │
 │  3. tools/call("aai:exec", {app: "notion.com", tool, args})      │
-│     └─→ 执行操作并返回结果                                        │
+│     └─→ Executes operation and returns result                     │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
-│                    桌面应用工作流                                │
+│                    Desktop App Workflow                          │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
 │  1. tools/list                                                   │
-│     └─→ 返回: ["app:guanchen.worklens", "web:discover",          │
-│               "aai:exec"]                                        │
-│         仅 3 条目！（而非 50+ 工具）                              │
+│     └─→ Returns: ["app:guanchen.worklens", "web:discover",       │
+│                   "aai:exec"]                                    │
+│         Only 3 entries! (not 50+ tools)                          │
 │                                                                  │
-│  2. 用户: "查看我的工作任务"                                     │
-│     └─→ Agent 匹配 "worklens" → 调用 app:guanchen.worklens       │
+│  2. User: "Show my work tasks"                                  │
+│     └─→ Agent matches "worklens" → calls app:guanchen.worklens   │
 │                                                                  │
 │  3. tools/call("app:guanchen.worklens")                          │
-│     └─→ 返回: 操作指南                                           │
+│     └─→ Returns: Operation guide                                 │
 │         - listTasks(), getTaskDetail(id), createTask()           │
 │         - ...                                                    │
 │                                                                  │
 │  4. tools/call("aai:exec", {app, tool: "listTasks", args})       │
-│     └─→ 执行操作并返回结果                                        │
+│     └─→ Executes operation and returns result                     │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 📱 支持的应用
+## 📱 Supported Apps
 
-### Web 应用（内置描述符）
+### Web Apps (Built-in Descriptors)
 
-内置主流 Web 应用的描述符，开箱即用：
+Built-in descriptors for popular web apps, ready to use:
 
-| 应用             | 认证方式       | 工具数 | 说明                                 |
-| ---------------- | -------------- | ------ | ------------------------------------ |
-| **Notion**       | API Key        | 11     | 笔记、文档、知识库、项目管理         |
-| **语雀 (Yuque)** | API Key        | 7      | 阿里云知识管理平台                   |
-| **飞书 / Lark**  | App Credential | 11     | 企业协作平台（文档、Wiki、IM、日历） |
+| App               | Auth Type      | Tools | Description                                         |
+| ----------------- | -------------- | ----- | --------------------------------------------------- |
+| **Notion**        | API Key        | 11    | Notes, docs, knowledge base, project management     |
+| **Yuque (语雀)**  | API Key        | 7     | Alibaba Cloud knowledge management platform         |
+| **Feishu / Lark** | App Credential | 11    | Enterprise collaboration (docs, wiki, IM, calendar) |
 
-> 💡 **持续扩展中**：[申请添加新应用](https://github.com/gybob/aai-gateway/issues)
+> 💡 **Expanding**: [Request a new app](https://github.com/gybob/aai-gateway/issues)
 
-### 桌面应用（自动发现）
+### Desktop Apps (Auto-discovered)
 
-AAI Gateway 自动扫描系统中安装的应用：
+AAI Gateway automatically scans installed applications:
 
-| 平台        | 发现路径                                          | 状态        |
-| ----------- | ------------------------------------------------- | ----------- |
-| **macOS**   | `/Applications/*.app/Contents/Resources/aai.json` | ✅ 完整支持 |
-| **Linux**   | XDG 标准路径 + DBus                               | ⚠️ 开发中   |
-| **Windows** | Program Files + COM                               | ⚠️ 开发中   |
+| Platform    | Discovery Path                                    | Status             |
+| ----------- | ------------------------------------------------- | ------------------ |
+| **macOS**   | `/Applications/*.app/Contents/Resources/aai.json` | ✅ Fully supported |
+| **Linux**   | XDG standard paths + DBus                         | ⚠️ In development  |
+| **Windows** | Program Files + COM                               | ⚠️ In development  |
 
-**已适配示例**：
+**Integrated Examples**:
 
 - Worklens (guanchen.worklens): `listTasks`, `getTaskDetail`, `createTask`
+
 ---
 
-## 🔌 零代码接入
+## 🔌 Zero-Code Integration
 
-符合 AAI 协议的应用可以**无缝接入** AAI Gateway，无需修改任何源代码。
+Apps conforming to the AAI Protocol can be **seamlessly integrated** with AAI Gateway—no source code modification required.
 
-### 描述符放置位置
+### Descriptor Location
 
-**Web 应用**：
+**Web Apps**:
 
 ```
 https://<your-domain>/.well-known/aai.json
 ```
 
-**桌面应用**：
+**Desktop Apps**:
 
 ```
 macOS:   <App>.app/Contents/Resources/aai.json
-Windows: <App>.exe 同级目录/aai.json
+Windows: <App>.exe directory/aai.json
 Linux:   /usr/share/<app>/aai.json
 ```
 
-### 描述符示例
+### Descriptor Example
 
 ```json
 {
@@ -160,7 +159,7 @@ Linux:   /usr/share/<app>/aai.json
       "zh-CN": "我的应用"
     },
     "defaultLang": "en",
-    "description": "应用简介",
+    "description": "App description",
     "aliases": ["myapp", "我的应用"]
   },
   "auth": {
@@ -171,7 +170,7 @@ Linux:   /usr/share/<app>/aai.json
       "prefix": "Bearer",
       "obtainUrl": "https://example.com/settings/tokens",
       "instructions": {
-        "short": "从设置页面获取 API Token",
+        "short": "Get API Token from settings page",
         "helpUrl": "https://example.com/docs/api"
       }
     }
@@ -179,11 +178,11 @@ Linux:   /usr/share/<app>/aai.json
   "tools": [
     {
       "name": "getData",
-      "description": "获取数据",
+      "description": "Get data by ID",
       "parameters": {
         "type": "object",
         "properties": {
-          "id": { "type": "string", "description": "数据ID" }
+          "id": { "type": "string", "description": "Data ID" }
         },
         "required": ["id"]
       },
@@ -196,15 +195,15 @@ Linux:   /usr/share/<app>/aai.json
 }
 ```
 
-> 📖 **完整协议规范**：[AAI Protocol Spec](https://github.com/gybob/aai-protocol)
+> 📖 **Full Protocol Spec**: [AAI Protocol Spec](https://github.com/gybob/aai-protocol)
 
 ---
 
-## 快速开始
+## Quick Start
 
-### 安装
+### Installation
 
-添加 AAI Gateway 到你的 MCP 客户端配置：
+Add AAI Gateway to your MCP client configuration:
 
 ```json
 {
@@ -217,7 +216,7 @@ Linux:   /usr/share/<app>/aai.json
 }
 ```
 
-### 客户端配置
+### Client Configuration
 
 <details>
 <summary>Claude Code</summary>
@@ -231,9 +230,9 @@ claude mcp add aai-gateway npx aai-gateway
 <details>
 <summary>Claude Desktop</summary>
 
-按照 [MCP 安装指南](https://modelcontextprotocol.io/quickstart/user) 操作，使用上述标准配置。
+Follow the [MCP installation guide](https://modelcontextprotocol.io/quickstart/user) using the standard config above.
 
-配置文件位置：`~/Library/Application Support/Claude/claude_desktop_config.json`
+Config file location: `~/Library/Application Support/Claude/claude_desktop_config.json`
 
 </details>
 
@@ -244,14 +243,14 @@ claude mcp add aai-gateway npx aai-gateway
 code --add-mcp '{"name":"aai-gateway","command":"npx","args":["aai-gateway"]}'
 ```
 
-或手动添加到 MCP 设置中。
+Or add manually to your MCP settings.
 
 </details>
 
 <details>
 <summary>Cursor</summary>
 
-进入 `Cursor Settings` → `MCP` → `Add new MCP Server`
+Go to `Cursor Settings` → `MCP` → `Add new MCP Server`
 
 - Name: `aai-gateway`
 - Type: `command`
@@ -262,7 +261,7 @@ code --add-mcp '{"name":"aai-gateway","command":"npx","args":["aai-gateway"]}'
 <details>
 <summary>OpenCode</summary>
 
-添加到 `~/.config/opencode/opencode.json`：
+Add to `~/.config/opencode/opencode.json`:
 
 ```json
 {
@@ -277,7 +276,7 @@ code --add-mcp '{"name":"aai-gateway","command":"npx","args":["aai-gateway"]}'
 }
 ```
 
-开发模式（扫描 Xcode 构建目录）：
+Development mode (scans Xcode build directories):
 
 ```json
 {
@@ -295,24 +294,24 @@ code --add-mcp '{"name":"aai-gateway","command":"npx","args":["aai-gateway"]}'
 
 ---
 
-## 命令行选项
+## CLI Options
 
-| 选项        | 说明                                  |
-| ----------- | ------------------------------------- |
-| `--dev`     | 开发模式，扫描 Xcode 构建目录         |
-| `--scan`    | 扫描已发现的 AAI 应用并退出（调试用） |
-| `--version` | 显示版本号                            |
-| `--help`    | 显示帮助信息                          |
+| Option      | Description                                        |
+| ----------- | -------------------------------------------------- |
+| `--dev`     | Development mode, scans Xcode build directories    |
+| `--scan`    | Scan for AAI-enabled apps and exit (for debugging) |
+| `--version` | Show version number                                |
+| `--help`    | Show help information                              |
 
 ---
 
-## MCP 接口
+## MCP Interface
 
-AAI Gateway 仅暴露 **工具**（无资源），简化 Agent 工作流。
+AAI Gateway exposes **tools only** (no resources), simplifying the Agent workflow.
 
 ### `tools/list`
 
-返回已发现的应用和通用工具：
+Returns discovered apps and universal tools:
 
 ```json
 {
@@ -347,9 +346,10 @@ AAI Gateway 仅暴露 **工具**（无资源），简化 Agent 工作流。
       "inputSchema": { "type": "object", "properties": {} }
     }
   ]
-}```
+}
+```
 
-### `web:discover` - 发现 Web 应用
+### `web:discover` - Discover Web Apps
 
 ```json
 {
@@ -358,9 +358,9 @@ AAI Gateway 仅暴露 **工具**（无资源），简化 Agent 工作流。
 }
 ```
 
-返回该 Web 应用的操作指南。
+Returns the web app's operation guide.
 
-### `app:<id>` - 获取桌面应用操作指南
+### `app:<id>` - Get Desktop App Guide
 
 ```json
 {
@@ -369,9 +369,9 @@ AAI Gateway 仅暴露 **工具**（无资源），简化 Agent 工作流。
 }
 ```
 
-返回该桌面应用的可用操作、参数和示例。
+Returns the desktop app's available operations, parameters, and examples.
 
-### `aai:exec` - 执行操作
+### `aai:exec` - Execute Operation
 
 ```json
 {
@@ -380,60 +380,60 @@ AAI Gateway 仅暴露 **工具**（无资源），简化 Agent 工作流。
     "app": "notion.com",
     "tool": "search",
     "args": {
-      "query": "项目文档"
+      "query": "project docs"
     }
   }
 }
 ```
 
-**执行流程**：
+**Execution Flow**:
 
-1. 解析应用描述符（本地、内置或远程获取）
-2. 显示原生授权对话框 — 用户批准或拒绝
-3. **认证**：
-   - 桌面应用：原生 IPC（AppleScript/COM/DBus）
-   - Web 应用：OAuth 2.1 PKCE / API Key / App Credential / Cookie
-4. 执行并返回结果
-
----
-
-## 认证类型
-
-| 类型            | 适用场景       | 用户流程                   |
-| --------------- | -------------- | -------------------------- |
-| `oauth2`        | 用户授权       | 浏览器 OAuth 2.0 + PKCE    |
-| `apiKey`        | 静态 API Token | 对话框输入 Token           |
-| `appCredential` | 企业应用       | 对话框输入 App ID + Secret |
-| `cookie`        | 无官方 API     | 手动提取 Cookie            |
+1. Resolve app descriptor (local, built-in, or remote fetch)
+2. Show native consent dialog — user approves or denies
+3. **Authentication**:
+   - Desktop apps: Native IPC (AppleScript/COM/DBus)
+   - Web apps: OAuth 2.1 PKCE / API Key / App Credential / Cookie
+4. Execute and return result
 
 ---
 
-## 平台支持
+## Authentication Types
 
-| 平台        | 应用发现                  | IPC 执行器      | 授权对话框        | 安全存储              |
+| Type            | Use Case           | User Flow                          |
+| --------------- | ------------------ | ---------------------------------- |
+| `oauth2`        | User authorization | Browser-based OAuth 2.0 + PKCE     |
+| `apiKey`        | Static API tokens  | Dialog prompts for token           |
+| `appCredential` | Enterprise apps    | Dialog prompts for App ID + Secret |
+| `cookie`        | No official API    | Manual cookie extraction           |
+
+---
+
+## Platform Support
+
+| Platform    | App Discovery             | IPC Executor    | Consent Dialog    | Secure Storage        |
 | ----------- | ------------------------- | --------------- | ----------------- | --------------------- |
 | **macOS**   | ✅                        | ✅ Apple Events | ✅ osascript      | ✅ Keychain           |
 | **Linux**   | ⚠️ XDG paths              | ⚠️ DBus         | ⚠️ zenity/kdialog | ⚠️ libsecret          |
 | **Windows** | ⚠️ Program Files          | ⚠️ COM          | ⚠️ PowerShell     | ⚠️ Credential Manager |
 | **Web**     | ✅ `.well-known/aai.json` | ✅ HTTP + Auth  | —                 | ✅ (via platform)     |
 
-> 图例：✅ 完整支持 | ⚠️ 基础实现（开发中）
+> Legend: ✅ Fully supported | ⚠️ Basic implementation (in development)
 
 ---
 
-## 调试
+## Debugging
 
 ```bash
-# 列出已发现的 AAI 应用
+# List discovered AAI-enabled apps
 npx aai-gateway --scan
 
-# 包含 Xcode 构建产物
+# Include Xcode build products
 npx aai-gateway --scan --dev
 ```
 
 ---
 
-## 开发
+## Development
 
 ```bash
 npm install
@@ -444,10 +444,10 @@ npm run build
 
 ---
 
-## 链接
+## Links
 
-- [AAI Protocol Spec](https://github.com/gybob/aai-protocol) - 协议规范
-- [Report Issues](https://github.com/gybob/aai-gateway/issues) - 问题反馈
+- [AAI Protocol Spec](https://github.com/gybob/aai-protocol) - Protocol specification
+- [Report Issues](https://github.com/gybob/aai-gateway/issues) - Bug reports and feature requests
 
 ---
 
