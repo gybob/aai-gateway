@@ -3,7 +3,7 @@
 ## One MCP. All Apps. Zero Code Changes.
 
 > A single MCP server that connects AI Agents to all Web and Desktop applications.
-> Apps conforming to the AAI Protocol can be **seamlessly integrated** without developing any source code—just provide a descriptor.
+> Apps conforming to the **[AAI Protocol](https://github.com/gybob/aai-protocol)** can be **seamlessly integrated** without developing any source code—just provide a descriptor.
 
 [![npm version](https://img.shields.io/npm/v/aai-gateway.svg)](https://www.npmjs.com/package/aai-gateway)
 [![License](https://img.shields.io/npm/l/aai-gateway.svg)](https://github.com/gybob/aai-gateway/blob/main/LICENSE)
@@ -51,26 +51,18 @@ Agent calls web:discover or app:<id> on-demand to get detailed operation guides
 
 ## How It Works
 
-### Web App Discovery & Usage
-
-Web apps are discovered dynamically through descriptors:
+### Web App Workflow
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    Web App Workflow                              │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  1. User mentions a web service: "Search my Notion workspace"   │
+│  1. User: "Search my Notion workspace"                          │
 │                                                                  │
 │  2. Agent recognizes "Notion" as a web application              │
 │     └─→ Calls web:discover to fetch Notion's capabilities       │
 │                                                                  │
 │  3. tools/call("web:discover", {url: "notion.com"})              │
-│     └─→ Returns: Operation guide with available tools            │
-│         - listDatabases()                                        │
-│         - queryDatabase(id, filter)                              │
-│         - search(query)                                          │
-│         - ...                                                    │
+│     └─→ Returns: Operation guide                                 │
+│         - listDatabases(), queryDatabase(id), search(query)      │
 │                                                                  │
 │  4. tools/call("aai:exec", {                                     │
 │       app: "notion.com",                                         │
@@ -78,31 +70,22 @@ Web apps are discovered dynamically through descriptors:
 │       args: { query: "project docs" }                            │
 │     })                                                           │
 │     └─→ Executes operation and returns result                     │
-│                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Desktop App Discovery & Usage
-
-Desktop apps are discovered by scanning the local system:
+### Desktop App Workflow
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    Desktop App Workflow                          │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
 │  1. AAI Gateway scans system for AAI-enabled desktop apps       │
 │     └─→ Found apps appear as app:<id> entries in tools/list     │
 │                                                                  │
-│  2. User mentions a desktop app: "Show my work tasks"           │
+│  2. User: "Show my work tasks"                                  │
 │     └─→ Agent finds matching app:guanchen.worklens              │
 │                                                                  │
 │  3. tools/call("app:guanchen.worklens")                          │
-│     └─→ Returns: Operation guide with available tools            │
-│         - listTasks()                                            │
-│         - getTaskDetail(id)                                      │
-│         - createTask(title, due)                                 │
-│         - ...                                                    │
+│     └─→ Returns: Operation guide                                 │
+│         - listTasks(), getTaskDetail(id), createTask(title)     │
 │                                                                  │
 │  4. tools/call("aai:exec", {                                     │
 │       app: "guanchen.worklens",                                  │
@@ -110,7 +93,6 @@ Desktop apps are discovered by scanning the local system:
 │       args: {}                                                   │
 │     })                                                           │
 │     └─→ Executes operation and returns result                     │
-│                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -118,9 +100,7 @@ Desktop apps are discovered by scanning the local system:
 
 ## 📱 Supported Apps
 
-### Web Apps (Built-in Descriptors)
-
-These web apps have built-in descriptors and work out of the box:
+These apps have built-in descriptors and work out of the box:
 
 | App               | Auth Type      | Tools | Description                                         |
 | ----------------- | -------------- | ----- | --------------------------------------------------- |
@@ -128,115 +108,11 @@ These web apps have built-in descriptors and work out of the box:
 | **Yuque (语雀)**  | API Key        | 7     | Alibaba Cloud knowledge management platform         |
 | **Feishu / Lark** | App Credential | 11    | Enterprise collaboration (docs, wiki, IM, calendar) |
 
-> 💡 **Adding More**: Any web app can be integrated by providing an `aai.json` descriptor. [Request a built-in descriptor](https://github.com/gybob/aai-gateway/issues)
-
-### Desktop Apps
-
-Currently, no desktop apps have built-in descriptors. Desktop apps can be integrated by:
-
-1. Placing an `aai.json` descriptor in the app bundle
-2. AAI Gateway will automatically discover it on startup
+> 💡 Want to add your app? See [How to Integrate](#-how-to-integrate) | [Upcoming Apps](#upcoming-apps)
 
 ---
 
-## 🔍 App Discovery
-
-### Web App Discovery
-
-AAI Gateway discovers web apps through descriptors in this order:
-
-1. **Built-in Registry** - Check internal registry for known apps (Notion, Yuque, Feishu)
-2. **Remote Fetch** - Fetch `https://<domain>/.well-known/aai.json` from the web app
-
-### Desktop App Discovery
-
-AAI Gateway scans the following paths for `aai.json` descriptors:
-
-| Platform    | Scan Path                               | Status            |
-| ----------- | --------------------------------------- | ----------------- |
-| **macOS**   | `<App>.app/Contents/Resources/aai.json` | ✅ Supported      |
-| **Linux**   | `/usr/share/<app>/aai.json` (XDG paths) | ⚠️ In development |
-| **Windows** | `<App> directory/aai.json`              | ⚠️ In development |
-
----
-
-## 🔌 Zero-Code Integration
-
-Any app can integrate with AAI Gateway by providing an `aai.json` descriptor—no source code changes required.
-
-### Descriptor Location
-
-**Web Apps**:
-
-```
-https://<your-domain>/.well-known/aai.json
-```
-
-**Desktop Apps**:
-
-```
-macOS:   <App>.app/Contents/Resources/aai.json
-Windows: <App>.exe directory/aai.json
-Linux:   /usr/share/<app>/aai.json
-```
-
-### Descriptor Example
-
-```json
-{
-  "schemaVersion": "1.0",
-  "version": "1.0.0",
-  "platform": "web",
-  "app": {
-    "id": "com.example.myapp",
-    "name": {
-      "en": "My App",
-      "zh-CN": "我的应用"
-    },
-    "defaultLang": "en",
-    "description": "App description",
-    "aliases": ["myapp", "我的应用"]
-  },
-  "auth": {
-    "type": "apiKey",
-    "apiKey": {
-      "location": "header",
-      "name": "Authorization",
-      "prefix": "Bearer",
-      "obtainUrl": "https://example.com/settings/tokens",
-      "instructions": {
-        "short": "Get API Token from settings page",
-        "helpUrl": "https://example.com/docs/api"
-      }
-    }
-  },
-  "tools": [
-    {
-      "name": "getData",
-      "description": "Get data by ID",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "id": { "type": "string", "description": "Data ID" }
-        },
-        "required": ["id"]
-      },
-      "execution": {
-        "path": "/data/{id}",
-        "method": "GET"
-      }
-    }
-  ]
-}
-```
-
-> 📖 **Full Protocol Spec**: [AAI Protocol Spec](https://github.com/gybob/aai-protocol)
-
----
-
-## Quick Start
-
-### Installation
+## Installation
 
 Add AAI Gateway to your MCP client configuration:
 
@@ -251,8 +127,6 @@ Add AAI Gateway to your MCP client configuration:
 }
 ```
 
-### Client Configuration
-
 <details>
 <summary>Claude Code</summary>
 
@@ -265,9 +139,7 @@ claude mcp add aai-gateway npx aai-gateway
 <details>
 <summary>Claude Desktop</summary>
 
-Follow the [MCP installation guide](https://modelcontextprotocol.io/quickstart/user) using the standard config above.
-
-Config file location: `~/Library/Application Support/Claude/claude_desktop_config.json`
+Follow the [MCP installation guide](https://modelcontextprotocol.io/quickstart/user). Config location: `~/Library/Application Support/Claude/claude_desktop_config.json`
 
 </details>
 
@@ -278,25 +150,17 @@ Config file location: `~/Library/Application Support/Claude/claude_desktop_confi
 code --add-mcp '{"name":"aai-gateway","command":"npx","args":["aai-gateway"]}'
 ```
 
-Or add manually to your MCP settings.
-
 </details>
 
 <details>
 <summary>Cursor</summary>
 
-Go to `Cursor Settings` → `MCP` → `Add new MCP Server`
-
-- Name: `aai-gateway`
-- Type: `command`
-- Command: `npx aai-gateway`
+`Cursor Settings` → `MCP` → `Add new MCP Server`. Name: `aai-gateway`, Type: `command`, Command: `npx aai-gateway`
 
 </details>
 
 <details>
 <summary>OpenCode</summary>
-
-Add to `~/.config/opencode/opencode.json`:
 
 ```json
 {
@@ -311,110 +175,52 @@ Add to `~/.config/opencode/opencode.json`:
 }
 ```
 
-Development mode (scans Xcode build directories):
-
-```json
-{
-  "mcp": {
-    "aai-gateway": {
-      "type": "local",
-      "command": ["npx", "aai-gateway", "--dev"],
-      "enabled": true
-    }
-  }
-}
-```
-
 </details>
 
 ---
 
 ## CLI Options
 
-| Option      | Description                                        |
-| ----------- | -------------------------------------------------- |
-| `--dev`     | Development mode, scans Xcode build directories    |
-| `--scan`    | Scan for AAI-enabled apps and exit (for debugging) |
-| `--version` | Show version number                                |
-| `--help`    | Show help information                              |
+| Option      | Description                                     |
+| ----------- | ----------------------------------------------- |
+| `--dev`     | Development mode, scans Xcode build directories |
+| `--scan`    | Scan for AAI-enabled apps and exit (debugging)  |
+| `--version` | Show version                                    |
+| `--help`    | Show help                                       |
 
 ---
 
 ## MCP Interface
 
-AAI Gateway exposes **tools only** (no resources), simplifying the Agent workflow.
-
 ### `tools/list`
-
-Returns discovered desktop apps and universal tools:
 
 ```json
 {
   "tools": [
-    {
-      "name": "web:discover",
-      "description": "Discover web app capabilities. Call with URL/domain to get operation guide.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "url": { "type": "string", "description": "Web app URL, domain, or name" }
-        },
-        "required": ["url"]
-      }
-    },
-    {
-      "name": "app:guanchen.worklens",
-      "description": "【Worklens】Desktop task management app. Call to get operation guide.",
-      "inputSchema": { "type": "object", "properties": {} }
-    },
-    {
-      "name": "aai:exec",
-      "description": "Execute app operation. Call after reading the operation guide.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "app": { "type": "string", "description": "App ID or URL" },
-          "tool": { "type": "string", "description": "Operation name" },
-          "args": { "type": "object", "description": "Operation parameters" }
-        },
-        "required": ["app", "tool"]
-      }
-    }
+    { "name": "web:discover", "description": "Discover web app capabilities..." },
+    { "name": "app:guanchen.worklens", "description": "Desktop app. Call to get guide." },
+    { "name": "aai:exec", "description": "Execute app operation..." }
   ]
 }
 ```
 
 ### `web:discover` - Discover Web Apps
 
-Call with a web app URL, domain, or name to get its capabilities:
-
 ```json
-{
-  "name": "web:discover",
-  "arguments": { "url": "notion.com" }
-}
+{ "name": "web:discover", "arguments": { "url": "notion.com" } }
 ```
 
-Returns an operation guide with available tools and their parameters.
+Returns operation guide with available tools.
 
 ### `app:<id>` - Get Desktop App Guide
 
-Call with a discovered desktop app ID to get its capabilities:
-
 ```json
-{
-  "name": "app:guanchen.worklens",
-  "arguments": {}
-}
+{ "name": "app:guanchen.worklens", "arguments": {} }
 ```
 
-Returns an operation guide with available tools and their parameters.
+Returns operation guide with available tools.
 
 ### `aai:exec` - Execute Operation
-
-Execute an operation after reading the app's operation guide:
-
-**Web App Example**:
 
 ```json
 {
@@ -427,80 +233,75 @@ Execute an operation after reading the app's operation guide:
 }
 ```
 
-**Desktop App Example**:
-
-```json
-{
-  "name": "aai:exec",
-  "arguments": {
-    "app": "guanchen.worklens",
-    "tool": "listTasks",
-    "args": {}
-  }
-}
-```
-
-**Execution Flow**:
-
-1. Resolve app descriptor (built-in, cached, or remote fetch)
-2. Show native consent dialog — user approves or denies
-3. **Authentication**:
-   - Desktop apps: Native IPC (AppleScript/COM/DBus)
-   - Web apps: OAuth 2.1 PKCE / API Key / App Credential / Cookie
-4. Execute and return result
+**Execution Flow**: Resolve descriptor → Show consent dialog → Authenticate → Execute → Return result
 
 ---
 
 ## Authentication Types
 
-| Type            | Use Case           | User Flow                          |
-| --------------- | ------------------ | ---------------------------------- |
-| `oauth2`        | User authorization | Browser-based OAuth 2.0 + PKCE     |
-| `apiKey`        | Static API tokens  | Dialog prompts for token           |
-| `appCredential` | Enterprise apps    | Dialog prompts for App ID + Secret |
-| `cookie`        | No official API    | Manual cookie extraction           |
+| Type            | Use Case           | User Flow                  |
+| --------------- | ------------------ | -------------------------- |
+| `oauth2`        | User authorization | Browser OAuth 2.0 + PKCE   |
+| `apiKey`        | Static API tokens  | Dialog prompts for token   |
+| `appCredential` | Enterprise apps    | Dialog for App ID + Secret |
+| `cookie`        | No official API    | Manual cookie extraction   |
 
 ---
 
 ## Platform Support
 
-| Platform    | App Discovery             | IPC Executor    | Consent Dialog    | Secure Storage        |
-| ----------- | ------------------------- | --------------- | ----------------- | --------------------- |
-| **macOS**   | ✅                        | ✅ Apple Events | ✅ osascript      | ✅ Keychain           |
-| **Linux**   | ⚠️ XDG paths              | ⚠️ DBus         | ⚠️ zenity/kdialog | ⚠️ libsecret          |
-| **Windows** | ⚠️ Program Files          | ⚠️ COM          | ⚠️ PowerShell     | ⚠️ Credential Manager |
-| **Web**     | ✅ `.well-known/aai.json` | ✅ HTTP + Auth  | —                 | ✅ (via platform)     |
+| Platform    | Discovery                 | IPC             | Consent       | Storage               |
+| ----------- | ------------------------- | --------------- | ------------- | --------------------- |
+| **macOS**   | ✅                        | ✅ Apple Events | ✅ osascript  | ✅ Keychain           |
+| **Linux**   | ⚠️ XDG                    | ⚠️ DBus         | ⚠️ zenity     | ⚠️ libsecret          |
+| **Windows** | ⚠️ Program Files          | ⚠️ COM          | ⚠️ PowerShell | ⚠️ Credential Manager |
+| **Web**     | ✅ `.well-known/aai.json` | ✅ HTTP+Auth    | —             | ✅                    |
 
-> Legend: ✅ Fully supported | ⚠️ Basic implementation (in development)
-
----
-
-## Debugging
-
-```bash
-# List discovered AAI-enabled apps
-npx aai-gateway --scan
-
-# Include Xcode build products
-npx aai-gateway --scan --dev
-```
+> Legend: ✅ Supported | ⚠️ In development
 
 ---
 
-## Development
+## 🔌 How to Integrate
 
-```bash
-npm install
-npm run typecheck
-npm test
-npm run build
-```
+Any app can integrate with AAI Gateway by providing an `aai.json` descriptor.
+
+### Descriptor Location
+
+| Platform    | Location                                     |
+| ----------- | -------------------------------------------- |
+| **Web**     | `https://<your-domain>/.well-known/aai.json` |
+| **macOS**   | `<App>.app/Contents/Resources/aai.json`      |
+| **Windows** | `<App>.exe directory/aai.json`               |
+| **Linux**   | `/usr/share/<app>/aai.json`                  |
+
+### Descriptor Format
+
+The descriptor follows the **[AAI Protocol specification](https://github.com/gybob/aai-protocol/blob/main/spec/aai-json.md)**. Key points:
+
+- **All field names use camelCase** (e.g., `schemaVersion`, `baseUrl`)
+- Supports **internationalized names** with language fallback
+- **Auth types**: `oauth2`, `apiKey`, `appCredential`, `cookie`
+- **Tools** defined with JSON Schema parameters
+
+For the complete descriptor specification, see **[aai.json Descriptor Spec](https://github.com/gybob/aai-protocol/blob/main/spec/aai-json.md)**.
+
+---
+
+## Appendix
+
+### Upcoming Apps
+
+The following apps are planned for future integration:
+
+> _(List to be added)_
+
+Want to see your app here? [Open an issue](https://github.com/gybob/aai-gateway/issues).
 
 ---
 
 ## Links
 
-- [AAI Protocol Spec](https://github.com/gybob/aai-protocol) - Protocol specification
+- **[AAI Protocol Spec](https://github.com/gybob/aai-protocol)** - Protocol specification
 - [Report Issues](https://github.com/gybob/aai-gateway/issues) - Bug reports and feature requests
 
 ---
