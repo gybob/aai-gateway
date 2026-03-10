@@ -74,6 +74,7 @@ Agent calls web:discover or app:<id> on-demand to get detailed operation guides
    → Returns operation guide: listTasks(), getTaskDetail(id), createTask()
 4. tools/call("aai:exec", {app: "guanchen.worklens", tool: "listTasks", args: {}})
    → Executes and returns result
+```
 
 ### ACP Agent Workflow
 
