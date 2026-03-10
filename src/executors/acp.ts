@@ -1,7 +1,7 @@
 import { spawn, ChildProcess } from 'node:child_process';
 import { logger } from '../utils/logger.js';
 import { AaiError } from '../errors/errors.js';
-import type { AgentDescriptor } from '../discovery/agent-registry.js';
+import type { AaiJson, AcpExecution } from '../types/aai-json.js';
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
@@ -37,15 +37,22 @@ export class AcpExecutor {
   private requestId = 0;
   private initializedAgents = new Set<string>();
 
+  private getAcpExecution(descriptor: AaiJson): AcpExecution {
+    if (descriptor.execution.type !== 'acp') {
+      throw new AaiError('INTERNAL_ERROR', 'Descriptor is not an ACP agent');
+    }
+    return descriptor.execution;
+  }
+
   /**
    * Execute an ACP method on an agent
    */
   async execute(
-    descriptor: AgentDescriptor,
+    descriptor: AaiJson,
     method: string,
     params: Record<string, unknown>
   ): Promise<unknown> {
-    const appId = descriptor.id;
+    const appId = descriptor.app.id;
 
     // Ensure process is running and initialized
     await this.ensureProcess(descriptor);
@@ -83,8 +90,9 @@ export class AcpExecutor {
   /**
    * Ensure agent process is running and initialized
    */
-  private async ensureProcess(descriptor: AgentDescriptor): Promise<void> {
-    const appId = descriptor.id;
+  private async ensureProcess(descriptor: AaiJson): Promise<void> {
+    const appId = descriptor.app.id;
+    const execution = this.getAcpExecution(descriptor);
 
     if (this.processes.has(appId) && this.initializedAgents.has(appId)) {
       return;
@@ -100,11 +108,11 @@ export class AcpExecutor {
     }
 
     return new Promise((resolve, reject) => {
-      logger.info({ appId, command: descriptor.start.command }, 'Starting ACP agent');
+      logger.info({ appId, command: execution.start.command }, 'Starting ACP agent');
 
-      const proc = spawn(descriptor.start.command, descriptor.start.args ?? [], {
+      const proc = spawn(execution.start.command, execution.start.args ?? [], {
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env, ...descriptor.start.env },
+        env: { ...process.env, ...execution.start.env },
       });
 
       this.processes.set(appId, proc);
@@ -218,11 +226,7 @@ export class AcpExecutor {
 
         if ('error' in message && message.error) {
           pending.reject(
-            new AaiError(
-              'INTERNAL_ERROR',
-              message.error.message,
-              { errorData: message.error.data }
-            )
+            new AaiError('INTERNAL_ERROR', message.error.message, { errorData: message.error.data })
           );
         } else {
           pending.resolve(message.result);

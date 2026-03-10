@@ -1,5 +1,6 @@
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
+import type { AaiJson } from '../types/aai-json.js';
 import { getLocalizedName } from '../types/aai-json.js';
 import { getSystemLocale } from '../utils/locale.js';
 import { logger } from '../utils/logger.js';
@@ -8,42 +9,6 @@ import { claudeCodeDescriptor } from './descriptors/claude-code-agent.js';
 import { geminiCliDescriptor } from './descriptors/gemini-cli-agent.js';
 
 const execAsync = promisify(exec);
-
-/**
- * Agent Descriptor
- *
- * Describes an ACP-compatible agent that can be discovered and executed.
- */
-export interface AgentDescriptor {
-  /** Unique agent identifier (e.g., 'dev.sst.opencode') */
-  id: string;
-  /** Localized display names */
-  name: Record<string, string>;
-  /** Default language for fallback */
-  defaultLang: string;
-  /** Brief description */
-  description: string;
-  /** Alternative names for lookup */
-  aliases?: string[];
-  /** Process start configuration */
-  start: {
-    /** Command to execute (e.g., 'opencode') */
-    command: string;
-    /** Command arguments */
-    args?: string[];
-    /** Environment variables */
-    env?: Record<string, string>;
-  };
-  /** Available tools (ACP methods) */
-  tools: Array<{
-    /** ACP method name (e.g., 'session/new') */
-    name: string;
-    /** Tool description */
-    description: string;
-    /** JSON Schema parameters */
-    parameters: object;
-  }>;
-}
 
 /**
  * Discovered Agent
@@ -58,19 +23,20 @@ export interface DiscoveredAgent {
   /** Description */
   description: string;
   /** Full descriptor */
-  descriptor: AgentDescriptor;
+  descriptor: AaiJson;
   /** Resolved command path */
   commandPath: string;
+}
+
+function getAcpStartCommand(descriptor: AaiJson): string | null {
+  if (descriptor.execution.type !== 'acp') return null;
+  return descriptor.execution.start.command;
 }
 
 /**
  * Built-in agent descriptors
  */
-const BUILTIN_AGENTS: AgentDescriptor[] = [
-  opencodeDescriptor,
-  claudeCodeDescriptor,
-  geminiCliDescriptor,
-];
+const BUILTIN_AGENTS: AaiJson[] = [opencodeDescriptor, claudeCodeDescriptor, geminiCliDescriptor];
 
 /**
  * Scan for installed ACP agents
@@ -82,24 +48,27 @@ export async function scanInstalledAgents(): Promise<DiscoveredAgent[]> {
   const locale = getSystemLocale();
 
   for (const agent of BUILTIN_AGENTS) {
+    const command = getAcpStartCommand(agent);
+    if (!command) continue;
+
     try {
-      const commandPath = await checkCommandExists(agent.start.command);
+      const commandPath = await checkCommandExists(command);
 
       if (commandPath) {
-        const localizedName = getLocalizedName(agent.name, locale, agent.defaultLang);
+        const localizedName = getLocalizedName(agent.app.name, locale, agent.app.defaultLang);
 
         discovered.push({
-          appId: agent.id,
+          appId: agent.app.id,
           name: localizedName,
-          description: agent.description,
+          description: agent.app.description,
           descriptor: agent,
           commandPath,
         });
 
-        logger.info({ appId: agent.id, command: agent.start.command }, 'ACP Agent discovered');
+        logger.info({ appId: agent.app.id, command }, 'ACP Agent discovered');
       }
     } catch (err) {
-      logger.debug({ appId: agent.id }, 'ACP Agent not installed');
+      logger.debug({ appId: agent.app.id }, 'ACP Agent not installed');
     }
   }
 
@@ -125,16 +94,16 @@ async function checkCommandExists(command: string): Promise<string | null> {
 /**
  * Look up an agent by alias or name
  */
-export function lookupAgentByAlias(input: string): AgentDescriptor | null {
+export function lookupAgentByAlias(input: string): AaiJson | null {
   const normalizedInput = input.toLowerCase();
 
   for (const descriptor of BUILTIN_AGENTS) {
     // Check aliases
-    if (descriptor.aliases?.some((a) => a.toLowerCase() === normalizedInput)) {
+    if (descriptor.app.aliases?.some((a) => a.toLowerCase() === normalizedInput)) {
       return descriptor;
     }
     // Check names
-    for (const name of Object.values(descriptor.name)) {
+    for (const name of Object.values(descriptor.app.name)) {
       if (name.toLowerCase() === normalizedInput) {
         return descriptor;
       }
@@ -147,6 +116,6 @@ export function lookupAgentByAlias(input: string): AgentDescriptor | null {
 /**
  * Get all built-in agent descriptors
  */
-export function getBuiltinAgents(): AgentDescriptor[] {
+export function getBuiltinAgents(): AaiJson[] {
   return [...BUILTIN_AGENTS];
 }

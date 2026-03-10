@@ -1,4 +1,4 @@
-import type { AgentDescriptor } from '../agent-registry.js';
+import type { AaiJson } from '../../types/aai-json.js';
 
 /**
  * Gemini CLI Agent Descriptor
@@ -6,18 +6,26 @@ import type { AgentDescriptor } from '../agent-registry.js';
  * Google's Gemini CLI coding agent.
  * https://github.com/google-gemini/gemini-cli
  */
-export const geminiCliDescriptor: AgentDescriptor = {
-  id: 'com.google.gemini-cli',
-  name: {
-    en: 'Gemini CLI',
-    'zh-CN': 'Gemini CLI',
+export const geminiCliDescriptor: AaiJson = {
+  schemaVersion: '1.0',
+  version: '1.0.0',
+  platform: 'macos',
+  app: {
+    id: 'com.google.gemini-cli',
+    name: {
+      en: 'Gemini CLI',
+      'zh-CN': 'Gemini CLI',
+    },
+    defaultLang: 'en',
+    description: "Google's Gemini CLI coding agent",
+    aliases: ['gemini', 'gemini-cli', 'google'],
   },
-  defaultLang: 'en',
-  description: "Google's Gemini CLI coding agent",
-  aliases: ['gemini', 'gemini-cli', 'google'],
-  start: {
-    command: 'gemini',
-    args: [],
+  execution: {
+    type: 'acp',
+    start: {
+      command: 'gemini',
+      args: [],
+    },
   },
   tools: [
     {

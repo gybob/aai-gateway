@@ -1,4 +1,4 @@
-import type { AgentDescriptor } from '../agent-registry.js';
+import type { AaiJson } from '../../types/aai-json.js';
 
 /**
  * OpenCode Agent Descriptor
@@ -6,18 +6,26 @@ import type { AgentDescriptor } from '../agent-registry.js';
  * Open-source AI coding agent with terminal UI.
  * https://github.com/sst/opencode
  */
-export const opencodeDescriptor: AgentDescriptor = {
-  id: 'dev.sst.opencode',
-  name: {
-    en: 'OpenCode',
-    'zh-CN': 'OpenCode',
+export const opencodeDescriptor: AaiJson = {
+  schemaVersion: '1.0',
+  version: '1.0.0',
+  platform: 'macos',
+  app: {
+    id: 'dev.sst.opencode',
+    name: {
+      en: 'OpenCode',
+      'zh-CN': 'OpenCode',
+    },
+    defaultLang: 'en',
+    description: 'Open-source AI coding agent with terminal UI, multi-session support',
+    aliases: ['opencode', 'sst', 'code-agent'],
   },
-  defaultLang: 'en',
-  description: 'Open-source AI coding agent with terminal UI, multi-session support',
-  aliases: ['opencode', 'sst', 'code-agent'],
-  start: {
-    command: 'opencode',
-    args: [],
+  execution: {
+    type: 'acp',
+    start: {
+      command: 'opencode',
+      args: [],
+    },
   },
   tools: [
     {

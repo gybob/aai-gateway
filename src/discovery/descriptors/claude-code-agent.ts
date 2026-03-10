@@ -1,4 +1,4 @@
-import type { AgentDescriptor } from '../agent-registry.js';
+import type { AaiJson } from '../../types/aai-json.js';
 
 /**
  * Claude Code Agent Descriptor
@@ -6,18 +6,26 @@ import type { AgentDescriptor } from '../agent-registry.js';
  * Anthropic's official coding agent.
  * https://www.anthropic.com/claude-code
  */
-export const claudeCodeDescriptor: AgentDescriptor = {
-  id: 'com.anthropic.claude-code',
-  name: {
-    en: 'Claude Code',
-    'zh-CN': 'Claude Code',
+export const claudeCodeDescriptor: AaiJson = {
+  schemaVersion: '1.0',
+  version: '1.0.0',
+  platform: 'macos',
+  app: {
+    id: 'com.anthropic.claude-code',
+    name: {
+      en: 'Claude Code',
+      'zh-CN': 'Claude Code',
+    },
+    defaultLang: 'en',
+    description: "Anthropic's official AI coding agent",
+    aliases: ['claude', 'claude-code', 'anthropic'],
   },
-  defaultLang: 'en',
-  description: "Anthropic's official AI coding agent",
-  aliases: ['claude', 'claude-code', 'anthropic'],
-  start: {
-    command: 'claude',
-    args: [],
+  execution: {
+    type: 'acp',
+    start: {
+      command: 'claude',
+      args: [],
+    },
   },
   tools: [
     {

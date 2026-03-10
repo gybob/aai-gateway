@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { AcpExecutor, getAcpExecutor } from './acp.js';
-import type { AgentDescriptor } from '../discovery/agent-registry.js';
+import type { AaiJson } from '../types/aai-json.js';
 import { AaiError } from '../errors/errors.js';
 
 // Mock child_process
@@ -22,13 +22,21 @@ describe('AcpExecutor', () => {
   let executor: AcpExecutor;
   let mockProcess: any;
 
-  const testDescriptor: AgentDescriptor = {
-    id: 'ai.test.agent',
-    name: { en: 'Test Agent' },
-    description: 'A test agent',
-    defaultLang: 'en',
-    start: {
-      command: 'test-agent',
+  const testDescriptor: AaiJson = {
+    schemaVersion: '1.0',
+    version: '1.0.0',
+    platform: 'macos',
+    app: {
+      id: 'ai.test.agent',
+      name: { en: 'Test Agent' },
+      description: 'A test agent',
+      defaultLang: 'en',
+    },
+    execution: {
+      type: 'acp',
+      start: {
+        command: 'test-agent',
+      },
     },
     tools: [
       {
@@ -120,7 +128,7 @@ describe('AcpExecutor', () => {
     });
 
     it('should validate tool exists before execution', async () => {
-      const descriptorWithoutTools: AgentDescriptor = {
+      const descriptorWithoutTools: AaiJson = {
         ...testDescriptor,
         tools: [],
       };
@@ -145,7 +153,7 @@ describe('AcpExecutor', () => {
 
   describe('initialization', () => {
     it('should track initialized agents', () => {
-      const appId = testDescriptor.id;
+      const appId = testDescriptor.app.id;
       expect(executor['initializedAgents'].has(appId)).toBe(false);
     });
   });
