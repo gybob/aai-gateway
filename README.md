@@ -130,6 +130,8 @@ These web apps have built-in descriptors and work out of the box:
 | **Yuque (语雀)**  | API Key        | 7     | Alibaba Cloud knowledge management platform         |
 | **Feishu / Lark** | App Credential | 11    | Enterprise collaboration (docs, wiki, IM, calendar) |
 
+> 💡 Want to add your app? See [How to Integrate](#how-to-integrate) | [Upcoming Apps](#upcoming-apps)
+
 ### 🤖 ACP Agents
 
 AAI Gateway can discover and control ACP (Agent Client Protocol) compatible AI agents:
@@ -140,7 +142,7 @@ AAI Gateway can discover and control ACP (Agent Client Protocol) compatible AI a
 | **Claude Code** | `com.anthropic.claude-code` | 2 | Anthropic's official AI coding agent |
 | **Gemini CLI** | `com.google.gemini-cli` | 2 | Google's Gemini CLI coding agent |
 
-> 💡 **Note**: ACP agents are auto-discovered at startup. Only installed agents will appear in tools/list.
+> 💡 Want to add a new agent? See [Adding a New ACP Agent](#adding-a-new-acp-agent)
 
 > ⚠️ **Note**: AAI Gateway is currently in active development. Bugs may exist. Contributions are welcome!
 
@@ -323,6 +325,50 @@ For the complete spec, see **[aai.json Descriptor Spec](https://github.com/gybob
   # Fedora
   sudo dnf install libsecret
   ```
+
+#### Adding a New ACP Agent
+
+To add support for a new ACP-compatible agent:
+
+1. Create `src/discovery/descriptors/agents/<agent>.ts`:
+   ```typescript
+   import type { AgentDescriptor } from '../../agent-registry.js';
+
+   export const myAgentDescriptor: AgentDescriptor = {
+     id: 'com.example.my-agent',
+     name: { en: 'My Agent' },
+     description: 'Description of the agent',
+     defaultLang: 'en',
+     aliases: ['myagent', 'ma'],
+     start: {
+       command: 'my-agent',
+       args: [],
+       env: {},
+     },
+     tools: [
+       {
+         name: 'session/new',
+         description: 'Start a new session',
+         parameters: { type: 'object', properties: {} },
+       },
+       {
+         name: 'session/prompt',
+         description: 'Send a prompt to the agent',
+         parameters: {
+           type: 'object',
+           properties: {
+             message: { type: 'string', description: 'The prompt message' },
+           },
+           required: ['message'],
+         },
+       },
+     ],
+   };
+   ```
+
+2. Import and add to `BUILTIN_AGENTS` array in `src/discovery/agent-registry.ts`.
+
+3. Test by running the gateway and checking `tools/list` output.
 
 ---
 
