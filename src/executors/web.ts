@@ -35,11 +35,16 @@ export async function executeWebTool(
     throw new AaiError('INVALID_REQUEST', `Tool '${toolName}' has no HTTP execution config`);
   }
 
-  const baseUrl = descriptor.execution.baseUrl;
+  // Check execution type
+  if (descriptor.execution.type !== 'http') {
+    throw new AaiError('INVALID_REQUEST', 'Web tool requires http execution type');
+  }
+
+  const webExecution = descriptor.execution;
+  const baseUrl = webExecution.baseUrl;
   if (!baseUrl) {
     throw new AaiError('INVALID_REQUEST', 'Descriptor missing execution.baseUrl');
   }
-
   // Build URL with path parameter substitution
   // Create a copy of args to avoid modifying the original
   const processedArgs = { ...args };
@@ -51,6 +56,7 @@ export async function executeWebTool(
       delete processedArgs[key]; // Remove from args so it doesn't go to body/query
     }
   }
+
 
   const url = new URL(`${baseUrl.replace(/\/$/, '')}${path}`);
   const method = tool.execution.method.toUpperCase();
@@ -73,13 +79,12 @@ export async function executeWebTool(
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...descriptor.execution.defaultHeaders,
+    ...(webExecution.type === 'http' ? webExecution.defaultHeaders : {}),
     ...authContext?.headers,
     ...tool.execution.headers,
   };
 
   const isBodyMethod = ['POST', 'PUT', 'PATCH'].includes(method);
-
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
 

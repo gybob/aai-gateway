@@ -20,16 +20,18 @@ import type { DiscoveredDesktopApp } from '../discovery/interface.js';
 import type { AaiJson } from '../types/aai-json.js';
 import { getLocalizedName } from '../types/aai-json.js';
 import { getSystemLocale } from '../utils/locale.js';
+import { scanInstalledAgents, type DiscoveredAgent } from '../discovery/agent-registry.js';
+import { getAcpExecutor } from '../executors/acp.js';
 
 export class AaiGatewayServer {
   private readonly server: Server;
-  private readonly desktopRegistry = new Map<string, DiscoveredDesktopApp>();
+  private readonly options: DiscoveryOptions;
+private readonly desktopRegistry = new Map<string, DiscoveredDesktopApp>();
+private readonly agentRegistry = new Map<string, DiscoveredAgent>();
   private consentManager!: ConsentManager;
   private tokenManager!: TokenManager;
   private credentialManager!: CredentialManager;
-  private readonly options: DiscoveryOptions;
-  private callerIdentity: CallerIdentity = { name: 'Unknown Client' };
-
+  private callerIdentity?: CallerIdentity;
   constructor(options?: DiscoveryOptions) {
     this.options = options ?? {};
     this.server = new Server(
@@ -63,6 +65,16 @@ export class AaiGatewayServer {
       } else {
         logger.error({ err }, 'Desktop discovery failed');
       }
+    }
+    // Scan ACP agents
+    try {
+      const agents = await scanInstalledAgents();
+      for (const agent of agents) {
+        this.agentRegistry.set(agent.appId, agent);
+      }
+      logger.info({ count: agents.length }, 'ACP agents discovered');
+    } catch (err) {
+      logger.error({ err }, 'ACP agent discovery failed');
     }
   }
 
@@ -98,6 +110,16 @@ export class AaiGatewayServer {
         });
         tools.push({
           name: `app:${app.appId}`,
+          description,
+          inputSchema: { type: 'object', properties: {} },
+        });
+      }
+
+      // ACP agents (one entry per agent)
+      for (const agent of this.agentRegistry.values()) {
+        const description = `[Agent] ${agent.name}: ${agent.description}`;
+        tools.push({
+          name: `app:${agent.appId}`,
           description,
           inputSchema: { type: 'object', properties: {} },
         });
@@ -190,15 +212,25 @@ export class AaiGatewayServer {
   private async handleAppGuide(
     appId: string
   ): Promise<{ content: Array<{ type: string; text: string }> }> {
-    const app = this.desktopRegistry.get(appId);
-    if (!app) {
-      throw new AaiError('UNKNOWN_APP', `App not found: ${appId}`);
+    // Check desktop apps
+    const desktopApp = this.desktopRegistry.get(appId);
+    if (desktopApp) {
+      const guide = generateOperationGuide(appId, desktopApp.descriptor, 'desktop');
+      return {
+        content: [{ type: 'text', text: guide }],
+      };
     }
 
-    const guide = generateOperationGuide(appId, app.descriptor, 'desktop');
-    return {
-      content: [{ type: 'text', text: guide }],
-    };
+    // Check ACP agents
+    const agent = this.agentRegistry.get(appId);
+    if (agent) {
+      const guide = this.generateAgentGuide(appId, agent);
+      return {
+        content: [{ type: 'text', text: guide }],
+      };
+    }
+
+    throw new AaiError('UNKNOWN_APP', `App not found: ${appId}`);
   }
 
   private async handleWebDiscover(
@@ -229,13 +261,23 @@ export class AaiGatewayServer {
       appName = desktopApp.name;
       platform = 'desktop';
     } else {
-      // Treat as web app URL
-      const normalizedUrl = this.normalizeUrl(appId);
-      descriptor = await fetchWebDescriptor(normalizedUrl);
-      const locale = getSystemLocale();
-      appName = getLocalizedName(descriptor.app.name, locale, descriptor.app.defaultLang);
-      platform = 'web';
-    }
+      // Check ACP agents
+      const agent = this.agentRegistry.get(appId);
+      if (agent) {
+        // ACP agent execution - no descriptor needed from file
+        const acpExecutor = getAcpExecutor();
+        const result = await acpExecutor.execute(agent.descriptor, toolName, args);
+        return {
+          content: [{ type: 'text', text: typeof result === 'string' ? result : JSON.stringify(result, null, 2) }],
+        };
+      }
+// Treat as web app URL
+const normalizedUrl = this.normalizeUrl(appId);
+descriptor = await fetchWebDescriptor(normalizedUrl);
+const locale = getSystemLocale();
+appName = getLocalizedName(descriptor.app.name, locale, descriptor.app.defaultLang);
+platform = 'web';
+}
 
     // Find tool
     const tool = descriptor.tools.find((t) => t.name === toolName);
@@ -248,7 +290,7 @@ export class AaiGatewayServer {
       name: toolName,
       description: tool.description,
       parameters: tool.parameters,
-    }, this.callerIdentity);
+    }, this.callerIdentity ?? { name: 'Unknown Client' });
 
     // Execute
     let result: unknown;
@@ -313,6 +355,26 @@ export class AaiGatewayServer {
 
     // Try as domain
     return `https://${input}`;
+  }
+
+  private generateAgentGuide(appId: string, agent: DiscoveredAgent): string {
+    const sections: string[] = [];
+    sections.push(`# ${agent.name} (ACP Agent)`);
+    sections.push('');
+    sections.push(agent.description);
+    sections.push('');
+    sections.push('## Available Operations');
+    sections.push('');
+    for (const tool of agent.descriptor.tools) {
+      sections.push(`### ${tool.name}`);
+      sections.push(tool.description);
+      sections.push('');
+      sections.push('```');
+      sections.push(`aai:exec({ app: "${appId}", tool: "${tool.name}", args: {...} })`);
+      sections.push('```');
+      sections.push('');
+    }
+    return sections.join('\n');
   }
 
   async start(): Promise<void> {

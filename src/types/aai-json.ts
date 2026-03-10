@@ -53,6 +53,30 @@ export interface CookieAuth {
 }
 
 export type AaiAuth = OAuth2Auth | ApiKeyAuth | AppCredentialAuth | CookieAuth;
+// ========== Execution Types ==========
+
+export interface IpcExecution {
+  type: 'ipc';
+}
+
+export interface WebExecution {
+  type: 'http';
+  baseUrl?: string;
+  defaultHeaders?: Record<string, string>;
+}
+
+export interface AcpStart {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+}
+
+export interface AcpExecution {
+  type: 'acp';
+  start: AcpStart;
+}
+
+export type Execution = IpcExecution | WebExecution | AcpExecution;
 
 // ========== Internationalization ==========
 
@@ -78,11 +102,7 @@ export interface AaiJson {
     description: string;
     aliases?: string[];
   };
-  execution: {
-    type: 'ipc' | 'http';
-    baseUrl?: string;
-    defaultHeaders?: Record<string, string>;
-  };
+  execution: Execution;
   auth?: AaiAuth;
   tools: Array<{
     name: string;

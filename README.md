@@ -74,6 +74,18 @@ Agent calls web:discover or app:<id> on-demand to get detailed operation guides
    → Returns operation guide: listTasks(), getTaskDetail(id), createTask()
 4. tools/call("aai:exec", {app: "guanchen.worklens", tool: "listTasks", args: {}})
    → Executes and returns result
+
+### ACP Agent Workflow
+
+```
+1. AAI Gateway scans for installed ACP agents at startup
+   → Found agents appear as app:<agent-id> entries in tools/list
+2. User: "Use OpenCode to refactor this code"
+   → Agent finds matching app:dev.sst.opencode
+3. tools/call("app:dev.sst.opencode")
+   → Returns operation guide: session/new(), session/prompt(message)
+4. tools/call("aai:exec", {app: "dev.sst.opencode", tool: "session/prompt", args: {message: "refactor this code"}})
+   → Executes via ACP (stdio JSON-RPC) and returns result
 ```
 
 ---
@@ -105,16 +117,29 @@ This ensures that each MCP client has explicit user authorization, preventing cr
 > 💡 **Note**: Caller identity is informational and not a security boundary. The real security is enforced by the operating system (TCC on macOS, UAC on Windows, etc.).
 ---
 
-## 📱 Supported Apps
+## 📱 Supported Apps & Agents
 
-These apps have built-in descriptors and work out of the box:
+### Web Apps
+
+These web apps have built-in descriptors and work out of the box:
 
 | App               | Auth Type      | Tools | Description                                         |
 | ----------------- | -------------- | ----- | --------------------------------------------------- |
 | **Notion**        | API Key        | 11    | Notes, docs, knowledge base, project management     |
 | **Yuque (语雀)**  | API Key        | 7     | Alibaba Cloud knowledge management platform         |
 | **Feishu / Lark** | App Credential | 11    | Enterprise collaboration (docs, wiki, IM, calendar) |
-> 💡 Want to add your app? See [How to Integrate](#how-to-integrate) | [Upcoming Apps](#upcoming-apps)
+
+### 🤖 ACP Agents
+
+AAI Gateway can discover and control ACP (Agent Client Protocol) compatible AI agents:
+
+| Agent | App ID | Tools | Description |
+| ----- | ------ | ----- | ----------- |
+| **OpenCode** | `dev.sst.opencode` | 2 | Open-source AI coding agent with terminal UI |
+| **Claude Code** | `com.anthropic.claude-code` | 2 | Anthropic's official AI coding agent |
+| **Gemini CLI** | `com.google.gemini-cli` | 2 | Google's Gemini CLI coding agent |
+
+> 💡 **Note**: ACP agents are auto-discovered at startup. Only installed agents will appear in tools/list.
 
 > ⚠️ **Note**: AAI Gateway is currently in active development. Bugs may exist. Contributions are welcome!
 

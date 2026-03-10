@@ -84,12 +84,34 @@ const AuthSchema = z.discriminatedUnion('type', [
 
 // ========== Main Schema ==========
 
-const ExecutionSchema = z.object({
-  type: z.enum(['ipc', 'http']),
+// ========== Execution Schemas ==========
+
+const IpcExecutionSchema = z.object({
+  type: z.literal('ipc'),
+});
+
+const WebExecutionSchema = z.object({
+  type: z.literal('http'),
   baseUrl: z.string().optional(),
   defaultHeaders: z.record(z.string()).optional(),
 });
 
+const AcpStartSchema = z.object({
+  command: z.string(),
+  args: z.array(z.string()).optional(),
+  env: z.record(z.string()).optional(),
+});
+
+const AcpExecutionSchema = z.object({
+  type: z.literal('acp'),
+  start: AcpStartSchema,
+});
+
+const ExecutionSchema = z.discriminatedUnion('type', [
+  IpcExecutionSchema,
+  WebExecutionSchema,
+  AcpExecutionSchema,
+]);
 const AppSchema = z.object({
   id: z.string(),
   name: z.record(z.string()),

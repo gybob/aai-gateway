@@ -1,6 +1,6 @@
 # AAI Gateway - Agent Maintenance Guide
 
-**Status**: v0.3.0 - Web App Auth Framework Complete
+**Status**: v0.4.0 - ACP Agent Support Added
 
 This guide provides instructions for AI Agents (and human developers) working on the AAI Gateway codebase.
 
@@ -17,10 +17,13 @@ AAI (Agent App Interface) Gateway acts as a bridge between LLM Agents (via Model
 - `src/executors/`: Platform automation implementations.
   - `ipc/`: IPC-based executors for desktop apps.
   - `web.ts`: HTTP executor for web apps with auth context support.
+  - `acp.ts`: ACP (Agent Client Protocol) executor for AI agents.
 - `src/discovery/`: App discovery.
   - `web.ts`: Web descriptor fetching with caching.
   - `web-registry.ts`: Built-in web app registry.
   - `descriptors/`: Built-in app descriptors (yuque.ts, notion.ts, feishu.ts).
+  - `descriptors/agents/`: Built-in ACP agent descriptors (opencode.ts, claude-code.ts, gemini-cli.ts).
+  - `agent-registry.ts`: ACP agent discovery and registry.
   - `macos.ts`: macOS app discovery.
 - `src/auth/`: Authentication.
   - `oauth.ts`: OAuth 2.1 PKCE flow.
@@ -653,3 +656,114 @@ Dialog includes:
 - Input field for credential
 ---
 _Protocol Version: 1.0_
+
+---
+
+## ACP Agent Support (v0.4.0)
+
+### Overview
+
+AAI Gateway now supports ACP (Agent Client Protocol) compatible AI agents like OpenCode, Claude Code, and Gemini CLI. These agents are discovered automatically and can be invoked through the standard `aai:exec` interface.
+
+### How It Works
+
+1. **Discovery**: At startup, AAI Gateway scans for installed ACP agents by checking if known commands (`opencode`, `claude`, `gemini`) exist on the system.
+2. **Registration**: Found agents appear as `app:<agent-id>` entries in `tools/list`.
+3. **Execution**: When `aai:exec` is called with an agent ID, the gateway:
+   - Starts the agent process (if not already running)
+   - Sends JSON-RPC requests via stdio
+   - Returns the agent's response
+
+### Supported Agents
+
+| Agent | App ID | Command | Description |
+|-------|--------|---------|-------------|
+| OpenCode | `dev.sst.opencode` | `opencode` | Open-source AI coding agent |
+| Claude Code | `anthropic.claude-code` | `claude` | Anthropic's CLI coding assistant |
+| Gemini CLI | `google.gemini-cli` | `gemini` | Google's AI CLI tool |
+
+### Adding a New ACP Agent
+
+1. Create `src/discovery/descriptors/agents/<agent>.ts` with:
+   ```typescript
+   import type { AgentDescriptor } from '../../agent-registry.js';
+
+   export const myAgentDescriptor: AgentDescriptor = {
+     id: 'com.example.my-agent',
+     name: { en: 'My Agent' },
+     description: 'Description of the agent',
+     defaultLang: 'en',
+     aliases: ['myagent', 'ma'],
+     start: {
+       command: 'my-agent',
+       args: [],
+       env: {},
+     },
+     tools: [
+       {
+         name: 'session/new',
+         description: 'Start a new session',
+         parameters: { type: 'object', properties: {} },
+       },
+       {
+         name: 'session/prompt',
+         description: 'Send a prompt to the agent',
+         parameters: {
+           type: 'object',
+           properties: {
+             message: { type: 'string', description: 'The prompt message' },
+           },
+           required: ['message'],
+         },
+       },
+     ],
+   };
+   ```
+
+2. Import and add to `BUILTIN_AGENTS` array in `src/discovery/agent-registry.ts`.
+
+3. Test by running the gateway and checking `tools/list` output.
+
+### ACP Protocol Details
+
+ACP agents communicate via stdio-based JSON-RPC:
+
+**Request Format:**
+```json
+{"jsonrpc": "2.0", "id": 1, "method": "session/prompt", "params": {...}}
+```
+
+**Response Format:**
+```json
+{"jsonrpc": "2.0", "id": 1, "result": {...}}
+```
+
+**Common Methods:**
+- `initialize` - Handshake with the agent
+- `session/new` - Create a new coding session
+- `session/prompt` - Send a prompt to the agent
+- `session/update` - Streaming response notifications
+
+### Execution Flow
+
+```
+1. User requests: aai:exec({app: "dev.sst.opencode", tool: "session/prompt", args: {...}})
+2. Gateway checks if agent process is running
+3. If not, spawns: opencode --mcp
+4. Sends initialize request
+5. Sends session/prompt request
+6. Returns response to user
+```
+
+### ACP vs MCP
+
+Both ACP and MCP are stdio-based JSON-RPC protocols:
+- **MCP**: Used by AAI Gateway to communicate with LLM clients (Claude Desktop, Cursor, etc.)
+- **ACP**: Used by AAI Gateway to communicate with AI agents (OpenCode, Claude Code, etc.)
+
+The key difference is in tool descriptions:
+- MCP tools are described with `tools/list` returning all tools
+- ACP agents have session-based tools (`session/new`, `session/prompt`) that return different results based on context
+
+---
+_Last Updated: 2026-03-10_
