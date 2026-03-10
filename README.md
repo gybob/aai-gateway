@@ -259,7 +259,57 @@ This is useful for:
 - Custom auth configurations
 - Cold-start scenarios
 
+#### Method 3: Add ACP Agent Descriptor
+
+For ACP-compatible AI agents (like OpenCode, Claude Code), you can add a built-in agent descriptor:
+
+1. Create `src/discovery/descriptors/agents/<agent>.ts`:
+   ```typescript
+   import type { AgentDescriptor } from '../../agent-registry.js';
+
+   export const myAgentDescriptor: AgentDescriptor = {
+     id: 'com.example.my-agent',
+     name: { en: 'My Agent' },
+     description: 'Description of the agent',
+     defaultLang: 'en',
+     aliases: ['myagent', 'ma'],
+     start: {
+       command: 'my-agent',  // CLI command to start the agent
+       args: [],              // Optional CLI arguments
+       env: {},               // Optional environment variables
+     },
+     tools: [
+       {
+         name: 'session/new',
+         description: 'Start a new session',
+         parameters: { type: 'object', properties: {} },
+       },
+       {
+         name: 'session/prompt',
+         description: 'Send a prompt to the agent',
+         parameters: {
+           type: 'object',
+           properties: {
+             message: { type: 'string', description: 'The prompt message' },
+           },
+           required: ['message'],
+         },
+       },
+     ],
+   };
+   ```
+
+2. Import and add to `BUILTIN_AGENTS` array in `src/discovery/agent-registry.ts`.
+
+3. Test by running the gateway and calling `tools/list`.
+
+4. Submit a pull request.
+
+> **Note**: ACP agents are discovered automatically by checking if the `command` exists on the system. Only installed agents will appear in `tools/list`.
+
+
 #### Descriptor Format
+
 
 The descriptor follows the **[AAI Protocol specification](https://github.com/gybob/aai-protocol/blob/main/spec/aai-json.md)**. Key points:
 
