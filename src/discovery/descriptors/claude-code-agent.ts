@@ -1,22 +1,22 @@
-import type { AgentDescriptor } from '../../agent-registry.js';
+import type { AgentDescriptor } from '../agent-registry.js';
 
 /**
- * Gemini CLI Agent Descriptor
+ * Claude Code Agent Descriptor
  *
- * Google's Gemini CLI coding agent.
- * https://github.com/google-gemini/gemini-cli
+ * Anthropic's official coding agent.
+ * https://www.anthropic.com/claude-code
  */
-export const geminiCliDescriptor: AgentDescriptor = {
-  id: 'com.google.gemini-cli',
+export const claudeCodeDescriptor: AgentDescriptor = {
+  id: 'com.anthropic.claude-code',
   name: {
-    en: 'Gemini CLI',
-    'zh-CN': 'Gemini CLI',
+    en: 'Claude Code',
+    'zh-CN': 'Claude Code',
   },
   defaultLang: 'en',
-  description: "Google's Gemini CLI coding agent",
-  aliases: ['gemini', 'gemini-cli', 'google'],
+  description: "Anthropic's official AI coding agent",
+  aliases: ['claude', 'claude-code', 'anthropic'],
   start: {
-    command: 'gemini',
+    command: 'claude',
     args: [],
   },
   tools: [
@@ -35,7 +35,7 @@ export const geminiCliDescriptor: AgentDescriptor = {
     },
     {
       name: 'session/prompt',
-      description: 'Send a prompt to Gemini in an active session',
+      description: 'Send a prompt to Claude in an active session',
       parameters: {
         type: 'object',
         properties: {

@@ -3,9 +3,9 @@ import { promisify } from 'node:util';
 import { getLocalizedName } from '../types/aai-json.js';
 import { getSystemLocale } from '../utils/locale.js';
 import { logger } from '../utils/logger.js';
-import { opencodeDescriptor } from './descriptors/agents/opencode.js';
-import { claudeCodeDescriptor } from './descriptors/agents/claude-code.js';
-import { geminiCliDescriptor } from './descriptors/agents/gemini-cli.js';
+import { opencodeDescriptor } from './descriptors/opencode-agent.js';
+import { claudeCodeDescriptor } from './descriptors/claude-code-agent.js';
+import { geminiCliDescriptor } from './descriptors/gemini-cli-agent.js';
 
 const execAsync = promisify(exec);
 

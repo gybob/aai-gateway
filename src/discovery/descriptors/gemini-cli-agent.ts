@@ -1,22 +1,22 @@
-import type { AgentDescriptor } from '../../agent-registry.js';
+import type { AgentDescriptor } from '../agent-registry.js';
 
 /**
- * OpenCode Agent Descriptor
+ * Gemini CLI Agent Descriptor
  *
- * Open-source AI coding agent with terminal UI.
- * https://github.com/sst/opencode
+ * Google's Gemini CLI coding agent.
+ * https://github.com/google-gemini/gemini-cli
  */
-export const opencodeDescriptor: AgentDescriptor = {
-  id: 'dev.sst.opencode',
+export const geminiCliDescriptor: AgentDescriptor = {
+  id: 'com.google.gemini-cli',
   name: {
-    en: 'OpenCode',
-    'zh-CN': 'OpenCode',
+    en: 'Gemini CLI',
+    'zh-CN': 'Gemini CLI',
   },
   defaultLang: 'en',
-  description: 'Open-source AI coding agent with terminal UI, multi-session support',
-  aliases: ['opencode', 'sst', 'code-agent'],
+  description: "Google's Gemini CLI coding agent",
+  aliases: ['gemini', 'gemini-cli', 'google'],
   start: {
-    command: 'opencode',
+    command: 'gemini',
     args: [],
   },
   tools: [
@@ -30,16 +30,12 @@ export const opencodeDescriptor: AgentDescriptor = {
             type: 'string',
             description: 'Working directory for the session',
           },
-          title: {
-            type: 'string',
-            description: 'Optional session title',
-          },
         },
       },
     },
     {
       name: 'session/prompt',
-      description: 'Send a prompt to the agent in an active session',
+      description: 'Send a prompt to Gemini in an active session',
       parameters: {
         type: 'object',
         properties: {
@@ -71,7 +67,7 @@ export const opencodeDescriptor: AgentDescriptor = {
     },
     {
       name: 'session/cancel',
-      description: 'Cancel ongoing operation in a session',
+      description: 'Cancel ongoing operation',
       parameters: {
         type: 'object',
         properties: {

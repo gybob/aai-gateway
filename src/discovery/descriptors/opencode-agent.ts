@@ -1,22 +1,22 @@
-import type { AgentDescriptor } from '../../agent-registry.js';
+import type { AgentDescriptor } from '../agent-registry.js';
 
 /**
- * Claude Code Agent Descriptor
+ * OpenCode Agent Descriptor
  *
- * Anthropic's official coding agent.
- * https://www.anthropic.com/claude-code
+ * Open-source AI coding agent with terminal UI.
+ * https://github.com/sst/opencode
  */
-export const claudeCodeDescriptor: AgentDescriptor = {
-  id: 'com.anthropic.claude-code',
+export const opencodeDescriptor: AgentDescriptor = {
+  id: 'dev.sst.opencode',
   name: {
-    en: 'Claude Code',
-    'zh-CN': 'Claude Code',
+    en: 'OpenCode',
+    'zh-CN': 'OpenCode',
   },
   defaultLang: 'en',
-  description: "Anthropic's official AI coding agent",
-  aliases: ['claude', 'claude-code', 'anthropic'],
+  description: 'Open-source AI coding agent with terminal UI, multi-session support',
+  aliases: ['opencode', 'sst', 'code-agent'],
   start: {
-    command: 'claude',
+    command: 'opencode',
     args: [],
   },
   tools: [
@@ -30,12 +30,16 @@ export const claudeCodeDescriptor: AgentDescriptor = {
             type: 'string',
             description: 'Working directory for the session',
           },
+          title: {
+            type: 'string',
+            description: 'Optional session title',
+          },
         },
       },
     },
     {
       name: 'session/prompt',
-      description: 'Send a prompt to Claude in an active session',
+      description: 'Send a prompt to the agent in an active session',
       parameters: {
         type: 'object',
         properties: {
@@ -67,7 +71,7 @@ export const claudeCodeDescriptor: AgentDescriptor = {
     },
     {
       name: 'session/cancel',
-      description: 'Cancel ongoing operation',
+      description: 'Cancel ongoing operation in a session',
       parameters: {
         type: 'object',
         properties: {

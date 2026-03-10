@@ -116,6 +116,7 @@ AAI Gateway implements a **caller-aware consent mechanism** to protect user priv
 This ensures that each MCP client has explicit user authorization, preventing cross-client authorization leakage.
 
 > 💡 **Note**: Caller identity is informational and not a security boundary. The real security is enforced by the operating system (TCC on macOS, UAC on Windows, etc.).
+
 ---
 
 ## 📱 Supported Apps & Agents
@@ -136,11 +137,11 @@ These web apps have built-in descriptors and work out of the box:
 
 AAI Gateway can discover and control ACP (Agent Client Protocol) compatible AI agents:
 
-| Agent | App ID | Tools | Description |
-| ----- | ------ | ----- | ----------- |
-| **OpenCode** | `dev.sst.opencode` | 2 | Open-source AI coding agent with terminal UI |
-| **Claude Code** | `com.anthropic.claude-code` | 2 | Anthropic's official AI coding agent |
-| **Gemini CLI** | `com.google.gemini-cli` | 2 | Google's Gemini CLI coding agent |
+| Agent           | App ID                      | Tools | Description                                  |
+| --------------- | --------------------------- | ----- | -------------------------------------------- |
+| **OpenCode**    | `dev.sst.opencode`          | 2     | Open-source AI coding agent with terminal UI |
+| **Claude Code** | `com.anthropic.claude-code` | 2     | Anthropic's official AI coding agent         |
+| **Gemini CLI**  | `com.google.gemini-cli`     | 2     | Google's Gemini CLI coding agent             |
 
 > 💡 Want to add a new agent? See [Adding a New ACP Agent](#adding-a-new-acp-agent)
 
@@ -247,25 +248,20 @@ AAI Gateway will automatically discover and load the descriptor.
 
 #### Method 2: Contribute to Built-in Registry
 
-For web apps without a hosted descriptor, you can add a built-in descriptor to AAI Gateway:
+For apps without a hosted descriptor, you can add a built-in descriptor:
 
-1. Create `src/discovery/descriptors/<app>.ts` following existing patterns
+**Web App Descriptor:**
+
+1. Create `src/discovery/descriptors/<app>.ts` (e.g., `notion.ts`)
 2. Register in `src/discovery/web-registry.ts`
 3. Submit a pull request
 
-This is useful for:
+**ACP Agent Descriptor:**
 
-- Apps without official API documentation
-- Custom auth configurations
-- Cold-start scenarios
+1. Create `src/discovery/descriptors/<agent>-agent.ts`:
 
-#### Method 3: Add ACP Agent Descriptor
-
-For ACP-compatible AI agents (like OpenCode, Claude Code), you can add a built-in agent descriptor:
-
-1. Create `src/discovery/descriptors/agents/<agent>.ts`:
    ```typescript
-   import type { AgentDescriptor } from '../../agent-registry.js';
+   import type { AgentDescriptor } from '../agent-registry.js';
 
    export const myAgentDescriptor: AgentDescriptor = {
      id: 'com.example.my-agent',
@@ -273,11 +269,7 @@ For ACP-compatible AI agents (like OpenCode, Claude Code), you can add a built-i
      description: 'Description of the agent',
      defaultLang: 'en',
      aliases: ['myagent', 'ma'],
-     start: {
-       command: 'my-agent',  // CLI command to start the agent
-       args: [],              // Optional CLI arguments
-       env: {},               // Optional environment variables
-     },
+     start: { command: 'my-agent', args: [], env: {} },
      tools: [
        {
          name: 'session/new',
@@ -286,12 +278,10 @@ For ACP-compatible AI agents (like OpenCode, Claude Code), you can add a built-i
        },
        {
          name: 'session/prompt',
-         description: 'Send a prompt to the agent',
+         description: 'Send a prompt',
          parameters: {
            type: 'object',
-           properties: {
-             message: { type: 'string', description: 'The prompt message' },
-           },
+           properties: { message: { type: 'string' } },
            required: ['message'],
          },
        },
@@ -299,17 +289,12 @@ For ACP-compatible AI agents (like OpenCode, Claude Code), you can add a built-i
    };
    ```
 
-2. Import and add to `BUILTIN_AGENTS` array in `src/discovery/agent-registry.ts`.
+2. Import and add to `BUILTIN_AGENTS` array in `src/discovery/agent-registry.ts`
+3. Submit a pull request
 
-3. Test by running the gateway and calling `tools/list`.
-
-4. Submit a pull request.
-
-> **Note**: ACP agents are discovered automatically by checking if the `command` exists on the system. Only installed agents will appear in `tools/list`.
-
+> **Note**: ACP agents are auto-discovered by checking if the CLI command exists on the system.
 
 #### Descriptor Format
-
 
 The descriptor follows the **[AAI Protocol specification](https://github.com/gybob/aai-protocol/blob/main/spec/aai-json.md)**. Key points:
 
@@ -331,12 +316,12 @@ For the complete spec, see **[aai.json Descriptor Spec](https://github.com/gybob
 
 #### Platform Support
 
-| Platform    | Discovery              | IPC          | Consent   | Storage  |
-| ----------- | ---------------------- | ------------ | --------- | -------- |
-| **macOS**   | Supported              | Apple Events | osascript | Keychain |
-| **Linux**   | XDG paths              | DBus (gdbus)  | zenity/kdialog | libsecret |
-| **Windows** | Program Files          | COM (PowerShell) | PowerShell | CredMan  |
-| **Web**     | `.well-known/aai.json` | HTTP         | N/A       | Platform |
+| Platform    | Discovery              | IPC              | Consent        | Storage   |
+| ----------- | ---------------------- | ---------------- | -------------- | --------- |
+| **macOS**   | Supported              | Apple Events     | osascript      | Keychain  |
+| **Linux**   | XDG paths              | DBus (gdbus)     | zenity/kdialog | libsecret |
+| **Windows** | Program Files          | COM (PowerShell) | PowerShell     | CredMan   |
+| **Web**     | `.well-known/aai.json` | HTTP             | N/A            | Platform  |
 
 > **Note**: Linux and Windows implementations are functional but may require additional testing and refinement. Contributions are welcome!
 
@@ -344,81 +329,42 @@ For the complete spec, see **[aai.json Descriptor Spec](https://github.com/gybob
 
 - **PowerShell 5.1+** (comes with Windows 10+)
 - **Execution Policy**: Must allow script execution
+
   ```powershell
   # Check current policy
   Get-ExecutionPolicy
-  
+
   # Set to allow local scripts (recommended)
   Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
   ```
+
 - **Credential Manager**: Built-in Windows feature, no additional setup needed
 
 #### Linux Requirements
 
 - **DBus**: Usually pre-installed on modern Linux distributions
 - **Dialog Tools**: Install one of the following:
+
   ```bash
   # Ubuntu/Debian
   sudo apt install zenity  # or kdialog
-  
+
   # Fedora
   sudo dnf install zenity  # or kdialog
-  
+
   # Arch Linux
   sudo pacman -S zenity  # or kdialog
   ```
+
 - **libsecret**: For secure credential storage
+
   ```bash
   # Ubuntu/Debian
   sudo apt install libsecret-tools
-  
+
   # Fedora
   sudo dnf install libsecret
   ```
-
-#### Adding a New ACP Agent
-
-To add support for a new ACP-compatible agent:
-
-1. Create `src/discovery/descriptors/agents/<agent>.ts`:
-   ```typescript
-   import type { AgentDescriptor } from '../../agent-registry.js';
-
-   export const myAgentDescriptor: AgentDescriptor = {
-     id: 'com.example.my-agent',
-     name: { en: 'My Agent' },
-     description: 'Description of the agent',
-     defaultLang: 'en',
-     aliases: ['myagent', 'ma'],
-     start: {
-       command: 'my-agent',
-       args: [],
-       env: {},
-     },
-     tools: [
-       {
-         name: 'session/new',
-         description: 'Start a new session',
-         parameters: { type: 'object', properties: {} },
-       },
-       {
-         name: 'session/prompt',
-         description: 'Send a prompt to the agent',
-         parameters: {
-           type: 'object',
-           properties: {
-             message: { type: 'string', description: 'The prompt message' },
-           },
-           required: ['message'],
-         },
-       },
-     ],
-   };
-   ```
-
-2. Import and add to `BUILTIN_AGENTS` array in `src/discovery/agent-registry.ts`.
-
-3. Test by running the gateway and checking `tools/list` output.
 
 ---
 
@@ -428,95 +374,96 @@ The following apps are planned for future integration, organized by priority:
 
 #### 🚀 Priority P0 - High Activity + Simple Integration
 
-| App | Auth Type | API Base | Description |
-|-----|-----------|----------|-------------|
-| **GitHub** | OAuth2 / API Key | `api.github.com` | Code hosting, repositories, issues, PRs |
-| **Linear** | API Key | `api.linear.app` | Modern project management |
-| **Stripe** | API Key | `api.stripe.com` | Payment processing |
-| **Slack** | OAuth2 / Bot Token | `slack.com/api` | Team messaging and channels |
-| **Jira** | OAuth2 / API Token | `api.atlassian.com` | Issue and project tracking |
-| **Gitee** | API Key | `gitee.com/api/v5` | Code hosting (China) |
+| App        | Auth Type          | API Base            | Description                             |
+| ---------- | ------------------ | ------------------- | --------------------------------------- |
+| **GitHub** | OAuth2 / API Key   | `api.github.com`    | Code hosting, repositories, issues, PRs |
+| **Linear** | API Key            | `api.linear.app`    | Modern project management               |
+| **Stripe** | API Key            | `api.stripe.com`    | Payment processing                      |
+| **Slack**  | OAuth2 / Bot Token | `slack.com/api`     | Team messaging and channels             |
+| **Jira**   | OAuth2 / API Token | `api.atlassian.com` | Issue and project tracking              |
+| **Gitee**  | API Key            | `gitee.com/api/v5`  | Code hosting (China)                    |
 
 #### 🔥 Priority P1 - High Activity
 
-| App | Auth Type | API Base | Description |
-|-----|-----------|----------|-------------|
-| **Google Drive** | OAuth2 | `www.googleapis.com/drive` | Cloud storage and files |
-| **Google Calendar** | OAuth2 | `www.googleapis.com/calendar` | Calendar and scheduling |
-| **Airtable** | API Key / OAuth2 | `api.airtable.com` | Database and spreadsheets |
-| **Trello** | API Key + Token | `api.trello.com/1` | Kanban boards |
-| **Asana** | API Key / OAuth2 | `app.asana.com/api/1.0` | Project management |
-| **Discord** | Bot Token / OAuth2 | `discord.com/api/v10` | Community messaging |
-| **GitLab** | API Key / OAuth2 | `gitlab.com/api/v4` | DevOps platform |
-| **DingTalk (钉钉)** | App Credential | `api.dingtalk.com/v1.0` | Enterprise messaging (China) |
-| **WeCom (企业微信)** | App Credential | `qyapi.weixin.qq.com/cgi-bin` | Enterprise WeChat (China) |
+| App                  | Auth Type          | API Base                      | Description                  |
+| -------------------- | ------------------ | ----------------------------- | ---------------------------- |
+| **Google Drive**     | OAuth2             | `www.googleapis.com/drive`    | Cloud storage and files      |
+| **Google Calendar**  | OAuth2             | `www.googleapis.com/calendar` | Calendar and scheduling      |
+| **Airtable**         | API Key / OAuth2   | `api.airtable.com`            | Database and spreadsheets    |
+| **Trello**           | API Key + Token    | `api.trello.com/1`            | Kanban boards                |
+| **Asana**            | API Key / OAuth2   | `app.asana.com/api/1.0`       | Project management           |
+| **Discord**          | Bot Token / OAuth2 | `discord.com/api/v10`         | Community messaging          |
+| **GitLab**           | API Key / OAuth2   | `gitlab.com/api/v4`           | DevOps platform              |
+| **DingTalk (钉钉)**  | App Credential     | `api.dingtalk.com/v1.0`       | Enterprise messaging (China) |
+| **WeCom (企业微信)** | App Credential     | `qyapi.weixin.qq.com/cgi-bin` | Enterprise WeChat (China)    |
 
 #### 📈 Priority P2 - Medium Activity
 
 **Project Management & Collaboration:**
 
-| App | Auth Type | Description |
-|-----|-----------|-------------|
-| Monday.com | API Key | Work management platform |
-| ClickUp | API Key | Productivity platform |
-| Basecamp | OAuth2 | Project collaboration |
-| Bitbucket | API Key / OAuth2 | Git repository hosting |
+| App        | Auth Type        | Description              |
+| ---------- | ---------------- | ------------------------ |
+| Monday.com | API Key          | Work management platform |
+| ClickUp    | API Key          | Productivity platform    |
+| Basecamp   | OAuth2           | Project collaboration    |
+| Bitbucket  | API Key / OAuth2 | Git repository hosting   |
 
 **Communication & Email:**
 
-| App | Auth Type | Description |
-|-----|-----------|-------------|
-| Gmail | OAuth2 | Email by Google |
-| Microsoft Outlook | OAuth2 | Email by Microsoft |
-| SendGrid | API Key | Email delivery service |
-| Mailgun | API Key | Email API service |
-| Twilio | API Key | SMS and voice API |
-| Tencent Meeting | OAuth2 / App Credential | Video conferencing (China) |
+| App               | Auth Type               | Description                |
+| ----------------- | ----------------------- | -------------------------- |
+| Gmail             | OAuth2                  | Email by Google            |
+| Microsoft Outlook | OAuth2                  | Email by Microsoft         |
+| SendGrid          | API Key                 | Email delivery service     |
+| Mailgun           | API Key                 | Email API service          |
+| Twilio            | API Key                 | SMS and voice API          |
+| Tencent Meeting   | OAuth2 / App Credential | Video conferencing (China) |
 
 **Data & Storage:**
 
-| App | Auth Type | Description |
-|-----|-----------|-------------|
-| Supabase | API Key | Backend-as-a-Service |
-| PlanetScale | API Key | Serverless MySQL |
-| Neon | API Key | Serverless PostgreSQL |
-| Aliyun Drive | OAuth2 | Cloud storage (China) |
-| Baidu Netdisk | OAuth2 | Cloud storage (China) |
+| App           | Auth Type | Description           |
+| ------------- | --------- | --------------------- |
+| Supabase      | API Key   | Backend-as-a-Service  |
+| PlanetScale   | API Key   | Serverless MySQL      |
+| Neon          | API Key   | Serverless PostgreSQL |
+| Aliyun Drive  | OAuth2    | Cloud storage (China) |
+| Baidu Netdisk | OAuth2    | Cloud storage (China) |
 
 **Payments & Commerce:**
 
-| App | Auth Type | Description |
-|-----|-----------|-------------|
-| PayPal | OAuth2 | Payment platform |
-| Square | API Key | Payment processing |
-| Shopify | API Key | E-commerce platform |
+| App        | Auth Type      | Description              |
+| ---------- | -------------- | ------------------------ |
+| PayPal     | OAuth2         | Payment platform         |
+| Square     | API Key        | Payment processing       |
+| Shopify    | API Key        | E-commerce platform      |
 | WeChat Pay | App Credential | Payment platform (China) |
 
 #### 🔍 Priority P3 - Search & AI
 
-| App | Auth Type | API Base | Description |
-|-----|-----------|----------|-------------|
-| Brave Search | API Key | `api.search.brave.com/res/v1` | Privacy-focused search |
-| Perplexity | API Key | `api.perplexity.ai` | AI search engine |
-| Exa | API Key | `api.exa.ai` | AI-powered search |
-| Tavily | API Key | `api.tavily.com` | Search API for AI |
+| App          | Auth Type | API Base                      | Description            |
+| ------------ | --------- | ----------------------------- | ---------------------- |
+| Brave Search | API Key   | `api.search.brave.com/res/v1` | Privacy-focused search |
+| Perplexity   | API Key   | `api.perplexity.ai`           | AI search engine       |
+| Exa          | API Key   | `api.exa.ai`                  | AI-powered search      |
+| Tavily       | API Key   | `api.tavily.com`              | Search API for AI      |
 
 #### ❌ Not Suitable for AAI Gateway
 
 The following MCP server types are **NOT suitable** for AAI Gateway as they require local implementation:
 
-| Type | Examples | Reason |
-|------|----------|--------|
-| Local Filesystem | Filesystem, Memory | Requires local file access |
-| Version Control | Git | Requires local git commands |
-| Browser Automation | Playwright, Puppeteer | Requires browser instance |
-| Code Execution | E2B, Riza | Requires sandbox environment |
-| Database Drivers | PostgreSQL, MySQL, SQLite | Requires database drivers |
-| System Commands | Shell, Terminal | Requires local command execution |
+| Type               | Examples                  | Reason                           |
+| ------------------ | ------------------------- | -------------------------------- |
+| Local Filesystem   | Filesystem, Memory        | Requires local file access       |
+| Version Control    | Git                       | Requires local git commands      |
+| Browser Automation | Playwright, Puppeteer     | Requires browser instance        |
+| Code Execution     | E2B, Riza                 | Requires sandbox environment     |
+| Database Drivers   | PostgreSQL, MySQL, SQLite | Requires database drivers        |
+| System Commands    | Shell, Terminal           | Requires local command execution |
 
 ---
 
 Want to see your app prioritized? [Open an issue](https://github.com/gybob/aai-gateway/issues).
+
 ## Links
 
 - **[AAI Protocol Spec](https://github.com/gybob/aai-protocol)** - Protocol specification
