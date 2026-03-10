@@ -119,31 +119,20 @@ This ensures that each MCP client has explicit user authorization, preventing cr
 
 ---
 
-## 📱 Supported Apps & Agents
+## 📱 Supported Apps
 
-### Web Apps
+These apps have built-in descriptors and work out of the box:
 
-These web apps have built-in descriptors and work out of the box:
-
-| App               | Auth Type      | Tools | Description                                         |
-| ----------------- | -------------- | ----- | --------------------------------------------------- |
-| **Notion**        | API Key        | 11    | Notes, docs, knowledge base, project management     |
-| **Yuque (语雀)**  | API Key        | 7     | Alibaba Cloud knowledge management platform         |
-| **Feishu / Lark** | App Credential | 11    | Enterprise collaboration (docs, wiki, IM, calendar) |
+| App               | Type      | Auth Type      | Tools | Description                                         |
+| ----------------- | --------- | -------------- | ----- | --------------------------------------------------- |
+| **Notion**        | Web       | API Key        | 11    | Notes, docs, knowledge base, project management     |
+| **Yuque (语雀)**  | Web       | API Key        | 7     | Alibaba Cloud knowledge management platform         |
+| **Feishu / Lark** | Web       | App Credential | 11    | Enterprise collaboration (docs, wiki, IM, calendar) |
+| **OpenCode**      | ACP Agent | None           | 4     | Open-source AI coding agent with terminal UI        |
+| **Claude Code**   | ACP Agent | None           | 4     | Anthropic's official AI coding agent                |
+| **Gemini CLI**    | ACP Agent | None           | 4     | Google's Gemini CLI coding agent                    |
 
 > 💡 Want to add your app? See [How to Integrate](#how-to-integrate) | [Upcoming Apps](#upcoming-apps)
-
-### 🤖 ACP Agents
-
-AAI Gateway can discover and control ACP (Agent Client Protocol) compatible AI agents:
-
-| Agent           | App ID                      | Tools | Description                                  |
-| --------------- | --------------------------- | ----- | -------------------------------------------- |
-| **OpenCode**    | `dev.sst.opencode`          | 2     | Open-source AI coding agent with terminal UI |
-| **Claude Code** | `com.anthropic.claude-code` | 2     | Anthropic's official AI coding agent         |
-| **Gemini CLI**  | `com.google.gemini-cli`     | 2     | Google's Gemini CLI coding agent             |
-
-> 💡 Want to add a new agent? See [Adding a New ACP Agent](#adding-a-new-acp-agent)
 
 > ⚠️ **Note**: AAI Gateway is currently in active development. Bugs may exist. Contributions are welcome!
 
@@ -250,47 +239,10 @@ AAI Gateway will automatically discover and load the descriptor.
 
 For apps without a hosted descriptor, you can add a built-in descriptor:
 
-**Web App Descriptor:**
+- **Web App**: Create `src/discovery/descriptors/<app>.ts`, register in `src/discovery/web-registry.ts`
+- **ACP Agent**: Create `src/discovery/descriptors/<agent>-agent.ts`, register in `src/discovery/agent-registry.ts`
 
-1. Create `src/discovery/descriptors/<app>.ts` (e.g., `notion.ts`)
-2. Register in `src/discovery/web-registry.ts`
-3. Submit a pull request
-
-**ACP Agent Descriptor:**
-
-1. Create `src/discovery/descriptors/<agent>-agent.ts`:
-
-   ```typescript
-   import type { AgentDescriptor } from '../agent-registry.js';
-
-   export const myAgentDescriptor: AgentDescriptor = {
-     id: 'com.example.my-agent',
-     name: { en: 'My Agent' },
-     description: 'Description of the agent',
-     defaultLang: 'en',
-     aliases: ['myagent', 'ma'],
-     start: { command: 'my-agent', args: [], env: {} },
-     tools: [
-       {
-         name: 'session/new',
-         description: 'Start a new session',
-         parameters: { type: 'object', properties: {} },
-       },
-       {
-         name: 'session/prompt',
-         description: 'Send a prompt',
-         parameters: {
-           type: 'object',
-           properties: { message: { type: 'string' } },
-           required: ['message'],
-         },
-       },
-     ],
-   };
-   ```
-
-2. Import and add to `BUILTIN_AGENTS` array in `src/discovery/agent-registry.ts`
-3. Submit a pull request
+Then submit a pull request.
 
 > **Note**: ACP agents are auto-discovered by checking if the CLI command exists on the system.
 
