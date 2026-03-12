@@ -27,7 +27,7 @@
 
 ---
 
-## 🚀 Core Innovation: Progressive Disclosure
+## 🚀 Core Innovations
 
 Traditional MCP servers return all tools on `tools/list`, causing:
 
@@ -38,7 +38,9 @@ Traditional MCP servers return all tools on `tools/list`, causing:
 → Reduced response accuracy
 ```
 
-**AAI Gateway's Solution**:
+### 1. Progressive Disclosure
+
+AAI Gateway's solution:
 
 ```
 tools/list returns only lightweight entries:
@@ -52,6 +54,18 @@ Agent calls web:discover or app:<id> on-demand to get detailed operation guides
 ```
 
 **Result**: **95% reduction** in context usage, faster and more accurate Agent responses.
+
+### 2. Unified Descriptor
+
+Every integration is normalized through the same `aai.json` descriptor model. At a high level, the descriptor defines:
+
+- App identity and metadata
+- Execution binding
+- Tool definitions
+- Parameter schemas
+- Authentication requirements
+
+For the full descriptor format, see the **[AAI Protocol `aai.json` spec](https://github.com/gybob/aai-protocol/blob/main/spec/aai-json.md)**.
 
 ---
 
@@ -249,20 +263,6 @@ For apps without a hosted descriptor, you can add a built-in descriptor:
 Then submit a pull request.
 
 > **Note**: ACP agents are auto-discovered by checking if the CLI command exists on the system.
-
-#### Descriptor Format
-
-The descriptor follows the **[AAI Protocol specification](https://github.com/gybob/aai-protocol/blob/main/spec/aai-json.md)**. Key points:
-
-- All field names use **camelCase** (e.g., `schemaVersion`, `baseUrl`)
-- Supports **internationalized names** with language fallback
-- Auth types: `oauth2`, `apiKey`, `appCredential`, `cookie`
-- Execution types: `http`, `acp`, `apple-events`, `dbus`, `com`, `stdio`
-- Tools defined with JSON Schema parameters
-
-> **Note**: `stdio` is part of the protocol model and appears in the architecture diagram, but `aai-gateway` does not execute `stdio` descriptors yet.
-
-For the complete spec, see **[aai.json Descriptor Spec](https://github.com/gybob/aai-protocol/blob/main/spec/aai-json.md)**.
 
 #### Supported Auth Types
 
