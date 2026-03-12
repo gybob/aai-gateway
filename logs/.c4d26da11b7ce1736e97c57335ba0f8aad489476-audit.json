@@ -1,0 +1,20 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 14
+    },
+    "auditLog": "/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/logs/.c4d26da11b7ce1736e97c57335ba0f8aad489476-audit.json",
+    "files": [
+        {
+            "date": 1773162338602,
+            "name": "/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/logs/error-2026-03-11.log",
+            "hash": "bc1007436956f69f17522ce015e1ce24906ed15d3ecddaab4c90ab11be74befc"
+        },
+        {
+            "date": 1773282344121,
+            "name": "/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/logs/error-2026-03-12.log",
+            "hash": "1c287c67a5321025f07002f4b3bdaf2b8e8b43696c8b7a97deda4226021257a7"
+        }
+    ],
+    "hashType": "sha256"
+}

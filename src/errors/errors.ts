@@ -1,19 +1,22 @@
 export type AaiErrorCode =
-  | "INVALID_REQUEST"
-  | "UNKNOWN_APP"
-  | "UNKNOWN_TOOL"
-  | "INVALID_PARAMS"
-  | "CONSENT_REQUIRED"
-  | "AUTH_REQUIRED"
-  | "AUTH_DENIED"
-  | "AUTH_EXPIRED"
-  | "AUTH_INVALID"
-  | "TIMEOUT"
-  | "NOT_FOUND"
-  | "RATE_LIMITED"
-  | "SERVICE_UNAVAILABLE"
-  | "INTERNAL_ERROR"
-  | "NOT_IMPLEMENTED";
+  | 'INVALID_REQUEST'
+  | 'UNKNOWN_APP'
+  | 'UNKNOWN_TOOL'
+  | 'INVALID_PARAMS'
+  | 'CONSENT_REQUIRED'
+  | 'AUTH_REQUIRED'
+  | 'AUTH_DENIED'
+  | 'AUTH_EXPIRED'
+  | 'AUTH_INVALID'
+  | 'TIMEOUT'
+  | 'NOT_FOUND'
+  | 'RATE_LIMITED'
+  | 'SERVICE_UNAVAILABLE'
+  | 'INTERNAL_ERROR'
+  | 'NOT_IMPLEMENTED'
+  | 'EXECUTION_ERROR'
+  | 'PARSE_ERROR'
+  | 'DESCRIPTOR_ERROR';
 
 export interface ConsentRequiredData {
   app_id: string;
@@ -31,7 +34,7 @@ export class AaiError extends Error {
     public readonly data?: object
   ) {
     super(message);
-    this.name = "AaiError";
+    this.name = 'AaiError';
     if (Error.captureStackTrace) {
       Error.captureStackTrace(this, AaiError);
     }

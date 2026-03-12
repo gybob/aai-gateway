@@ -1,21 +1,22 @@
-import { getCurrentPlatform } from "../utils/platform.js";
-import { MacOSDiscovery } from "./macos.js";
-import { WindowsDiscovery } from "./windows.js";
-import { LinuxDiscovery } from "./linux.js";
-import type { DesktopDiscovery } from "./interface.js";
+import { getCurrentPlatform } from '../utils/platform.js';
+import { MacOSDiscovery } from './macos.js';
+import { WindowsDiscovery } from './windows.js';
+import { LinuxDiscovery } from './linux.js';
+import type { DesktopDiscovery } from './interface.js';
 
-export type { DesktopDiscovery, DiscoveredDesktopApp, DiscoveryOptions } from "./interface.js";
+export type { DesktopDiscovery, DiscoveredDesktopApp, DiscoveryOptions } from './interface.js';
+export { scanCliTools, lookupCliToolByAlias, type DiscoveredCliTool } from './cli-registry.js';
 
 /**
  * Create a desktop discovery instance for the current platform.
  */
 export function createDesktopDiscovery(): DesktopDiscovery {
   switch (getCurrentPlatform()) {
-    case "macos":
+    case 'macos':
       return new MacOSDiscovery();
-    case "linux":
+    case 'linux':
       return new LinuxDiscovery();
-    case "windows":
+    case 'windows':
       return new WindowsDiscovery();
   }
 }

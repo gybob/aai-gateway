@@ -76,7 +76,14 @@ export interface AcpExecution {
   start: AcpStart;
 }
 
-export type Execution = IpcExecution | WebExecution | AcpExecution;
+export interface CliExecution {
+  type: 'cli';
+  command: string;
+  jsonFlag?: string;
+  timeout?: number;
+}
+
+export type Execution = IpcExecution | WebExecution | AcpExecution | CliExecution;
 
 // ========== Internationalization ==========
 
@@ -155,4 +162,20 @@ export function getLocalizedName(
 
   // 3. Default
   return name[defaultLang] ?? Object.values(name)[0] ?? '';
+}
+
+export function isCliExecution(execution: Execution): execution is CliExecution {
+  return execution.type === 'cli';
+}
+
+export function isAcpExecution(execution: Execution): execution is AcpExecution {
+  return execution.type === 'acp';
+}
+
+export function isWebExecution(execution: Execution): execution is WebExecution {
+  return execution.type === 'http';
+}
+
+export function isIpcExecution(execution: Execution): execution is IpcExecution {
+  return execution.type === 'ipc';
 }

@@ -21,13 +21,16 @@ import type { AaiJson } from '../types/aai-json.js';
 import { getLocalizedName } from '../types/aai-json.js';
 import { getSystemLocale } from '../utils/locale.js';
 import { scanInstalledAgents, type DiscoveredAgent } from '../discovery/agent-registry.js';
+import { scanCliTools, type DiscoveredCliTool } from '../discovery/cli-registry.js';
 import { getAcpExecutor } from '../executors/acp.js';
+import { getCliExecutor } from '../executors/cli.js';
 
 export class AaiGatewayServer {
   private readonly server: Server;
   private readonly options: DiscoveryOptions;
-private readonly desktopRegistry = new Map<string, DiscoveredDesktopApp>();
-private readonly agentRegistry = new Map<string, DiscoveredAgent>();
+  private readonly desktopRegistry = new Map<string, DiscoveredDesktopApp>();
+  private readonly agentRegistry = new Map<string, DiscoveredAgent>();
+  private readonly cliRegistry = new Map<string, DiscoveredCliTool>();
   private consentManager!: ConsentManager;
   private tokenManager!: TokenManager;
   private credentialManager!: CredentialManager;
@@ -36,7 +39,6 @@ private readonly agentRegistry = new Map<string, DiscoveredAgent>();
     this.options = options ?? {};
     this.server = new Server(
       { name: 'aai-gateway', version: '0.3.4' },
-
 
       { capabilities: { tools: {} } }
     );
@@ -75,6 +77,17 @@ private readonly agentRegistry = new Map<string, DiscoveredAgent>();
       logger.info({ count: agents.length }, 'ACP agents discovered');
     } catch (err) {
       logger.error({ err }, 'ACP agent discovery failed');
+    }
+
+    // Scan CLI tools
+    try {
+      const cliTools = await scanCliTools();
+      for (const tool of cliTools) {
+        this.cliRegistry.set(tool.appId, tool);
+      }
+      logger.info({ count: cliTools.length }, 'CLI tools discovered');
+    } catch (err) {
+      logger.error({ err }, 'CLI tool discovery failed');
     }
   }
 
@@ -120,6 +133,16 @@ private readonly agentRegistry = new Map<string, DiscoveredAgent>();
         const description = `[Agent] ${agent.name}: ${agent.description}`;
         tools.push({
           name: `app:${agent.appId}`,
+          description,
+          inputSchema: { type: 'object', properties: {} },
+        });
+      }
+
+      // CLI tools (one entry per tool)
+      for (const cliTool of this.cliRegistry.values()) {
+        const description = `[CLI] ${cliTool.name}: ${cliTool.description}`;
+        tools.push({
+          name: `app:${cliTool.appId}`,
           description,
           inputSchema: { type: 'object', properties: {} },
         });
@@ -230,6 +253,15 @@ private readonly agentRegistry = new Map<string, DiscoveredAgent>();
       };
     }
 
+    // Check CLI tools
+    const cliTool = this.cliRegistry.get(appId);
+    if (cliTool) {
+      const guide = this.generateCliToolGuide(appId, cliTool);
+      return {
+        content: [{ type: 'text', text: guide }],
+      };
+    }
+
     throw new AaiError('UNKNOWN_APP', `App not found: ${appId}`);
   }
 
@@ -268,16 +300,37 @@ private readonly agentRegistry = new Map<string, DiscoveredAgent>();
         const acpExecutor = getAcpExecutor();
         const result = await acpExecutor.execute(agent.descriptor, toolName, args);
         return {
-          content: [{ type: 'text', text: typeof result === 'string' ? result : JSON.stringify(result, null, 2) }],
+          content: [
+            {
+              type: 'text',
+              text: typeof result === 'string' ? result : JSON.stringify(result, null, 2),
+            },
+          ],
         };
       }
-// Treat as web app URL
-const normalizedUrl = this.normalizeUrl(appId);
-descriptor = await fetchWebDescriptor(normalizedUrl);
-const locale = getSystemLocale();
-appName = getLocalizedName(descriptor.app.name, locale, descriptor.app.defaultLang);
-platform = 'web';
-}
+
+      // Check CLI tools
+      const cliTool = this.cliRegistry.get(appId);
+      if (cliTool) {
+        const cliExecutor = getCliExecutor();
+        const result = await cliExecutor.execute(cliTool.descriptor, toolName, args);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: typeof result === 'string' ? result : JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      // Treat as web app URL
+      const normalizedUrl = this.normalizeUrl(appId);
+      descriptor = await fetchWebDescriptor(normalizedUrl);
+      const locale = getSystemLocale();
+      appName = getLocalizedName(descriptor.app.name, locale, descriptor.app.defaultLang);
+      platform = 'web';
+    }
 
     // Find tool
     const tool = descriptor.tools.find((t) => t.name === toolName);
@@ -286,11 +339,16 @@ platform = 'web';
     }
 
     // Consent check
-    await this.consentManager.checkAndPrompt(descriptor.app.id, appName, {
-      name: toolName,
-      description: tool.description,
-      parameters: tool.parameters,
-    }, this.callerIdentity ?? { name: 'Unknown Client' });
+    await this.consentManager.checkAndPrompt(
+      descriptor.app.id,
+      appName,
+      {
+        name: toolName,
+        description: tool.description,
+        parameters: tool.parameters,
+      },
+      this.callerIdentity ?? { name: 'Unknown Client' }
+    );
 
     // Execute
     let result: unknown;
@@ -366,6 +424,28 @@ platform = 'web';
     sections.push('## Available Operations');
     sections.push('');
     for (const tool of agent.descriptor.tools) {
+      sections.push(`### ${tool.name}`);
+      sections.push(tool.description);
+      sections.push('');
+      sections.push('```');
+      sections.push(`aai:exec({ app: "${appId}", tool: "${tool.name}", args: {...} })`);
+      sections.push('```');
+      sections.push('');
+    }
+    return sections.join('\n');
+  }
+
+  private generateCliToolGuide(appId: string, cliTool: DiscoveredCliTool): string {
+    const sections: string[] = [];
+    sections.push(`# ${cliTool.name} (CLI Tool)`);
+    sections.push('');
+    sections.push(cliTool.description);
+    sections.push('');
+    sections.push(`**Command:** \`${cliTool.command}\``);
+    sections.push('');
+    sections.push('## Available Operations');
+    sections.push('');
+    for (const tool of cliTool.descriptor.tools) {
       sections.push(`### ${tool.name}`);
       sections.push(tool.description);
       sections.push('');
