@@ -55,14 +55,18 @@ export interface CookieAuth {
 export type AaiAuth = OAuth2Auth | ApiKeyAuth | AppCredentialAuth | CookieAuth;
 // ========== Execution Types ==========
 
-export interface IpcExecution {
-  type: 'ipc';
-}
-
 export interface WebExecution {
   type: 'http';
   baseUrl?: string;
   defaultHeaders?: Record<string, string>;
+}
+
+export interface StdioExecution {
+  type: 'stdio';
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  timeout?: number;
 }
 
 export interface AcpStart {
@@ -76,14 +80,32 @@ export interface AcpExecution {
   start: AcpStart;
 }
 
-export interface CliExecution {
-  type: 'cli';
-  command: string;
-  jsonFlag?: string;
+export interface AppleEventsExecution {
+  type: 'apple-events';
+  bundleId?: string;
+  eventClass?: string;
+  eventId?: string;
   timeout?: number;
 }
 
-export type Execution = IpcExecution | WebExecution | AcpExecution | CliExecution;
+export interface DbusExecution {
+  type: 'dbus';
+  service?: string;
+  objectPath?: string;
+  interface?: string;
+  bus?: 'session' | 'system';
+  timeout?: number;
+}
+
+export interface ComExecution {
+  type: 'com';
+  progId?: string;
+  timeout?: number;
+}
+
+export type NativeExecution = AppleEventsExecution | DbusExecution | ComExecution;
+
+export type Execution = WebExecution | StdioExecution | AcpExecution | NativeExecution;
 
 // ========== Internationalization ==========
 
@@ -164,8 +186,8 @@ export function getLocalizedName(
   return name[defaultLang] ?? Object.values(name)[0] ?? '';
 }
 
-export function isCliExecution(execution: Execution): execution is CliExecution {
-  return execution.type === 'cli';
+export function isStdioExecution(execution: Execution): execution is StdioExecution {
+  return execution.type === 'stdio';
 }
 
 export function isAcpExecution(execution: Execution): execution is AcpExecution {
@@ -176,6 +198,22 @@ export function isWebExecution(execution: Execution): execution is WebExecution 
   return execution.type === 'http';
 }
 
-export function isIpcExecution(execution: Execution): execution is IpcExecution {
-  return execution.type === 'ipc';
+export function isAppleEventsExecution(execution: Execution): execution is AppleEventsExecution {
+  return execution.type === 'apple-events';
+}
+
+export function isDbusExecution(execution: Execution): execution is DbusExecution {
+  return execution.type === 'dbus';
+}
+
+export function isComExecution(execution: Execution): execution is ComExecution {
+  return execution.type === 'com';
+}
+
+export function isNativeExecution(execution: Execution): execution is NativeExecution {
+  return (
+    execution.type === 'apple-events' ||
+    execution.type === 'dbus' ||
+    execution.type === 'com'
+  );
 }

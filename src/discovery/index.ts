@@ -5,7 +5,6 @@ import { LinuxDiscovery } from './linux.js';
 import type { DesktopDiscovery } from './interface.js';
 
 export type { DesktopDiscovery, DiscoveredDesktopApp, DiscoveryOptions } from './interface.js';
-export { scanCliTools, lookupCliToolByAlias, type DiscoveredCliTool } from './cli-registry.js';
 
 /**
  * Create a desktop discovery instance for the current platform.

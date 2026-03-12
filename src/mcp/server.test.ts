@@ -29,6 +29,10 @@ vi.mock('../discovery/index.js', () => ({
   }),
 }));
 
+vi.mock('../discovery/agent-registry.js', () => ({
+  scanInstalledAgents: vi.fn().mockResolvedValue([]),
+}));
+
 vi.mock('../storage/secure-storage/index.js', () => ({
   createSecureStorage: vi.fn().mockReturnValue({
     get: vi.fn(),
@@ -47,6 +51,16 @@ vi.mock('../credential/dialog/index.js', () => ({
   createCredentialDialog: vi.fn().mockReturnValue({
     show: vi.fn(),
   }),
+}));
+
+vi.mock('../utils/logger.js', () => ({
+  logger: {
+    info: vi.fn(),
+    debug: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    fatal: vi.fn(),
+  },
 }));
 
 describe('AaiGatewayServer - Caller Identity Extraction', () => {

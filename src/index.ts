@@ -12,7 +12,7 @@ export { createSecureStorage } from "./storage/secure-storage/index.js";
 export type { SecureStorage } from "./storage/secure-storage/interface.js";
 export { ConsentManager } from "./consent/manager.js";
 export { createConsentDialog } from "./consent/dialog/index.js";
-export { createIpcExecutor } from "./executors/ipc/index.js";
+export { createNativeExecutor } from "./executors/native/index.js";
 export { executeWebTool } from "./executors/web.js";
 export { TokenManager } from "./auth/token-manager.js";
 export { startOAuthFlow } from "./auth/oauth.js";

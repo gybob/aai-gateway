@@ -86,14 +86,18 @@ const AuthSchema = z.discriminatedUnion('type', [
 
 // ========== Execution Schemas ==========
 
-const IpcExecutionSchema = z.object({
-  type: z.literal('ipc'),
-});
-
 const WebExecutionSchema = z.object({
   type: z.literal('http'),
   baseUrl: z.string().optional(),
   defaultHeaders: z.record(z.string()).optional(),
+});
+
+const StdioExecutionSchema = z.object({
+  type: z.literal('stdio'),
+  command: z.string(),
+  args: z.array(z.string()).optional(),
+  env: z.record(z.string()).optional(),
+  timeout: z.number().optional(),
 });
 
 const AcpStartSchema = z.object({
@@ -107,10 +111,36 @@ const AcpExecutionSchema = z.object({
   start: AcpStartSchema,
 });
 
+const AppleEventsExecutionSchema = z.object({
+  type: z.literal('apple-events'),
+  bundleId: z.string().optional(),
+  eventClass: z.string().optional(),
+  eventId: z.string().optional(),
+  timeout: z.number().optional(),
+});
+
+const DbusExecutionSchema = z.object({
+  type: z.literal('dbus'),
+  service: z.string().optional(),
+  objectPath: z.string().optional(),
+  interface: z.string().optional(),
+  bus: z.enum(['session', 'system']).optional(),
+  timeout: z.number().optional(),
+});
+
+const ComExecutionSchema = z.object({
+  type: z.literal('com'),
+  progId: z.string().optional(),
+  timeout: z.number().optional(),
+});
+
 const ExecutionSchema = z.discriminatedUnion('type', [
-  IpcExecutionSchema,
   WebExecutionSchema,
+  StdioExecutionSchema,
   AcpExecutionSchema,
+  AppleEventsExecutionSchema,
+  DbusExecutionSchema,
+  ComExecutionSchema,
 ]);
 const AppSchema = z.object({
   id: z.string(),

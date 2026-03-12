@@ -14,6 +14,11 @@
             "date": 1773282344121,
             "name": "/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/logs/error-2026-03-12.log",
             "hash": "1c287c67a5321025f07002f4b3bdaf2b8e8b43696c8b7a97deda4226021257a7"
+        },
+        {
+            "date": 1773333959509,
+            "name": "/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/logs/error-2026-03-13.log",
+            "hash": "e56714c46f8f3bc22d3b1b76ca031162b312628245de6ab2707945d1a2b27ac5"
         }
     ],
     "hashType": "sha256"

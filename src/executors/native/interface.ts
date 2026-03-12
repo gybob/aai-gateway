@@ -1,4 +1,4 @@
-export interface IpcExecutor {
+export interface NativeExecutor {
   execute(
     appId: string,
     toolName: string,

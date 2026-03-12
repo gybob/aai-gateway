@@ -10,7 +10,7 @@ import { fetchWebDescriptor } from '../discovery/web.js';
 import { createSecureStorage } from '../storage/secure-storage/index.js';
 import { createConsentDialog } from '../consent/dialog/index.js';
 import { ConsentManager } from '../consent/manager.js';
-import { createIpcExecutor } from '../executors/ipc/index.js';
+import { createNativeExecutor } from '../executors/native/index.js';
 import { executeWebTool, type WebAuthContext } from '../executors/web.js';
 import { TokenManager } from '../auth/token-manager.js';
 import { CredentialManager } from '../credential/manager.js';
@@ -18,19 +18,16 @@ import { createCredentialDialog } from '../credential/dialog/index.js';
 import { generateAppListDescription, generateOperationGuide } from './guide-generator.js';
 import type { DiscoveredDesktopApp } from '../discovery/interface.js';
 import type { AaiJson } from '../types/aai-json.js';
-import { getLocalizedName } from '../types/aai-json.js';
+import { getLocalizedName, isNativeExecution } from '../types/aai-json.js';
 import { getSystemLocale } from '../utils/locale.js';
 import { scanInstalledAgents, type DiscoveredAgent } from '../discovery/agent-registry.js';
-import { scanCliTools, type DiscoveredCliTool } from '../discovery/cli-registry.js';
 import { getAcpExecutor } from '../executors/acp.js';
-import { getCliExecutor } from '../executors/cli.js';
 
 export class AaiGatewayServer {
   private readonly server: Server;
   private readonly options: DiscoveryOptions;
   private readonly desktopRegistry = new Map<string, DiscoveredDesktopApp>();
   private readonly agentRegistry = new Map<string, DiscoveredAgent>();
-  private readonly cliRegistry = new Map<string, DiscoveredCliTool>();
   private consentManager!: ConsentManager;
   private tokenManager!: TokenManager;
   private credentialManager!: CredentialManager;
@@ -78,17 +75,6 @@ export class AaiGatewayServer {
     } catch (err) {
       logger.error({ err }, 'ACP agent discovery failed');
     }
-
-    // Scan CLI tools
-    try {
-      const cliTools = await scanCliTools();
-      for (const tool of cliTools) {
-        this.cliRegistry.set(tool.appId, tool);
-      }
-      logger.info({ count: cliTools.length }, 'CLI tools discovered');
-    } catch (err) {
-      logger.error({ err }, 'CLI tool discovery failed');
-    }
   }
 
   private setupHandlers(): void {
@@ -133,16 +119,6 @@ export class AaiGatewayServer {
         const description = `[Agent] ${agent.name}: ${agent.description}`;
         tools.push({
           name: `app:${agent.appId}`,
-          description,
-          inputSchema: { type: 'object', properties: {} },
-        });
-      }
-
-      // CLI tools (one entry per tool)
-      for (const cliTool of this.cliRegistry.values()) {
-        const description = `[CLI] ${cliTool.name}: ${cliTool.description}`;
-        tools.push({
-          name: `app:${cliTool.appId}`,
           description,
           inputSchema: { type: 'object', properties: {} },
         });
@@ -253,15 +229,6 @@ export class AaiGatewayServer {
       };
     }
 
-    // Check CLI tools
-    const cliTool = this.cliRegistry.get(appId);
-    if (cliTool) {
-      const guide = this.generateCliToolGuide(appId, cliTool);
-      return {
-        content: [{ type: 'text', text: guide }],
-      };
-    }
-
     throw new AaiError('UNKNOWN_APP', `App not found: ${appId}`);
   }
 
@@ -285,13 +252,11 @@ export class AaiGatewayServer {
     // Resolve descriptor
     let descriptor: AaiJson;
     let appName: string;
-    let platform: 'desktop' | 'web';
 
     const desktopApp = this.desktopRegistry.get(appId);
     if (desktopApp) {
       descriptor = desktopApp.descriptor;
       appName = desktopApp.name;
-      platform = 'desktop';
     } else {
       // Check ACP agents
       const agent = this.agentRegistry.get(appId);
@@ -309,27 +274,11 @@ export class AaiGatewayServer {
         };
       }
 
-      // Check CLI tools
-      const cliTool = this.cliRegistry.get(appId);
-      if (cliTool) {
-        const cliExecutor = getCliExecutor();
-        const result = await cliExecutor.execute(cliTool.descriptor, toolName, args);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: typeof result === 'string' ? result : JSON.stringify(result, null, 2),
-            },
-          ],
-        };
-      }
-
       // Treat as web app URL
       const normalizedUrl = this.normalizeUrl(appId);
       descriptor = await fetchWebDescriptor(normalizedUrl);
       const locale = getSystemLocale();
       appName = getLocalizedName(descriptor.app.name, locale, descriptor.app.defaultLang);
-      platform = 'web';
     }
 
     // Find tool
@@ -351,15 +300,7 @@ export class AaiGatewayServer {
     );
 
     // Execute
-    let result: unknown;
-    if (platform === 'web') {
-      // Get auth context based on auth type
-      const authContext = await this.getWebAuthContext(descriptor);
-      result = await executeWebTool(descriptor, toolName, args, authContext);
-    } else {
-      const ipcExecutor = createIpcExecutor();
-      result = await ipcExecutor.execute(descriptor.app.id, toolName, args);
-    }
+    const result = await this.executeDescriptorTool(descriptor, toolName, args);
 
     return {
       content: [
@@ -400,6 +341,43 @@ export class AaiGatewayServer {
     }
   }
 
+  private async executeDescriptorTool(
+    descriptor: AaiJson,
+    toolName: string,
+    args: Record<string, unknown>
+  ): Promise<unknown> {
+    const execution = descriptor.execution;
+
+    if (execution.type === 'http') {
+      const authContext = await this.getWebAuthContext(descriptor);
+      return executeWebTool(descriptor, toolName, args, authContext);
+    }
+
+    if (isNativeExecution(execution)) {
+      const nativeExecutor = createNativeExecutor(execution.type);
+      return nativeExecutor.execute(descriptor.app.id, toolName, args);
+    }
+
+    if (execution.type === 'stdio') {
+      throw new AaiError(
+        'NOT_IMPLEMENTED',
+        `STDIO execution is defined for '${descriptor.app.id}' but not implemented in aai-gateway yet`
+      );
+    }
+
+    if (execution.type === 'acp') {
+      throw new AaiError(
+        'INVALID_REQUEST',
+        `ACP execution for '${descriptor.app.id}' must be resolved via the agent registry`
+      );
+    }
+
+    throw new AaiError(
+      'NOT_IMPLEMENTED',
+      `Unsupported execution type '${String((execution as { type?: string }).type)}'`
+    );
+  }
+
   private normalizeUrl(input: string): string {
     // Already a URL
     if (input.startsWith('https://') || input.startsWith('http://')) {
@@ -424,28 +402,6 @@ export class AaiGatewayServer {
     sections.push('## Available Operations');
     sections.push('');
     for (const tool of agent.descriptor.tools) {
-      sections.push(`### ${tool.name}`);
-      sections.push(tool.description);
-      sections.push('');
-      sections.push('```');
-      sections.push(`aai:exec({ app: "${appId}", tool: "${tool.name}", args: {...} })`);
-      sections.push('```');
-      sections.push('');
-    }
-    return sections.join('\n');
-  }
-
-  private generateCliToolGuide(appId: string, cliTool: DiscoveredCliTool): string {
-    const sections: string[] = [];
-    sections.push(`# ${cliTool.name} (CLI Tool)`);
-    sections.push('');
-    sections.push(cliTool.description);
-    sections.push('');
-    sections.push(`**Command:** \`${cliTool.command}\``);
-    sections.push('');
-    sections.push('## Available Operations');
-    sections.push('');
-    for (const tool of cliTool.descriptor.tools) {
       sections.push(`### ${tool.name}`);
       sections.push(tool.description);
       sections.push('');
