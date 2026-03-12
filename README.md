@@ -83,10 +83,10 @@ graph TB
     E2 --> ACP2
     E2 --> ACP3
 
-    E3 -->|Apple Events/DBus/COM| DESK1
+    E3 -->|Apple Events, DBus, COM| DESK1
     E3 --> DESK2
 
-    E4 -.->|JSON over stdin/stdout (planned)| DESK1
+    E4 -.->|JSON over stdio, planned| DESK1
 
     D1 -.->|fetch .well-known| WEB1
     D2 -.->|which command| ACP1
@@ -474,21 +474,6 @@ The following apps are planned for future integration, organized by priority:
 | Perplexity   | API Key   | `api.perplexity.ai`           | AI search engine       |
 | Exa          | API Key   | `api.exa.ai`                  | AI-powered search      |
 | Tavily       | API Key   | `api.tavily.com`              | Search API for AI      |
-
-#### ❌ Not Suitable for AAI Gateway
-
-The following MCP server types are **NOT suitable** for AAI Gateway as they require local implementation:
-
-| Type               | Examples                  | Reason                           |
-| ------------------ | ------------------------- | -------------------------------- |
-| Local Filesystem   | Filesystem, Memory        | Requires local file access       |
-| Version Control    | Git                       | Requires local git commands      |
-| Browser Automation | Playwright, Puppeteer     | Requires browser instance        |
-| Code Execution     | E2B, Riza                 | Requires sandbox environment     |
-| Database Drivers   | PostgreSQL, MySQL, SQLite | Requires database drivers        |
-| System Commands    | Shell, Terminal           | Requires local command execution |
-
----
 
 Want to see your app prioritized? [Open an issue](https://github.com/gybob/aai-gateway/issues).
 
