@@ -37,16 +37,12 @@ export const notionDescriptor: AaiJson = {
       name: 'Authorization',
       prefix: 'Bearer',
       obtainUrl: 'https://www.notion.so/my-integrations',
-      instructions: {
-        short: "Get your Integration Secret from Notion's My Integrations page",
-        detailed: `1. Go to https://www.notion.so/my-integrations
+      instructions: `1. Go to https://www.notion.so/my-integrations
 2. Click "+ New integration"
 3. Give it a name and select workspace
 4. Copy the "Internal Integration Secret"
 5. Share pages with your integration in Notion
 6. Paste the secret here`,
-        helpUrl: 'https://www.notion.so/my-integrations',
-      },
     },
   },
   tools: [

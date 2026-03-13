@@ -35,16 +35,12 @@ export const feishuDescriptor: AaiJson = {
       tokenEndpoint: 'https://open.feishu.cn/open-apis/auth/v3/tenantAccessToken/internal',
       tokenType: 'tenantAccessToken',
       expiresIn: 7200, // 2 hours
-      instructions: {
-        short: 'Get your App ID and App Secret from Feishu Open Platform',
-        detailed: `1. Go to https://open.feishu.cn/app
+      instructions: `1. Go to https://open.feishu.cn/app
 2. Create or select an app
 3. Go to "凭证与基础信息" (Credentials & Basic Info)
 4. Copy the App ID and App Secret
 5. Make sure the app has the required permissions enabled
 6. Paste them here`,
-        helpUrl: 'https://open.feishu.cn/app',
-      },
     },
   },
   tools: [

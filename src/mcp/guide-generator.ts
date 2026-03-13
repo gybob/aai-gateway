@@ -52,8 +52,8 @@ export function generateOperationGuide(
     switch (auth.type) {
       case 'apiKey':
         sections.push(`Uses API Key authentication.`);
-        if (auth.apiKey.instructions?.short) {
-          sections.push(auth.apiKey.instructions.short);
+        if (auth.apiKey.instructions) {
+          sections.push(auth.apiKey.instructions);
         }
         if (auth.apiKey.obtainUrl) {
           sections.push(`Get your API key: ${auth.apiKey.obtainUrl}`);
@@ -61,8 +61,8 @@ export function generateOperationGuide(
         break;
       case 'appCredential':
         sections.push(`Uses App Credential authentication (App ID + App Secret).`);
-        if (auth.appCredential.instructions?.short) {
-          sections.push(auth.appCredential.instructions.short);
+        if (auth.appCredential.instructions) {
+          sections.push(auth.appCredential.instructions);
         }
         break;
       case 'oauth2':

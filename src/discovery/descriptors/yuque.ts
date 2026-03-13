@@ -34,15 +34,11 @@ export const yuqueDescriptor: AaiJson = {
       location: 'header',
       name: 'X-Auth-Token',
       obtainUrl: 'https://www.yuque.com/settings/tokens',
-      instructions: {
-        short: 'Get your API token from Yuque Settings > Tokens',
-        detailed: `1. Go to https://www.yuque.com/settings/tokens
+      instructions: `1. Go to https://www.yuque.com/settings/tokens
 2. Click "新建令牌" (New Token)
 3. Give it a name and select scopes
 4. Copy the token (it won't be shown again)
 5. Paste it here`,
-        helpUrl: 'https://www.yuque.com/settings/tokens',
-      },
     },
   },
   tools: [

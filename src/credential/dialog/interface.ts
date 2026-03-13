@@ -11,11 +11,7 @@ export interface CredentialDialogInfo {
   authType: 'apiKey' | 'cookie';
   appName: string;
   appId: string;
-  instructions: {
-    short: string;
-    helpUrl?: string;
-  };
-  obtainUrl: string;
+  instructions?: string;
   inputLabel: string;
   inputPlaceholder?: string;
 }
@@ -27,28 +23,24 @@ export interface AppCredentialDialogInfo {
   authType: 'appCredential';
   appName: string;
   appId: string;
-  instructions: {
-    short: string;
-    helpUrl?: string;
-  };
-  obtainUrl: string;
+  instructions?: string;
 }
 
 /**
  * Result from credential dialog
  */
 export interface CredentialDialogResult {
-  credential: string;
-  cancelled: boolean;
+  action: 'submit' | 'cancel' | 'help';
+  credential?: string;
 }
 
 /**
  * Result from app credential dialog
  */
 export interface AppCredentialDialogResult {
-  appId: string;
-  appSecret: string;
-  cancelled: boolean;
+  action: 'submit' | 'cancel' | 'help';
+  appId?: string;
+  appSecret?: string;
 }
 
 /**

@@ -27,6 +27,15 @@ export interface ConsentRequiredData {
   consent_url: string;
 }
 
+export interface AuthGuidanceRequiredData {
+  app_id: string;
+  app_name: string;
+  auth_type: 'apiKey' | 'appCredential' | 'cookie';
+  instructions: string;
+  preferred_locale: string;
+  obtain_url?: string;
+}
+
 export class AaiError extends Error {
   constructor(
     public readonly code: AaiErrorCode,

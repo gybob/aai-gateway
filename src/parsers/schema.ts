@@ -20,13 +20,6 @@ const ToolSchema = z.object({
 
 // ========== Auth Schemas ==========
 
-const AuthInstructionsSchema = z.object({
-  short: z.string(),
-  detailed: z.string().optional(),
-  helpUrl: z.string().optional(),
-  screenshotUrl: z.string().optional(),
-});
-
 // OAuth2 Auth
 const OAuth2AuthSchema = z.object({
   type: z.literal('oauth2'),
@@ -48,7 +41,7 @@ const ApiKeyAuthSchema = z.object({
     name: z.string(),
     prefix: z.string().optional(),
     obtainUrl: z.string(),
-    instructions: AuthInstructionsSchema.optional(),
+    instructions: z.string().optional(),
   }),
 });
 
@@ -59,7 +52,7 @@ const AppCredentialAuthSchema = z.object({
     tokenEndpoint: z.string(),
     tokenType: z.enum(['tenantAccessToken', 'appAccessToken', 'userAccessToken']),
     expiresIn: z.number(),
-    instructions: AuthInstructionsSchema.optional(),
+    instructions: z.string().optional(),
   }),
 });
 

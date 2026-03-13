@@ -1,4 +1,4 @@
-import { AaiError } from '../errors/errors.js';
+import { AaiError, type AuthGuidanceRequiredData } from '../errors/errors.js';
 import { logger } from '../utils/logger.js';
 import type { SecureStorage } from '../storage/secure-storage/interface.js';
 import type { CredentialDialog } from './dialog/interface.js';
@@ -99,16 +99,21 @@ export class CredentialManager {
       authType: 'apiKey',
       appName,
       appId,
-      instructions: auth.apiKey.instructions ?? {
-        short: `Get your API key from ${auth.apiKey.obtainUrl}`,
-        helpUrl: auth.apiKey.obtainUrl,
-      },
-      obtainUrl: auth.apiKey.obtainUrl,
+      instructions:
+        auth.apiKey.instructions ?? `Get your API key from ${auth.apiKey.obtainUrl} and paste it here.`,
       inputLabel: 'API Key',
       inputPlaceholder: 'Paste your API key here',
     });
 
-    if (result.cancelled || !result.credential) {
+    if (result.action === 'help') {
+      throw this.createAuthGuidanceError(appId, appName, 'apiKey', {
+        instructions:
+          auth.apiKey.instructions ?? `Get your API key from ${auth.apiKey.obtainUrl} and paste it here.`,
+        obtainUrl: auth.apiKey.obtainUrl,
+      });
+    }
+
+    if (result.action !== 'submit' || !result.credential) {
       throw new AaiError('AUTH_DENIED', 'User cancelled API key input');
     }
 
@@ -144,16 +149,19 @@ export class CredentialManager {
       authType: 'cookie',
       appName,
       appId,
-      instructions: {
-        short: cookieInstructions,
-        helpUrl: auth.cookie.loginUrl,
-      },
-      obtainUrl: auth.cookie.loginUrl,
+      instructions: cookieInstructions,
       inputLabel: 'Cookies',
       inputPlaceholder: `e.g., ${auth.cookie.requiredCookies.join(', ')}`,
     });
 
-    if (result.cancelled || !result.credential) {
+    if (result.action === 'help') {
+      throw this.createAuthGuidanceError(appId, appName, 'cookie', {
+        instructions: cookieInstructions,
+        obtainUrl: auth.cookie.loginUrl,
+      });
+    }
+
+    if (result.action !== 'submit' || !result.credential) {
       throw new AaiError('AUTH_DENIED', 'User cancelled cookie input');
     }
 
@@ -208,14 +216,20 @@ export class CredentialManager {
       authType: 'appCredential',
       appName,
       appId,
-      instructions: auth.appCredential.instructions ?? {
-        short: `Get your App ID and App Secret from the developer console`,
-        helpUrl: auth.appCredential.tokenEndpoint,
-      },
-      obtainUrl: auth.appCredential.tokenEndpoint,
+      instructions:
+        auth.appCredential.instructions ??
+        'Get your App ID and App Secret from the developer console, then paste them here.',
     });
 
-    if (result.cancelled || !result.appId || !result.appSecret) {
+    if (result.action === 'help') {
+      throw this.createAuthGuidanceError(appId, appName, 'appCredential', {
+        instructions:
+          auth.appCredential.instructions ??
+          'Get your App ID and App Secret from the developer console, then paste them here.',
+      });
+    }
+
+    if (result.action !== 'submit' || !result.appId || !result.appSecret) {
       throw new AaiError('AUTH_DENIED', 'User cancelled app credential input');
     }
 
@@ -323,5 +337,25 @@ export class CredentialManager {
    */
   async clearCredentials(appId: string): Promise<void> {
     await this.storage.delete(this.credentialKey(appId));
+  }
+
+  private createAuthGuidanceError(
+    appId: string,
+    appName: string,
+    authType: AuthGuidanceRequiredData['auth_type'],
+    info: { instructions: string; obtainUrl?: string }
+  ): AaiError {
+    return new AaiError(
+      'AUTH_REQUIRED',
+      `User requested authentication help for '${appName}'. Explain the following instructions in the user's preferred language before retrying.`,
+      {
+        app_id: appId,
+        app_name: appName,
+        auth_type: authType,
+        instructions: info.instructions,
+        preferred_locale: getSystemLocale(),
+        obtain_url: info.obtainUrl,
+      } satisfies AuthGuidanceRequiredData
+    );
   }
 }

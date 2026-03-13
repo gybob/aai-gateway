@@ -22,6 +22,7 @@ const i18n = {
   en: {
     // API Key dialog
     enterApiKey: (appName: string) => `Enter API Key for ${appName}`,
+    enterCookies: (appName: string) => `Enter Cookies for ${appName}`,
     authentication: (appName: string) => `${appName} Authentication`,
     // App Credential dialogs
     enterAppId: (appName: string) => `Enter App ID for ${appName}`,
@@ -36,6 +37,7 @@ const i18n = {
   zh: {
     // API Key dialog
     enterApiKey: (appName: string) => `请输入 ${appName} 的 API 密钥`,
+    enterCookies: (appName: string) => `请输入 ${appName} 的 Cookies`,
     authentication: (appName: string) => `${appName} 身份验证`,
     // App Credential dialogs
     enterAppId: (appName: string) => `请输入 ${appName} 的 App ID`,
@@ -104,12 +106,12 @@ export class MacOSCredentialDialog implements CredentialDialog {
     this.lang = await this.getLang();
     const t = this.t();
 
-    const buttons = info.instructions.helpUrl
+    const buttons = info.instructions
       ? `"${t.help}", "${t.cancel}", "${t.ok}"`
       : `"${t.cancel}", "${t.ok}"`;
 
-    const promptText = info.instructions.short;
-    const dialogMessage = `${t.enterApiKey(info.appName)}\\n\\n${promptText}`;
+    const dialogMessage =
+      info.authType === 'cookie' ? t.enterCookies(info.appName) : t.enterApiKey(info.appName);
 
     const script = `
       display dialog "${dialogMessage}" default answer "${info.inputPlaceholder ?? ''}" buttons {${buttons}} default button "${t.ok}" with title "${t.authentication(info.appName)}" with icon note
@@ -123,24 +125,21 @@ export class MacOSCredentialDialog implements CredentialDialog {
       const buttonMatch = stdout.match(/button returned:(.+)/);
 
       if (buttonMatch?.[1]?.trim() === t.help) {
-        // Open help URL and recurse
-        await execFileAsync('open', [info.instructions.helpUrl!]);
-        return this.show(info);
+        return { action: 'help' };
       }
 
       if (buttonMatch?.[1]?.trim() === t.cancel || !textMatch) {
-        return { credential: '', cancelled: true };
+        return { action: 'cancel' };
       }
 
       const credential = textMatch[1].trim();
       if (!credential) {
-        return { credential: '', cancelled: true };
+        return { action: 'cancel' };
       }
 
-      return { credential, cancelled: false };
+      return { action: 'submit', credential };
     } catch {
-      // User clicked Cancel or closed dialog
-      return { credential: '', cancelled: true };
+      return { action: 'cancel' };
     }
   }
 
@@ -148,13 +147,13 @@ export class MacOSCredentialDialog implements CredentialDialog {
     this.lang = await this.getLang();
     const t = this.t();
 
-    const buttons = info.instructions.helpUrl
+    const buttons = info.instructions
       ? `"${t.help}", "${t.cancel}", "${t.ok}"`
       : `"${t.cancel}", "${t.ok}"`;
 
     // Show App ID dialog first
     const appIdScript = `
-      display dialog "${t.enterAppId(info.appName)}\\n\\n${info.instructions.short}" default answer "" buttons {${buttons}} default button "${t.ok}" with title "${t.appIdTitle(info.appName)}" with icon note
+      display dialog "${t.enterAppId(info.appName)}" default answer "" buttons {${buttons}} default button "${t.ok}" with title "${t.appIdTitle(info.appName)}" with icon note
     `;
 
     let appId: string;
@@ -165,20 +164,19 @@ export class MacOSCredentialDialog implements CredentialDialog {
       const buttonMatch = appIdResult.match(/button returned:(.+)/);
 
       if (buttonMatch?.[1]?.trim() === t.help) {
-        await execFileAsync('open', [info.instructions.helpUrl!]);
-        return this.showForAppCredential(info);
+        return { action: 'help' };
       }
 
       if (buttonMatch?.[1]?.trim() === t.cancel || !appIdMatch) {
-        return { appId: '', appSecret: '', cancelled: true };
+        return { action: 'cancel' };
       }
 
       appId = appIdMatch[1].trim();
       if (!appId) {
-        return { appId: '', appSecret: '', cancelled: true };
+        return { action: 'cancel' };
       }
     } catch {
-      return { appId: '', appSecret: '', cancelled: true };
+      return { action: 'cancel' };
     }
 
     // Show App Secret dialog
@@ -193,23 +191,21 @@ export class MacOSCredentialDialog implements CredentialDialog {
       const buttonMatch = secretResult.match(/button returned:(.+)/);
 
       if (buttonMatch?.[1]?.trim() === t.help) {
-        await execFileAsync('open', [info.instructions.helpUrl!]);
-        // Return to first dialog
-        return this.showForAppCredential(info);
+        return { action: 'help' };
       }
 
       if (buttonMatch?.[1]?.trim() === t.cancel || !secretMatch) {
-        return { appId: '', appSecret: '', cancelled: true };
+        return { action: 'cancel' };
       }
 
       const appSecret = secretMatch[1].trim();
       if (!appSecret) {
-        return { appId: '', appSecret: '', cancelled: true };
+        return { action: 'cancel' };
       }
 
-      return { appId, appSecret, cancelled: false };
+      return { action: 'submit', appId, appSecret };
     } catch {
-      return { appId: '', appSecret: '', cancelled: true };
+      return { action: 'cancel' };
     }
   }
 }

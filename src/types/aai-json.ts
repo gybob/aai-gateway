@@ -1,12 +1,3 @@
-// ========== Auth Instructions ==========
-
-export interface AuthInstructions {
-  short: string;
-  detailed?: string;
-  helpUrl?: string;
-  screenshotUrl?: string;
-}
-
 // ========== Auth Types ==========
 
 export interface OAuth2Auth {
@@ -28,7 +19,7 @@ export interface ApiKeyAuth {
     name: string;
     prefix?: string;
     obtainUrl: string;
-    instructions?: AuthInstructions;
+    instructions?: string;
   };
 }
 
@@ -38,7 +29,7 @@ export interface AppCredentialAuth {
     tokenEndpoint: string;
     tokenType: 'tenantAccessToken' | 'appAccessToken' | 'userAccessToken';
     expiresIn: number;
-    instructions?: AuthInstructions;
+    instructions?: string;
   };
 }
 

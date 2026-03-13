@@ -6,16 +6,6 @@ import { getTranslations } from '../i18n/translations.js';
 
 const execFileAsync = promisify(execFile);
 
-function buildParamLines(parameters: object, noParamsText: string): string {
-  const props =
-    (parameters as { properties?: Record<string, { description?: string }> }).properties ?? {};
-  return (
-    Object.entries(props)
-      .map(([k, v]) => `• ${k}${v.description ? `: ${v.description}` : ''}`)
-      .join('\\n') || noParamsText
-  );
-}
-
 export class MacOSConsentDialog implements ConsentDialog {
   private locale: SupportedLocale;
 
@@ -25,24 +15,14 @@ export class MacOSConsentDialog implements ConsentDialog {
 
   async show(info: ConsentDialogInfo): Promise<ConsentDialogResult> {
     const t = getTranslations(this.locale);
-    const paramLines = buildParamLines(info.parameters, t.noParams);
 
-    // Build dialog text with caller identity:
-    // ⚠️ Claude Desktop requests tool access
-    //
-    // Caller: Claude Desktop
-    // 待授权应用：语雀
-    // 待授权接口：get_user
-    // 接口说明：获取当前用户信息
-    // 接口参数：(无参数)
     const authScript = `
 set dialogText to "${t.dialogTitle}
 
 ${t.callerLabel}：${info.callerName}
-${t.pendingAppLabel}：${info.appName}
-${t.pendingApiLabel}：${info.toolName}
-${t.apiDescriptionLabel}：${info.toolDescription}
-${t.apiParamsLabel}：${paramLines}"
+${t.appLabel}：${info.appName}
+${t.toolLabel}：${info.toolName}
+${t.toolDescriptionLabel}：${info.toolDescription}"
 set result to display dialog dialogText buttons {"${t.buttonCancel}", "${t.buttonAuthorizeOnce}", "${t.buttonAuthorizeAll}"} default button "${t.buttonAuthorizeOnce}" with icon caution
 set btn to button returned of result
 return btn
