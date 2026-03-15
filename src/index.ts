@@ -1,18 +1,23 @@
-export { AaiGatewayServer, createGatewayServer } from "./mcp/server.js";
-export { AaiError } from "./errors/errors.js";
-export type { AaiErrorCode, ConsentRequiredData } from "./errors/errors.js";
-export { logger } from "./utils/logger.js";
-export { parseAaiJson } from "./parsers/schema.js";
-export type { AaiJson, DiscoveredDesktopApp } from "./types/aai-json.js";
-export { getCurrentPlatform } from "./utils/platform.js";
-export type { SupportedPlatform } from "./utils/platform.js";
-export { createDesktopDiscovery } from "./discovery/index.js";
-export { fetchWebDescriptor } from "./discovery/web.js";
-export { createSecureStorage } from "./storage/secure-storage/index.js";
-export type { SecureStorage } from "./storage/secure-storage/interface.js";
-export { ConsentManager } from "./consent/manager.js";
-export { createConsentDialog } from "./consent/dialog/index.js";
-export { createNativeExecutor } from "./executors/native/index.js";
-export { executeWebTool } from "./executors/web.js";
-export { TokenManager } from "./auth/token-manager.js";
-export { startOAuthFlow } from "./auth/oauth.js";
+export { AaiGatewayServer, createGatewayServer } from './gateway/server.js';
+export { ManagedIntegrationStore } from './gateway/managed-store.js';
+export { parseAaiDescriptor, AaiDescriptorSchema } from './aai/parser.js';
+export { McpImporter, normalizeImportedMcpSource } from './importer/mcp-importer.js';
+export { IntegrationRegistry } from './gateway/integration-registry.js';
+export { RpcExecutor } from './executors/rpc-executor.js';
+export { PrimitiveResolver } from './gateway/primitive-resolver.js';
+export { DisclosureEngine } from './gateway/disclosure-engine.js';
+export { ExecutorRouter } from './gateway/executor-router.js';
+export { HttpApiExecutor } from './executors/http-api-executor.js';
+export { IpcExecutor } from './executors/ipc-executor.js';
+export { AaiError } from './errors/errors.js';
+export { logger } from './shared/logger.js';
+export type {
+  AaiDescriptor,
+  ImportMcpOptions,
+  ImportedMcpSource,
+  ManagedIntegrationMetadata,
+  ManagedIntegrationRecord,
+  PrimitiveSummary,
+  Runtime,
+  ToolDef,
+} from './aai/types.js';

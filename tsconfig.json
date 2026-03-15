@@ -28,6 +28,15 @@
       "@/*": ["src/*"]
     }
   },
-  "include": ["src/**/*"],
+  "include": [
+    "src/cli.ts",
+    "src/index.ts",
+    "src/errors/errors.ts",
+    "src/shared/logger.ts",
+    "src/aai/**/*.ts",
+    "src/gateway/**/*.ts",
+    "src/executors/**/*.ts",
+    "src/importer/**/*.ts"
+  ],
   "exclude": ["node_modules", "dist", "**/*.test.ts", "**/*.spec.ts"]
 }
