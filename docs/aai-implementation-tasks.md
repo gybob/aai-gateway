@@ -513,44 +513,6 @@ aai-gateway remove-integration <integration-id>
 
 但协议字段、导入产物和文档口径还没有完全收敛到“最简单层协议 + gateway 运行时约定”的最终形态。
 
-## 下一阶段：协议简化与作者侧约定收敛
-
-此阶段只针对“作者侧 schema 简化”和“渐进式披露配置收敛”。
-
-目标不是删除能力，而是：
-
-- 让 app 作者少填字段
-- 让 gateway 基于约定自动补齐更多运行时细节
-- 把本应属于宿主治理的策略从 app 描述文件里移出去
-
-## [未执行] 任务 A：收缩为单层协议 Schema，并将约定收敛到 Gateway 代码
-
-### 目标
-
-保持 `aai.json` 只有一套正式协议结构。
-
-由 `aai-gateway` 在解析和运行时按约定补默认值、推导值和派生状态。
-
-### 代码变更点
-
-- 更新 [src/aai/types.ts](/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/src/aai/types.ts)
-  - 收缩为单层正式协议类型
-  - 删除额外 schema 分层设计预留
-- 更新 [src/aai/parser.ts](/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/src/aai/parser.ts)
-  - 解析单层 schema
-  - 在解析阶段补默认值
-- 新增建议模块
-  - [src/aai/derived.ts](/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/src/aai/derived.ts)
-  - 负责运行时派生值计算，而不是 schema 转换
-- 更新 [src/aai/parser.test.ts](/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/src/aai/parser.test.ts)
-  - 增加“最小 aai.json 也能通过解析”的测试
-  - 增加“省略字段按约定补齐”的测试
-
-### 验收标准
-
-- `aai.json` 对外只有一套协议结构
-- 作者可以用明显更小的描述符通过解析
-- gateway 仍可在代码中自动补齐默认值和推导值
 
 ## [未执行] 任务 B：彻底移除 `disclosure` 协议字段，改为协议内建约定
 
@@ -567,7 +529,7 @@ aai-gateway remove-integration <integration-id>
 ### 代码变更点
 
 - 更新 [src/aai/types.ts](/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/src/aai/types.ts)
-  - 删除作者侧 `disclosure` 类型
+  - 删除 `disclosure` 类型
   - 清理相关的类型注释和导出
 - 更新 [src/aai/parser.ts](/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/src/aai/parser.ts)
   - 拒绝 `disclosure` 字段
@@ -582,102 +544,9 @@ aai-gateway remove-integration <integration-id>
 
 ### 验收标准
 
-- 作者侧完全不再填写 `disclosure`
+- 完全不再填写 `disclosure`
 - gateway 仍能维持现有渐进式披露行为
 
-## [未执行] 任务 C：继续收缩 `source / runtime / catalog / binding` 填写面
-
-### 目标
-
-把大量可推导字段从作者侧移除，保留最小连接信息和最小能力描述。
-
-### 代码变更点
-
-- 更新 [src/aai/types.ts](/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/src/aai/types.ts)
-  - 将 `source` 保持为最小来源字段集合
-  - 保持单个 `runtime`
-  - 删除 `catalog` 中与刷新、订阅、来源运行时耦合的字段
-- 更新 [src/aai/parser.ts](/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/src/aai/parser.ts)
-  - 根据 `summary / snapshot / runtime` 自动推导运行时行为
-  - 对 MCP 工具默认推导 `binding`
-- 更新 [src/executors/rpc-executor.ts](/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/src/executors/rpc-executor.ts)
-  - 确保运行时能力更优先来自握手而不是作者手填
-- 更新 [src/importer/mcp-importer.ts](/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/src/importer/mcp-importer.ts)
-  - 生成简化作者侧更容易理解的结构，避免输出作者不需要关心的内部运行时字段
-- 更新测试
-  - [src/aai/parser.test.ts](/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/src/aai/parser.test.ts)
-  - [src/importer/mcp-importer.test.ts](/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/src/importer/mcp-importer.test.ts)
-
-### 验收标准
-
-- 作者侧不再需要显式填写大部分 `catalog` 控制字段
-- MCP 场景下不再需要显式填写大部分 `binding`
-- `source` 与 `runtime` 保持单一且稳定
-- 大部分运行时细节能由 gateway 自动推导
-
-## [未执行] 任务 D：将宿主治理、能力协商与缓存控制收敛到 Gateway 运行时
-
-### 目标
-
-把属于宿主治理和执行运行时的问题从 `aai.json` 中剥离出去。
-
-协议只保留最小的 `auth` 和能力内容描述。
-
-以下内容应由 gateway 代码处理，而不是作者填写：
-
-- consent
-- audit
-- trust
-- limits
-- 握手后的能力协商结果
-- 列表刷新、缓存和订阅策略
-
-### 代码变更点
-
-- 更新 [src/aai/types.ts](/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/src/aai/types.ts)
-  - 删除 `hostInteraction`
-  - 删除 `policy`
-  - 删除作者侧能力协商结果字段
-- 更新 [src/aai/parser.ts](/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/src/aai/parser.ts)
-  - 清理对应解析逻辑
-  - 仅保留最小认证和目录内容校验
-- 新增建议模块
-  - [src/gateway/gateway-policy.ts](/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/src/gateway/gateway-policy.ts)
-  - 统一承载默认 consent / audit / trust / limit 配置
-- 更新 [src/gateway/server.ts](/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/src/gateway/server.ts)
-  - 执行时优先读取 gateway 全局策略
-- 更新 [src/gateway/primitive-resolver.ts](/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/src/gateway/primitive-resolver.ts)
-  - 统一从缓存和握手结果中读取运行时能力信息
-- 更新测试
-  - 新增 [src/gateway/gateway-policy.test.ts](/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/src/gateway/gateway-policy.test.ts)
-
-### 验收标准
-
-- 作者侧无需配置宿主治理和握手细节
-- gateway 可以统一控制 consent、audit、trust、limits 和缓存策略
-
-## [未执行] 任务 E：同步 CLI、Importer 与文档到精简后的作者侧协议
-
-### 目标
-
-保证简化后的协议不仅存在于设计文档里，也真正体现在导入、CLI 和示例中。
-
-### 代码变更点
-
-- 更新 [src/cli.ts](/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/src/cli.ts)
-  - 输出或展示更接近作者侧精简 schema 的结果
-- 更新 [src/importer/mcp-importer.ts](/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/src/importer/mcp-importer.ts)
-  - 生成与新作者侧约定一致的 descriptor
-- 更新 [src/index.ts](/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/src/index.ts)
-  - 如有需要导出新的派生逻辑辅助模块
-- 更新测试
-  - [src/importer/mcp-importer.test.ts](/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/src/importer/mcp-importer.test.ts)
-  - 新增 [src/cli.test.ts](/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/src/cli.test.ts)（如引入 CLI 覆盖）
-
-### 验收标准
-
-- CLI、导入器、文档示例对作者侧字段口径一致
-- 新用户不需要理解 gateway 内部派生逻辑就能编写可用描述符
 
 ## 下一阶段：发现、激活与治理
 
