@@ -146,6 +146,7 @@ The refactoring is organized into 6 phases over 6 weeks:
 
 ---
 
-**Status**: Draft
+**Status**: Archived
 **Created**: 2026-03-19
+**Archived**: 2026-03-19
 **Schema**: spec-driven

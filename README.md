@@ -13,7 +13,7 @@
 
 ## 🏗️ Architecture Overview (v0.4.0)
 
-AAI Gateway v0.4.0 introduces a refactored architecture with modular discovery and unified storage:
+AAI Gateway features modular discovery and unified storage:
 
 ### Discovery Layer
 
@@ -133,7 +133,7 @@ Rules:
 - `exposure` contains only `keywords` and `summary`
 - no centralized `tools`
 - no embedded user policy
-- no old `execution.via/transport/launch` model
+- descriptor-defined execution model
 
 ## Access Protocols
 
@@ -458,9 +458,9 @@ aai-gateway skill import --path /path/to/skill-dir
 aai-gateway skill import --url https://example.com/.well-known/skill/
 ```
 
-## Current Direction
+## License
 
-AAI Gateway is still early-stage. The project favors a clean model over compatibility layers. If old code does not fit the new descriptor architecture, it should be rewritten or removed.
+Apache-2.0
 
 ## Links
 
