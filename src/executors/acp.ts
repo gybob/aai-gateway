@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { logger } from '../utils/logger.js';
+
 import { AaiError } from '../errors/errors.js';
 import type {
   AcpAgentConfig,
@@ -8,6 +8,8 @@ import type {
   DetailedCapability,
   ExecutionResult,
 } from '../types/index.js';
+import { logger } from '../utils/logger.js';
+
 import type { Executor } from './interface.js';
 
 interface PendingRequest {

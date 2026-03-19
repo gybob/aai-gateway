@@ -1,5 +1,6 @@
-import type { ConsentDialog, ConsentDialogInfo, ConsentDialogResult } from './interface.js';
 import { AaiError } from '../../errors/errors.js';
+
+import type { ConsentDialog, ConsentDialogInfo, ConsentDialogResult } from './interface.js';
 
 /**
  * Linux Consent Dialog using zenity or kdialog

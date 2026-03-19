@@ -2,14 +2,12 @@
 
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
+import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
-import { createGatewayServer } from './mcp/server.js';
+
 import { createDesktopDiscovery } from './discovery/index.js';
-import { logger } from './utils/logger.js';
 import { getMcpExecutor } from './executors/mcp.js';
-import { createSecureStorage } from './storage/secure-storage/index.js';
 import {
   generateMcpDescriptor,
   importMcpServer,
@@ -17,9 +15,12 @@ import {
   refreshImportedMcpServer,
   type ExposureDraft,
 } from './mcp/importer.js';
+import { createGatewayServer } from './mcp/server.js';
 import { getMcpRegistryEntry } from './storage/mcp-registry.js';
-import type { McpConfig } from './types/aai-json.js';
 import { getManagedAppDir } from './storage/paths.js';
+import { createSecureStorage } from './storage/secure-storage/index.js';
+import type { McpConfig } from './types/aai-json.js';
+import { logger } from './utils/logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

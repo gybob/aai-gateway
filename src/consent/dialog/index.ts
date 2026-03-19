@@ -1,8 +1,9 @@
 import { getCurrentPlatform } from "../../utils/platform.js";
+
+import type { ConsentDialog } from "./interface.js";
+import { LinuxConsentDialog } from "./linux.js";
 import { MacOSConsentDialog } from "./macos.js";
 import { WindowsConsentDialog } from "./windows.js";
-import { LinuxConsentDialog } from "./linux.js";
-import type { ConsentDialog } from "./interface.js";
 
 export type { ConsentDialog, ConsentDialogInfo, ConsentDialogResult } from "./interface.js";
 

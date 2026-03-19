@@ -1,4 +1,5 @@
 import { z } from 'zod';
+
 import { AaiError } from '../errors/errors.js';
 import type { AaiJson } from '../types/aai-json.js';
 

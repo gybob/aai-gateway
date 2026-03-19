@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+
 import { AaiError } from '../errors/errors.js';
 import type {
   CliConfig,
@@ -7,6 +8,7 @@ import type {
   DetailedCapability,
   ExecutionResult,
 } from '../types/index.js';
+
 import type { Executor } from './interface.js';
 
 /**

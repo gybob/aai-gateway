@@ -1,13 +1,14 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import type { SecureStorage } from '../storage/secure-storage/interface.js';
-import { getManagedAppDir } from '../storage/paths.js';
-import type { AaiJson, McpConfig } from '../types/aai-json.js';
+
 import type { McpExecutor, McpListedTool } from '../executors/mcp.js';
-import { deriveLocalId, slugify } from '../utils/ids.js';
-import { upsertMcpRegistryEntry, type McpRegistryEntry } from '../storage/mcp-registry.js';
-import { upsertSkillRegistryEntry } from '../storage/skill-registry.js';
 import { parseAaiJson } from '../parsers/schema.js';
+import { upsertMcpRegistryEntry, type McpRegistryEntry } from '../storage/mcp-registry.js';
+import { getManagedAppDir } from '../storage/paths.js';
+import type { SecureStorage } from '../storage/secure-storage/interface.js';
+import { upsertSkillRegistryEntry } from '../storage/skill-registry.js';
+import type { AaiJson, McpConfig } from '../types/aai-json.js';
+import { deriveLocalId, slugify } from '../utils/ids.js';
 
 const SECRET_PREFIX = 'mcp-import-headers-';
 

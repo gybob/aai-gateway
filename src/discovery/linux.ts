@@ -2,10 +2,12 @@ import { exec } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
+
 import { parseAaiJson } from '../parsers/schema.js';
 import type { RuntimeAppRecord } from '../types/aai-json.js';
-import { logger } from '../utils/logger.js';
 import { deriveLocalId } from '../utils/ids.js';
+import { logger } from '../utils/logger.js';
+
 import type { DesktopDiscovery, DiscoveryOptions } from './interface.js';
 
 const execAsync = promisify(exec);

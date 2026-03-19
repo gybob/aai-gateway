@@ -11,6 +11,48 @@
 - 🤝 贡献代码
 - 📢 分享给社区
 
+## 🏗️ Architecture Overview (v0.4.0)
+
+AAI Gateway v0.4.0 introduces a refactored architecture with modular discovery and unified storage:
+
+### Discovery Layer
+
+```
+DiscoveryManager
+├── DesktopDiscoverySource (priority 100)
+├── AgentDiscoverySource (priority 90)
+└── ManagedDiscoverySource (priority 80)
+```
+
+- **DiscoveryManager**: Centralized discovery with caching
+- **Discovery Sources**: Modular, pluggable discovery implementations
+- **Priority-based execution**: Sources execute in priority order
+- **Automatic caching**: Results cached with 5-minute TTL
+
+### Storage Layer
+
+```
+FileRegistry<T>
+├── McpRegistry (manages MCP servers)
+├── SkillRegistry (manages skills)
+└── ManagedRegistry (manages gateway apps)
+```
+
+- **FileRegistry**: Generic file-based registry with JSON storage
+- **SimpleCache**: In-memory cache with TTL support
+- **Unified API**: Consistent interface across all storage operations
+
+### Integration
+
+The MCP server now uses `DiscoveryManager` for all discovery operations:
+
+```typescript
+import { createDiscoveryManager } from './discovery/index.js';
+
+const { manager } = createDiscoveryManager();
+const apps = await manager.scanAll({ devMode: true });
+```
+
 ---
 
 ## One MCP. Many Apps. Less Context.

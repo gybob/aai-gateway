@@ -2,6 +2,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+
 import { AaiError } from '../errors/errors.js';
 import type {
   McpConfig,
@@ -9,6 +10,7 @@ import type {
   McpExecutorDetail,
   ExecutionResult,
 } from '../types/index.js';
+
 import type { Executor } from './interface.js';
 
 export interface McpListedTool {
@@ -44,11 +46,11 @@ function serializeTarget(target: McpConnectionTarget): string {
  *
  * Implements the unified Executor interface for MCP servers.
  */
-export class McpExecutor implements Executor<McpConfig & McpExecutorConfig, McpExecutorDetail> {
+export class McpExecutor implements Executor<McpConfig  , McpExecutorDetail> {
   readonly protocol = 'mcp';
   private clients = new Map<string, ClientState>();
 
-  async connect(localId: string, config: McpConfig & McpExecutorConfig): Promise<void> {
+  async connect(localId: string, config: McpConfig  ): Promise<void> {
     const targetKey = JSON.stringify(config);
     const existing = this.clients.get(localId);
     if (existing && existing.targetKey === targetKey) {
@@ -84,7 +86,7 @@ export class McpExecutor implements Executor<McpConfig & McpExecutorConfig, McpE
     }
   }
 
-  async loadDetail(config: McpConfig & McpExecutorConfig): Promise<McpExecutorDetail> {
+  async loadDetail(config: McpConfig  ): Promise<McpExecutorDetail> {
     // Use a temporary connection to load tools
     const tempId = `temp-${Date.now()}`;
     await this.connect(tempId, config);
@@ -98,7 +100,7 @@ export class McpExecutor implements Executor<McpConfig & McpExecutorConfig, McpE
 
   async execute(
     localId: string,
-    config: McpConfig & McpExecutorConfig,
+    config: McpConfig  ,
     operation: string,
     args: Record<string, unknown>
   ): Promise<ExecutionResult> {
@@ -205,7 +207,7 @@ export class McpExecutor implements Executor<McpConfig & McpExecutorConfig, McpE
     return this.disconnect(localId);
   }
 
-  private createTransport(config: McpConfig & McpExecutorConfig) {
+  private createTransport(config: McpConfig  ) {
     switch (config.transport) {
       case 'stdio':
         return new StdioClientTransport({

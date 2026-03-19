@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { homedir } from "node:os";
+import { join } from "node:path";
+
 import type { AaiJson } from "../types/aai-json.js";
 
 const CACHE_DIR = join(homedir(), ".cache", "aai-gateway");

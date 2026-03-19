@@ -1,6 +1,7 @@
-import { BaseCommand } from './interface.js';
-import type { CommandOptions } from '../../types/index.js';
 import { createDesktopDiscovery } from '../../discovery/index.js';
+import type { CommandOptions } from '../../types/index.js';
+
+import { BaseCommand } from './interface.js';
 
 /**
  * Scan command

@@ -1,20 +1,16 @@
-import type { CallerIdentity } from '../types/consent.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { ConsentManager } from '../consent/manager.js';
+
 import { createConsentDialog } from '../consent/dialog/index.js';
-import { createDesktopDiscovery, type DiscoveryOptions } from '../discovery/index.js';
-import { scanInstalledAgents } from '../discovery/agent-registry.js';
+import { ConsentManager } from '../consent/manager.js';
+import { createDiscoveryManager, type DiscoveryOptions } from '../discovery/index.js';
 import { fetchWebDescriptor, normalizeUrl } from '../discovery/web.js';
 import { AaiError } from '../errors/errors.js';
 import { getAcpExecutor } from '../executors/acp.js';
 import { legacyExecuteCli as executeCli, legacyLoadCliDetail as loadCliDetail } from '../executors/cli.js';
 import { getMcpExecutor } from '../executors/mcp.js';
 import { legacyExecuteSkill as executeSkill, legacyLoadSkillDetail as loadSkillDetail } from '../executors/skill.js';
-import { generateAppListDescription, generateOperationGuide } from './guide-generator.js';
-import { loadImportedMcpHeaders } from './importer.js';
-import { loadManagedDescriptors } from '../storage/managed-descriptors.js';
 import { createSecureStorage, type SecureStorage } from '../storage/secure-storage/index.js';
 import type { AaiJson, DetailedCapability, RuntimeAppRecord } from '../types/aai-json.js';
 import {
@@ -24,9 +20,13 @@ import {
   isMcpAccess,
   isSkillAccess,
 } from '../types/aai-json.js';
-import { getSystemLocale } from '../utils/locale.js';
+import type { CallerIdentity } from '../types/consent.js';
 import { deriveLocalId } from '../utils/ids.js';
+import { getSystemLocale } from '../utils/locale.js';
 import { logger } from '../utils/logger.js';
+
+import { generateAppListDescription, generateOperationGuide } from './guide-generator.js';
+import { loadImportedMcpHeaders } from './importer.js';
 
 export class AaiGatewayServer {
   private readonly server: Server;
@@ -35,6 +35,7 @@ export class AaiGatewayServer {
   private consentManager!: ConsentManager;
   private secureStorage!: SecureStorage;
   private callerIdentity?: CallerIdentity;
+  private discoveryManager?: import('../discovery/manager.js').DiscoveryManager;
 
   constructor(options?: DiscoveryOptions) {
     this.options = options ?? {};
@@ -49,29 +50,18 @@ export class AaiGatewayServer {
     this.secureStorage = createSecureStorage();
     this.consentManager = new ConsentManager(this.secureStorage, createConsentDialog());
 
-    try {
-      const discovery = createDesktopDiscovery();
-      for (const app of await discovery.scan(this.options)) {
-        this.appRegistry.set(app.localId, app);
-      }
-    } catch (err) {
-      logger.error({ err }, 'Desktop discovery failed');
-    }
+    // Create and use DiscoveryManager
+    const { manager } = createDiscoveryManager();
+    this.discoveryManager = manager;
 
     try {
-      for (const agent of await scanInstalledAgents()) {
-        this.appRegistry.set(agent.localId, agent);
-      }
-    } catch (err) {
-      logger.error({ err }, 'ACP agent discovery failed');
-    }
-
-    try {
-      for (const app of await loadManagedDescriptors()) {
+      const discoveredApps = await this.discoveryManager.scanAll(this.options);
+      for (const app of discoveredApps) {
         this.appRegistry.set(app.localId, app);
       }
+      logger.info({ count: discoveredApps.length }, 'Discovery completed');
     } catch (err) {
-      logger.error({ err }, 'Managed descriptor loading failed');
+      logger.error({ err }, 'Discovery failed');
     }
   }
 

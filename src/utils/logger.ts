@@ -1,7 +1,8 @@
-import pino from 'pino';
 import { mkdirSync, existsSync } from 'fs';
-import { join } from 'path';
 import { homedir } from 'os';
+import { join } from 'path';
+
+import pino from 'pino';
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error' | 'fatal';
 

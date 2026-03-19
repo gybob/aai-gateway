@@ -120,7 +120,7 @@ export class ArgumentParser {
     const name = arg.startsWith('--') ? arg.slice(2) : arg.slice(1);
 
     // Try long name first
-    let def = this.definitions.get(name);
+    const def = this.definitions.get(name);
     if (def) return def;
 
     // Try short name

@@ -1,7 +1,9 @@
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
+
 import type { RuntimeAppRecord } from '../types/aai-json.js';
 import { logger } from '../utils/logger.js';
+
 import { claudeAcpDescriptor } from './descriptors/claude-code-agent.js';
 import { codexAcpDescriptor } from './descriptors/gemini-cli-agent.js';
 import { opencodeDescriptor } from './descriptors/opencode-agent.js';

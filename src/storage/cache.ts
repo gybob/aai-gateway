@@ -1,36 +1,33 @@
-import type { CacheEntry } from '../types/index.js';
-
 /**
- * Simple in-memory cache with expiration
+ * Simple In-Memory Cache
  *
- * @template T - Type of values stored in cache
+ * A basic cache implementation that stores items in memory with optional expiration.
+ *
+ * @template T - Type of cached items
  */
 export class SimpleCache<T> {
-  private cache = new Map<string, CacheEntry<T>>();
-  private defaultTtl: number;
+  private cache = new Map<string, { value: T; expiresAt?: number }>();
+  private defaultTTL?: number;
 
   /**
-   * Create a new cache
-   * @param defaultTtl - Default time-to-live in milliseconds
+   * Create a new simple cache
+   * @param defaultTTL - Default time-to-live in milliseconds for all entries
    */
-  constructor(defaultTtl: number = 5 * 60 * 1000) {
-    // Default: 5 minutes
-    this.defaultTtl = defaultTtl;
+  constructor(defaultTTL?: number) {
+    this.defaultTTL = defaultTTL;
   }
 
   /**
-   * Get a value from the cache
+   * Get an item from the cache
    * @param key - Cache key
-   * @returns Cached value or null if not found/expired
+   * @returns Cached value or null if not found or expired
    */
   get(key: string): T | null {
     const entry = this.cache.get(key);
-    if (!entry) {
-      return null;
-    }
+    if (!entry) return null;
 
-    // Check if expired
-    if (Date.now() > entry.expiresAt) {
+    // Check expiration
+    if (entry.expiresAt && entry.expiresAt < Date.now()) {
       this.cache.delete(key);
       return null;
     }
@@ -39,66 +36,51 @@ export class SimpleCache<T> {
   }
 
   /**
-   * Set a value in the cache
+   * Set an item in the cache
    * @param key - Cache key
    * @param value - Value to cache
-   * @param ttl - Time-to-live in milliseconds (uses default if not provided)
+   * @param ttl - Optional time-to-live in milliseconds (overrides default TTL)
    */
   set(key: string, value: T, ttl?: number): void {
-    const entry: CacheEntry<T> = {
-      key,
-      value,
-      expiresAt: Date.now() + (ttl ?? this.defaultTtl),
-    };
-    this.cache.set(key, entry);
+    const expiresAt = ttl ? Date.now() + ttl : this.defaultTTL ? Date.now() + this.defaultTTL : undefined;
+    this.cache.set(key, { value, expiresAt });
   }
 
   /**
-   * Check if a key exists and is not expired
+   * Check if a key exists in the cache (and is not expired)
    * @param key - Cache key
    * @returns true if key exists and is not expired
    */
   has(key: string): boolean {
-    const entry = this.cache.get(key);
-    if (!entry) {
-      return false;
-    }
-
-    // Check if expired
-    if (Date.now() > entry.expiresAt) {
-      this.cache.delete(key);
-      return false;
-    }
-
-    return true;
+    return this.get(key) !== null;
   }
 
   /**
-   * Delete a key from the cache
+   * Delete an item from the cache
    * @param key - Cache key
-   * @returns true if key was deleted, false if not found
+   * @returns true if item was deleted, false if not found
    */
   delete(key: string): boolean {
     return this.cache.delete(key);
   }
 
   /**
-   * Clear all entries from the cache
+   * Clear all items from the cache
    */
   clear(): void {
     this.cache.clear();
   }
 
   /**
-   * Remove all expired entries
-   * @returns Number of entries removed
+   * Remove expired entries from the cache
+   * @returns Number of expired entries removed
    */
   cleanup(): number {
     let removed = 0;
     const now = Date.now();
 
     for (const [key, entry] of this.cache.entries()) {
-      if (now > entry.expiresAt) {
+      if (entry.expiresAt && entry.expiresAt < now) {
         this.cache.delete(key);
         removed++;
       }
@@ -108,7 +90,7 @@ export class SimpleCache<T> {
   }
 
   /**
-   * Get the number of entries in the cache
+   * Get the number of items in the cache
    * @returns Cache size
    */
   size(): number {

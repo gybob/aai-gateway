@@ -1,5 +1,6 @@
-import type { SecureStorage } from './interface.js';
 import { AaiError } from '../../errors/errors.js';
+
+import type { SecureStorage } from './interface.js';
 
 /**
  * Windows Secure Storage using Windows Credential Manager

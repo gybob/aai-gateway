@@ -1,5 +1,6 @@
-import type { SecureStorage } from './interface.js';
 import { AaiError } from '../../errors/errors.js';
+
+import type { SecureStorage } from './interface.js';
 
 /**
  * Linux Secure Storage using libsecret/secret-tool

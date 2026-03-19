@@ -1,8 +1,9 @@
 import { getCurrentPlatform } from "../../utils/platform.js";
+
+import type { SecureStorage } from "./interface.js";
+import { LinuxSecureStorage } from "./linux.js";
 import { MacOSKeychain } from "./macos.js";
 import { WindowsSecureStorage } from "./windows.js";
-import { LinuxSecureStorage } from "./linux.js";
-import type { SecureStorage } from "./interface.js";
 
 export type { SecureStorage } from "./interface.js";
 

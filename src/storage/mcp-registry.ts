@@ -1,12 +1,16 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { AaiJson, McpConfig } from '../types/aai-json.js';
+
 import { parseAaiJson } from '../parsers/schema.js';
+import type { AaiJson, McpConfig } from '../types/aai-json.js';
+
 import { getManagedAppDir, getManagedAppsRoot } from './paths.js';
+import { FileRegistry } from './registry.js';
 
 const REGISTRY_FILE = 'mcp-registry.json';
 
 export interface McpRegistryEntry {
+  id: string;
   localId: string;
   protocol: 'mcp';
   config: McpConfig;
@@ -15,78 +19,128 @@ export interface McpRegistryEntry {
   updatedAt: string;
 }
 
-interface McpRegistryFile {
-  version: 2;
-  entries: McpRegistryEntry[];
-}
+/**
+ * MCP Registry
+ *
+ * Manages imported MCP server registrations using the unified FileRegistry.
+ */
+export class McpRegistry {
+  private registry: FileRegistry<McpRegistryEntry>;
 
-export interface ImportedMcpApp {
-  entry: McpRegistryEntry;
-  descriptor: AaiJson;
-}
+  constructor() {
+    const registryPath = join(getManagedAppsRoot(), REGISTRY_FILE);
+    this.registry = new FileRegistry<McpRegistryEntry>(
+      registryPath,
+      (entry) => ({
+        id: entry.id,
+        localId: entry.localId,
+        protocol: entry.protocol,
+        config: entry.config,
+        descriptorPath: entry.descriptorPath,
+        importedAt: entry.importedAt,
+        updatedAt: entry.updatedAt,
+      }),
+      (raw) => raw as unknown as McpRegistryEntry
+    );
+  }
 
-async function loadRegistryFile(): Promise<McpRegistryFile> {
-  try {
-    const raw = await readFile(join(getManagedAppsRoot(), REGISTRY_FILE), 'utf-8');
-    const parsed = JSON.parse(raw) as McpRegistryFile;
-    return { version: 2, entries: parsed.entries ?? [] };
-  } catch {
-    return { version: 2, entries: [] };
+  /**
+   * List all MCP registry entries
+   */
+  async list(): Promise<McpRegistryEntry[]> {
+    return this.registry.list();
+  }
+
+  /**
+   * Get a specific MCP registry entry by ID
+   */
+  async get(id: string): Promise<McpRegistryEntry | null> {
+    return this.registry.get(id);
+  }
+
+  /**
+   * Add or update an MCP registry entry
+   */
+  async upsert(
+    entry: Omit<McpRegistryEntry, 'id' | 'descriptorPath' | 'importedAt' | 'updatedAt'>,
+    descriptor: AaiJson
+  ): Promise<McpRegistryEntry> {
+    const existing = await this.get(entry.localId);
+    const now = new Date().toISOString();
+    const appDir = getManagedAppDir(entry.localId);
+    const descriptorPath = join(appDir, 'aai.json');
+
+    await mkdir(appDir, { recursive: true });
+    await writeFile(descriptorPath, JSON.stringify(descriptor, null, 2), 'utf-8');
+
+    const nextEntry: McpRegistryEntry = {
+      id: entry.localId,
+      ...entry,
+      descriptorPath,
+      importedAt: existing?.importedAt ?? now,
+      updatedAt: now,
+    };
+
+    return this.registry.upsert(nextEntry);
+  }
+
+  /**
+   * Delete an MCP registry entry
+   */
+  async delete(id: string): Promise<boolean> {
+    return this.registry.delete(id);
+  }
+
+  /**
+   * Load imported MCP apps with their descriptors
+   */
+  async loadApps(): Promise<Array<{ entry: McpRegistryEntry; descriptor: AaiJson }>> {
+    const entries = await this.list();
+    const loaded: Array<{ entry: McpRegistryEntry; descriptor: AaiJson }> = [];
+
+    for (const entry of entries) {
+      try {
+        const raw = await readFile(entry.descriptorPath, 'utf-8');
+        loaded.push({
+          entry,
+          descriptor: parseAaiJson(JSON.parse(raw)),
+        });
+      } catch (err) {
+        // Skip entries with missing or invalid descriptors
+      }
+    }
+
+    return loaded;
   }
 }
 
-async function saveRegistryFile(registry: McpRegistryFile): Promise<void> {
-  await mkdir(getManagedAppsRoot(), { recursive: true });
-  await writeFile(join(getManagedAppsRoot(), REGISTRY_FILE), JSON.stringify(registry, null, 2), 'utf-8');
+/**
+ * Create a singleton MCP registry instance
+ */
+let mcpRegistryInstance: McpRegistry | null = null;
+export function getMcpRegistry(): McpRegistry {
+  if (!mcpRegistryInstance) {
+    mcpRegistryInstance = new McpRegistry();
+  }
+  return mcpRegistryInstance;
 }
 
+// Backward compatibility exports
 export async function listMcpRegistryEntries(): Promise<McpRegistryEntry[]> {
-  const registry = await loadRegistryFile();
-  return registry.entries;
+  return getMcpRegistry().list();
 }
 
 export async function getMcpRegistryEntry(localId: string): Promise<McpRegistryEntry | null> {
-  const entries = await listMcpRegistryEntries();
-  return entries.find((entry) => entry.localId === localId) ?? null;
+  return getMcpRegistry().get(localId);
 }
 
 export async function upsertMcpRegistryEntry(
-  entry: Omit<McpRegistryEntry, 'descriptorPath' | 'importedAt' | 'updatedAt'>,
+  entry: Omit<McpRegistryEntry, 'id' | 'descriptorPath' | 'importedAt' | 'updatedAt'>,
   descriptor: AaiJson
 ): Promise<McpRegistryEntry> {
-  const registry = await loadRegistryFile();
-  const existing = registry.entries.find((item) => item.localId === entry.localId);
-  const now = new Date().toISOString();
-  const appDir = getManagedAppDir(entry.localId);
-  const descriptorPath = join(appDir, 'aai.json');
-
-  await mkdir(appDir, { recursive: true });
-  await writeFile(descriptorPath, JSON.stringify(descriptor, null, 2), 'utf-8');
-
-  const nextEntry: McpRegistryEntry = {
-    ...entry,
-    descriptorPath,
-    importedAt: existing?.importedAt ?? now,
-    updatedAt: now,
-  };
-
-  const nextEntries = registry.entries.filter((item) => item.localId !== entry.localId);
-  nextEntries.push(nextEntry);
-  await saveRegistryFile({ version: 2, entries: nextEntries });
-  return nextEntry;
+  return getMcpRegistry().upsert(entry, descriptor);
 }
 
-export async function loadImportedMcpApps(): Promise<ImportedMcpApp[]> {
-  const entries = await listMcpRegistryEntries();
-  const loaded: ImportedMcpApp[] = [];
-
-  for (const entry of entries) {
-    const raw = await readFile(entry.descriptorPath, 'utf-8');
-    loaded.push({
-      entry,
-      descriptor: parseAaiJson(JSON.parse(raw)),
-    });
-  }
-
-  return loaded;
+export async function loadImportedMcpApps(): Promise<Array<{ entry: McpRegistryEntry; descriptor: AaiJson }>> {
+  return getMcpRegistry().loadApps();
 }

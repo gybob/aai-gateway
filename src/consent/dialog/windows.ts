@@ -1,5 +1,6 @@
-import type { ConsentDialog, ConsentDialogInfo, ConsentDialogResult } from './interface.js';
 import { AaiError } from '../../errors/errors.js';
+
+import type { ConsentDialog, ConsentDialogInfo, ConsentDialogResult } from './interface.js';
 
 /**
  * Windows Consent Dialog using PowerShell MessageBox

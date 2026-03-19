@@ -1,5 +1,55 @@
 # Changelog
 
+## [0.4.0] - 2026-03-19
+
+### Added
+
+- **Discovery Manager**: Unified discovery framework for managing multiple discovery sources
+  - `DiscoveryManager` class with priority-based source registration
+  - Automatic result caching with configurable TTL
+  - Support for forced refresh and per-source cache management
+  - `createDiscoveryManager()` helper for easy setup with standard sources
+
+- **Discovery Sources**: Modular discovery source implementations
+  - `DesktopDiscoverySource`: Discovers desktop apps (macOS, Windows, Linux)
+  - `AgentDiscoverySource`: Discovers ACP agents
+  - `ManagedDiscoverySource`: Discovers gateway-managed apps
+
+- **Unified Storage**: Refactored storage architecture
+  - `FileRegistry<T>`: Generic file-based registry implementation
+  - `SimpleCache<T>`: In-memory cache with TTL support
+  - `McpRegistry`: Unified MCP server registry
+  - `SkillRegistry`: Unified skill registry
+  - `ManagedRegistry`: Gateway-managed app registry
+
+- **Storage Module**: Centralized storage exports via `src/storage/index.ts`
+  - All storage types and implementations in one place
+  - Consistent API for all storage operations
+
+### Changed
+
+- **Server Architecture**: Migrated from direct discovery calls to DiscoveryManager
+  - Cleaner separation of concerns
+  - Better testability with mockable sources
+  - Improved caching strategy
+
+- **Registry API**: Updated registries to use `FileRegistry<T>` base class
+  - Consistent API across all registries
+  - Better type safety
+  - Easier to maintain and extend
+
+### Removed
+
+- Deprecated `managed-descriptors.ts`: Functionality moved to `ManagedRegistry`
+- Unused `name-cache.ts`: No longer used in codebase
+
+### Internal
+
+- Updated TypeScript types for better type safety
+- Improved test coverage for new discovery and storage modules
+- All 113 tests passing
+- Backward compatibility maintained for existing APIs
+
 ## [0.3.1] - 2026-03-07
 
 ### Fixed

@@ -1,5 +1,6 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
+
 import type { RegistryItem, Registry } from '../types/index.js';
 
 /**

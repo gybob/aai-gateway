@@ -1,8 +1,10 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { ConsentDialog, ConsentDialogInfo, ConsentDialogResult } from './interface.js';
+
 import { getSystemLocale, type SupportedLocale } from '../../utils/locale.js';
 import { getTranslations } from '../i18n/translations.js';
+
+import type { ConsentDialog, ConsentDialogInfo, ConsentDialogResult } from './interface.js';
 
 const execFileAsync = promisify(execFile);
 

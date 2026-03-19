@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+
 import { AaiError } from '../errors/errors.js';
+import { isSkillPathConfig } from '../types/aai-json.js';
 import type {
   DetailedCapability,
   SkillConfig,
@@ -8,8 +10,8 @@ import type {
   SkillExecutorDetail,
   ExecutionResult,
 } from '../types/index.js';
+
 import type { Executor } from './interface.js';
-import { isSkillPathConfig } from '../types/aai-json.js';
 
 /**
  * Skill Executor implementation
@@ -104,7 +106,7 @@ export class SkillExecutor implements Executor<SkillConfig & SkillExecutorConfig
 
     const marker = new RegExp(`^#+\\s+${escapeRegExp(section)}\\s*$`, 'im');
     const match = content.match(marker);
-    if (!match || match.index === undefined) {
+    if (match?.index === undefined) {
       return content;
     }
 

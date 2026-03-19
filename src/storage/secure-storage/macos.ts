@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+
 import type { SecureStorage } from "./interface.js";
 
 const execFileAsync = promisify(execFile);

@@ -1,6 +1,7 @@
-import { BaseCommand } from './interface.js';
-import type { CommandOptions } from '../../types/index.js';
 import { createGatewayServer } from '../../mcp/server.js';
+import type { CommandOptions } from '../../types/index.js';
+
+import { BaseCommand } from './interface.js';
 
 /**
  * Serve command

@@ -1,7 +1,8 @@
-import { ArgumentParser } from '../parser.js';
 import type { Command } from '../../types/index.js';
-import { ServeCommand } from './serve.js';
+import { ArgumentParser } from '../parser.js';
+
 import { ScanCommand } from './scan.js';
+import { ServeCommand } from './serve.js';
 
 /**
  * Command registry

@@ -23,11 +23,29 @@ vi.mock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
   StdioServerTransport: vi.fn(),
 }));
 
-vi.mock('../discovery/index.js', () => ({
-  createDesktopDiscovery: vi.fn().mockReturnValue({
+vi.mock('../discovery/index.js', () => {
+  const mockDiscoverySource = {
     scan: vi.fn().mockResolvedValue([]),
-  }),
-}));
+  };
+
+  const mockManager = {
+    register: vi.fn(),
+    scanAll: vi.fn().mockResolvedValue([]),
+    getSources: vi.fn().mockReturnValue([]),
+  };
+
+  return {
+    createDesktopDiscovery: vi.fn().mockReturnValue(mockDiscoverySource),
+    createDiscoveryManager: vi.fn().mockReturnValue({
+      manager: mockManager,
+      sources: {
+        desktop: mockDiscoverySource,
+        agents: mockDiscoverySource,
+        managed: mockDiscoverySource,
+      },
+    }),
+  };
+});
 
 vi.mock('../discovery/agent-registry.js', () => ({
   scanInstalledAgents: vi.fn().mockResolvedValue([]),
@@ -181,67 +199,69 @@ describe('AaiGatewayServer - Caller Identity Extraction', () => {
     });
 
     it('lists mixed protocol families as app entries', async () => {
-      const { createDesktopDiscovery } = await import('../discovery/index.js');
-      const { scanInstalledAgents } = await import('../discovery/agent-registry.js');
-      const { loadManagedDescriptors } = await import('../storage/managed-descriptors.js');
+      const { createDiscoveryManager } = await import('../discovery/index.js');
 
-      vi.mocked(createDesktopDiscovery).mockReturnValue({
-        scan: vi.fn().mockResolvedValue([
-          {
-            localId: 'desktop-app',
-            source: 'desktop',
-            location: '/Applications/Desktop.app',
-            descriptor: {
-              schemaVersion: '2.0',
-              version: '1.0.0',
-              app: { name: { default: 'Desktop App' } },
-              access: { protocol: 'cli', config: { command: 'desktop-app' } },
-              exposure: { keywords: ['desktop'], summary: 'Desktop app.' },
+      vi.mocked(createDiscoveryManager).mockReturnValue({
+        manager: {
+          register: vi.fn(),
+          scanAll: vi.fn().mockResolvedValue([
+            {
+              localId: 'desktop-app',
+              source: 'desktop',
+              location: '/Applications/Desktop.app',
+              descriptor: {
+                schemaVersion: '2.0',
+                version: '1.0.0',
+                app: { name: { default: 'Desktop App' } },
+                access: { protocol: 'cli', config: { command: 'desktop-app' } },
+                exposure: { keywords: ['desktop'], summary: 'Desktop app.' },
+              },
             },
-          },
-        ]),
+            {
+              localId: 'acp-agent',
+              source: 'acp-agent',
+              location: '/usr/local/bin/opencode',
+              descriptor: {
+                schemaVersion: '2.0',
+                version: '1.0.0',
+                app: { name: { default: 'OpenCode' } },
+                access: { protocol: 'acp-agent', config: { command: 'opencode', args: ['acp'] } },
+                exposure: { keywords: ['code'], summary: 'ACP agent.' },
+              },
+            },
+            {
+              localId: 'mcp-app',
+              source: 'mcp-import',
+              location: '/tmp/mcp/aai.json',
+              descriptor: {
+                schemaVersion: '2.0',
+                version: '1.0.0',
+                app: { name: { default: 'Filesystem MCP' } },
+                access: { protocol: 'mcp', config: { transport: 'stdio', command: 'filesystem' } },
+                exposure: { keywords: ['files'], summary: 'MCP app.' },
+              },
+            },
+            {
+              localId: 'skill-app',
+              source: 'skill-import',
+              location: '/tmp/skill/aai.json',
+              descriptor: {
+                schemaVersion: '2.0',
+                version: '1.0.0',
+                app: { name: { default: 'Skill App' } },
+                access: { protocol: 'skill', config: { path: '/tmp/skill' } },
+                exposure: { keywords: ['skill'], summary: 'Skill app.' },
+              },
+            },
+          ]),
+          getSources: vi.fn().mockReturnValue([]),
+        },
+        sources: {
+          desktop: { scan: vi.fn().mockResolvedValue([]) },
+          agents: { scan: vi.fn().mockResolvedValue([]) },
+          managed: { scan: vi.fn().mockResolvedValue([]) },
+        },
       } as any);
-      vi.mocked(scanInstalledAgents).mockResolvedValue([
-        {
-          localId: 'acp-agent',
-          source: 'acp-agent',
-          location: '/usr/local/bin/opencode',
-          commandPath: '/usr/local/bin/opencode',
-          descriptor: {
-            schemaVersion: '2.0',
-            version: '1.0.0',
-            app: { name: { default: 'OpenCode' } },
-            access: { protocol: 'acp-agent', config: { command: 'opencode', args: ['acp'] } },
-            exposure: { keywords: ['code'], summary: 'ACP agent.' },
-          },
-        },
-      ] as any);
-      vi.mocked(loadManagedDescriptors).mockResolvedValue([
-        {
-          localId: 'mcp-app',
-          source: 'mcp-import',
-          location: '/tmp/mcp/aai.json',
-          descriptor: {
-            schemaVersion: '2.0',
-            version: '1.0.0',
-            app: { name: { default: 'Filesystem MCP' } },
-            access: { protocol: 'mcp', config: { transport: 'stdio', command: 'filesystem' } },
-            exposure: { keywords: ['files'], summary: 'MCP app.' },
-          },
-        },
-        {
-          localId: 'skill-app',
-          source: 'skill-import',
-          location: '/tmp/skill/aai.json',
-          descriptor: {
-            schemaVersion: '2.0',
-            version: '1.0.0',
-            app: { name: { default: 'Skill App' } },
-            access: { protocol: 'skill', config: { path: '/tmp/skill' } },
-            exposure: { keywords: ['skill'], summary: 'Skill app.' },
-          },
-        },
-      ] as any);
 
       const server = new AaiGatewayServer();
       await server.initialize();

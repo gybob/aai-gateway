@@ -1,6 +1,7 @@
-import type { CallerIdentity } from "../types/consent.js";
 import { AaiError, type ConsentRequiredData } from "../errors/errors.js";
 import type { SecureStorage } from "../storage/secure-storage/interface.js";
+import type { CallerIdentity } from "../types/consent.js";
+
 import type { ConsentDialog } from "./dialog/interface.js";
 
 interface ToolConsentRecord {

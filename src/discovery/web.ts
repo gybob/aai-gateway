@@ -1,12 +1,12 @@
 import { AaiError } from '../errors/errors.js';
 import { parseAaiJson } from '../parsers/schema.js';
-import type { AaiJson } from '../types/aai-json.js';
-import { logger } from '../utils/logger.js';
 import {
   getDescriptorCache,
   getStaleDescriptorCache,
   setDescriptorCache,
 } from '../storage/descriptor-cache.js';
+import type { AaiJson } from '../types/aai-json.js';
+import { logger } from '../utils/logger.js';
 
 const FETCH_TIMEOUT_MS = 10_000;
 
