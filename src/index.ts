@@ -40,3 +40,9 @@ export { getExecutorRegistry, ExecutorRegistry } from './executors/registry.js';
 export type { Executor } from './executors/interface.js';
 export { FileRegistry } from './storage/registry.js';
 export { SimpleCache } from './storage/cache.js';
+
+// Phase 2 exports
+export { ArgumentParser } from './cli/parser.js';
+export { BaseCommand } from './cli/commands/interface.js';
+export { registerCommands, getCommandRegistry } from './cli/commands/index.js';
+export { runCli } from './cli/framework.js';
