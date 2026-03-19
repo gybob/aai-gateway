@@ -1,7 +1,14 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { logger } from '../utils/logger.js';
 import { AaiError } from '../errors/errors.js';
-import type { AcpAgentConfig, DetailedCapability } from '../types/aai-json.js';
+import type {
+  AcpAgentConfig,
+  AcpExecutorConfig,
+  AcpExecutorDetail,
+  DetailedCapability,
+  ExecutionResult,
+} from '../types/index.js';
+import type { Executor } from './interface.js';
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
@@ -31,12 +38,62 @@ interface ProcessState {
   initializeResult?: Record<string, unknown>;
 }
 
-export class AcpExecutor {
+/**
+ * ACP Executor implementation
+ *
+ * Implements unified Executor interface for ACP agents.
+ */
+export class AcpExecutor implements Executor<AcpAgentConfig & AcpExecutorConfig, AcpExecutorDetail> {
+  readonly protocol = 'acp-agent';
   private states = new Map<string, ProcessState>();
   private pendingRequests = new Map<string, PendingRequest>();
   private requestId = 0;
 
-  async inspect(localId: string, config: AcpAgentConfig): Promise<DetailedCapability> {
+  async connect(localId: string, config: AcpAgentConfig & AcpExecutorConfig): Promise<void> {
+    await this.ensureInitialized(localId, config);
+  }
+
+  async disconnect(localId: string): Promise<void> {
+    this.stop(localId);
+  }
+
+  async loadDetail(config: AcpAgentConfig & AcpExecutorConfig): Promise<AcpExecutorDetail> {
+    const tempId = `temp-${Date.now()}`;
+    const initialize = (await this.ensureInitialized(tempId, config)) as Record<string, unknown>;
+    await this.disconnect(tempId);
+
+    return {
+      sessionId: undefined,
+      capabilities: initialize,
+    };
+  }
+
+  async execute(
+    localId: string,
+    config: AcpAgentConfig & AcpExecutorConfig,
+    operation: string,
+    args: Record<string, unknown>
+  ): Promise<ExecutionResult> {
+    try {
+      await this.ensureInitialized(localId, config);
+      const data = await this.sendRequest(localId, operation, args, 120000);
+      return { success: true, data };
+    } catch (err) {
+      return {
+        success: false,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  async health(localId: string): Promise<boolean> {
+    const state = this.states.get(localId);
+    return !!state?.initialized;
+  }
+
+  // Legacy methods for backward compatibility
+
+  async inspect(localId: string, config: AcpAgentConfig & AcpExecutorConfig): Promise<DetailedCapability> {
     const initialize = (await this.ensureInitialized(localId, config)) as Record<string, unknown>;
     return {
       title: 'ACP Agent Details',
@@ -44,9 +101,9 @@ export class AcpExecutor {
     };
   }
 
-  async execute(
+  async executeLegacy(
     localId: string,
-    config: AcpAgentConfig,
+    config: AcpAgentConfig & AcpExecutorConfig,
     method: string,
     params: Record<string, unknown>
   ): Promise<unknown> {
@@ -61,7 +118,10 @@ export class AcpExecutor {
     this.states.delete(localId);
   }
 
-  private async ensureInitialized(localId: string, config: AcpAgentConfig): Promise<unknown> {
+  private async ensureInitialized(
+    localId: string,
+    config: AcpAgentConfig & AcpExecutorConfig
+  ): Promise<unknown> {
     const state = this.states.get(localId);
     if (state?.initialized && state.initializeResult) {
       return state.initializeResult;

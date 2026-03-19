@@ -103,15 +103,15 @@ describe('ExecutorRegistry', () => {
 
     it('should execute operation via executor', async () => {
       await registry.connect('mcp', 'test-id', {});
-      const result = await registry.execute(
+      const data = await registry.execute(
         'mcp',
         'test-id',
         {},
         'test-op',
         { arg1: 'value1' }
       );
-      expect(result.success).toBe(true);
-      expect(result.data).toEqual({
+      // The registry's execute method returns the data, not the ExecutionResult
+      expect(data).toEqual({
         operation: 'test-op',
         args: { arg1: 'value1' },
       });

@@ -9,9 +9,9 @@ import { scanInstalledAgents } from '../discovery/agent-registry.js';
 import { fetchWebDescriptor, normalizeUrl } from '../discovery/web.js';
 import { AaiError } from '../errors/errors.js';
 import { getAcpExecutor } from '../executors/acp.js';
-import { executeCli, loadCliDetail } from '../executors/cli.js';
+import { legacyExecuteCli as executeCli, legacyLoadCliDetail as loadCliDetail } from '../executors/cli.js';
 import { getMcpExecutor } from '../executors/mcp.js';
-import { executeSkill, loadSkillDetail } from '../executors/skill.js';
+import { legacyExecuteSkill as executeSkill, legacyLoadSkillDetail as loadSkillDetail } from '../executors/skill.js';
 import { generateAppListDescription, generateOperationGuide } from './guide-generator.js';
 import { loadImportedMcpHeaders } from './importer.js';
 import { loadManagedDescriptors } from '../storage/managed-descriptors.js';
@@ -239,7 +239,7 @@ export class AaiGatewayServer {
     }
 
     if (isSkillAccess(access)) {
-      return loadSkillDetail(access.config);
+      return loadSkillDetail(access.config as any);
     }
 
     if (isAcpAgentAccess(access)) {
@@ -271,7 +271,7 @@ export class AaiGatewayServer {
     }
 
     if (isSkillAccess(access)) {
-      return executeSkill(access.config, toolName, args);
+      return executeSkill(access.config as any, toolName, args);
     }
 
     if (isAcpAgentAccess(access)) {

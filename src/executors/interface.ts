@@ -2,10 +2,6 @@ import type {
   ExecutionResult,
   ExecutorConfig,
   ExecutorDetail,
-  McpConfig,
-  SkillConfig,
-  AcpAgentConfig,
-  CliConfig,
 } from '../types/index.js';
 
 /**
@@ -18,7 +14,7 @@ import type {
  * @template TConfig - Configuration type for this executor
  * @template TDetail - Detail/capability type for this executor
  */
-export interface Executor<TConfig extends ExecutorConfig, TDetail extends ExecutorDetail> {
+export interface Executor<TConfig = ExecutorConfig, TDetail = ExecutorDetail> {
   /** Protocol identifier (e.g., 'mcp', 'skill', 'acp-agent', 'cli') */
   readonly protocol: string;
 
@@ -64,9 +60,3 @@ export interface Executor<TConfig extends ExecutorConfig, TDetail extends Execut
    */
   health(localId: string): Promise<boolean>;
 }
-
-// Protocol-specific type aliases for convenience
-export type McpExecutor = Executor<McpConfig & ExecutorConfig, ExecutorDetail>;
-export type SkillExecutor = Executor<SkillConfig & ExecutorConfig, ExecutorDetail>;
-export type AcpExecutor = Executor<AcpAgentConfig & ExecutorConfig, ExecutorDetail>;
-export type CliExecutor = Executor<CliConfig & ExecutorConfig, ExecutorDetail>;

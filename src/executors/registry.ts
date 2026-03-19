@@ -1,9 +1,9 @@
-import type {
-  ExecutionResult,
-  ExecutorConfig,
-  ExecutorDetail,
-} from '../types/index.js';
+import type { ExecutorConfig, ExecutorDetail } from '../types/index.js';
 import type { Executor } from './interface.js';
+import { McpExecutor } from './mcp.js';
+import { SkillExecutor } from './skill.js';
+import { AcpExecutor } from './acp.js';
+import { CliExecutor } from './cli.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -14,6 +14,14 @@ import { logger } from '../utils/logger.js';
  */
 export class ExecutorRegistry {
   private executors = new Map<string, Executor<ExecutorConfig, ExecutorDetail>>();
+
+  constructor() {
+    // Register built-in executors
+    this.registerMcp();
+    this.registerSkill();
+    this.registerAcp();
+    this.registerCli();
+  }
 
   /**
    * Register an executor for a protocol
@@ -63,12 +71,13 @@ export class ExecutorRegistry {
     config: ExecutorConfig,
     operation: string,
     args: Record<string, unknown>
-  ): Promise<ExecutionResult> {
+  ): Promise<unknown> {
     const executor = this.get(protocol);
     if (!executor) {
       throw new Error(`Unknown protocol: ${protocol}`);
     }
-    return executor.execute(localId, config, operation, args);
+    const result = await executor.execute(localId, config, operation, args);
+    return result.data;
   }
 
   /**
@@ -132,6 +141,42 @@ export class ExecutorRegistry {
     }
     return executor.health(localId);
   }
+
+  /**
+   * Register built-in MCP executor
+   */
+  private registerMcp(): void {
+    const executor = new McpExecutor();
+    // @ts-expect-error - Intentional type conversion for executor registration
+    this.register('mcp', executor as Executor<ExecutorConfig, ExecutorDetail>);
+  }
+
+  /**
+   * Register built-in Skill executor
+   */
+  private registerSkill(): void {
+    const executor = new SkillExecutor();
+    // @ts-expect-error - Intentional type conversion for executor registration
+    this.register('skill', executor as Executor<ExecutorConfig, ExecutorDetail>);
+  }
+
+  /**
+   * Register built-in ACP executor
+   */
+  private registerAcp(): void {
+    const executor = new AcpExecutor();
+    // @ts-expect-error - Intentional type conversion for executor registration
+    this.register('acp-agent', executor as Executor<ExecutorConfig, ExecutorDetail>);
+  }
+
+  /**
+   * Register built-in CLI executor
+   */
+  private registerCli(): void {
+    const executor = new CliExecutor();
+    // @ts-expect-error - Intentional type conversion for executor registration
+    this.register('cli', executor as Executor<ExecutorConfig, ExecutorDetail>);
+  }
 }
 
 // Global singleton
@@ -146,4 +191,11 @@ export function getExecutorRegistry(): ExecutorRegistry {
     globalRegistry = new ExecutorRegistry();
   }
   return globalRegistry;
+}
+
+/**
+ * Reset the global executor registry (for testing)
+ */
+export function resetExecutorRegistry(): void {
+  globalRegistry = undefined;
 }

@@ -36,8 +36,12 @@ export type {
   ParsedArguments,
 } from './types/index.js';
 
-export { getExecutorRegistry, ExecutorRegistry } from './executors/registry.js';
+export { getExecutorRegistry, ExecutorRegistry, resetExecutorRegistry } from './executors/registry.js';
 export type { Executor } from './executors/interface.js';
+export { McpExecutor, getMcpExecutor } from './executors/mcp.js';
+export { SkillExecutor, getSkillExecutor } from './executors/skill.js';
+export { AcpExecutor, getAcpExecutor } from './executors/acp.js';
+export { CliExecutor, getCliExecutor } from './executors/cli.js';
 export { FileRegistry } from './storage/registry.js';
 export { SimpleCache } from './storage/cache.js';
 

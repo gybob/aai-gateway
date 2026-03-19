@@ -62,7 +62,7 @@ export interface McpExecutorDetail {
 /**
  * Skill executor configuration
  */
-export interface SkillExecutorConfig {
+export interface SkillExecutorConfig extends ExecutorConfig {
   path?: string;
   url?: string;
 }
