@@ -1,14 +1,13 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { EventEmitter } from 'node:events';
 import { AcpExecutor, getAcpExecutor } from './acp.js';
-import type { AaiJson } from '../types/aai-json.js';
-import { AaiError } from '../errors/errors.js';
 
-// Mock child_process
-vi.mock('child_process', () => ({
-  spawn: vi.fn(),
+const mockSpawn = vi.fn();
+
+vi.mock('node:child_process', () => ({
+  spawn: (...args: unknown[]) => mockSpawn(...args),
 }));
 
-// Mock logger
 vi.mock('../utils/logger.js', () => ({
   logger: {
     info: vi.fn(),
@@ -18,143 +17,78 @@ vi.mock('../utils/logger.js', () => ({
   },
 }));
 
+function createMockProcess() {
+  const proc = new EventEmitter() as EventEmitter & {
+    stdin: { write: ReturnType<typeof vi.fn> };
+    stdout: EventEmitter;
+    stderr: EventEmitter;
+    kill: ReturnType<typeof vi.fn>;
+  };
+
+  proc.stdin = { write: vi.fn() };
+  proc.stdout = new EventEmitter();
+  proc.stderr = new EventEmitter();
+  proc.kill = vi.fn();
+  return proc;
+}
+
 describe('AcpExecutor', () => {
   let executor: AcpExecutor;
-  let mockProcess: any;
-
-  const testDescriptor: AaiJson = {
-    schemaVersion: '1.0',
-    version: '1.0.0',
-    platform: 'macos',
-    app: {
-      id: 'ai.test.agent',
-      name: { en: 'Test Agent' },
-      description: 'A test agent',
-      defaultLang: 'en',
-    },
-    execution: {
-      type: 'acp',
-      start: {
-        command: 'test-agent',
-      },
-    },
-    tools: [
-      {
-        name: 'test_tool',
-        description: 'A test tool',
-        parameters: { type: 'object', properties: {} },
-      },
-    ],
-  };
 
   beforeEach(() => {
     vi.clearAllMocks();
     executor = new AcpExecutor();
-
-    mockProcess = {
-      stdin: {
-        write: vi.fn(),
-        end: vi.fn(),
-      },
-      stdout: {
-        on: vi.fn(),
-      },
-      stderr: {
-        on: vi.fn(),
-      },
-      on: vi.fn(),
-      kill: vi.fn(),
-    };
   });
 
-  afterEach(() => {
-    executor.stopAll();
+  it('returns a singleton from getAcpExecutor', () => {
+    expect(getAcpExecutor()).toBe(getAcpExecutor());
   });
 
-  describe('getAcpExecutor', () => {
-    it('should return singleton instance', () => {
-      const instance1 = getAcpExecutor();
-      const instance2 = getAcpExecutor();
-      expect(instance1).toBe(instance2);
+  it('starts a process and resolves initialize during inspect', async () => {
+    const proc = createMockProcess();
+    mockSpawn.mockReturnValue(proc);
+
+    const inspectPromise = executor.inspect('acp-test', {
+      command: 'opencode',
+      args: ['acp'],
     });
+
+    expect(proc.stdin.write).toHaveBeenCalledTimes(1);
+    proc.stdout.emit(
+      'data',
+      Buffer.from(
+        `${JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          result: {
+            protocolVersion: 1,
+            agentInfo: { name: 'OpenCode' },
+          },
+        })}\n`
+      )
+    );
+
+    const detail = await inspectPromise;
+    expect(detail.title).toBe('ACP Agent Details');
+    expect(detail.body).toContain('OpenCode');
   });
 
-  describe('stop', () => {
-    it('should stop a specific agent process', () => {
-      // Manually add a mock process
-      executor['processes'].set('test-app-id', mockProcess as any);
-      executor['messageBuffers'].set('test-app-id', '');
-      executor['initializedAgents'].add('test-app-id');
+  it('stops a running process by local id', () => {
+    const proc = createMockProcess();
+    mockSpawn.mockReturnValue(proc);
 
-      executor.stop('test-app-id');
-
-      expect(mockProcess.kill).toHaveBeenCalled();
-      expect(executor['processes'].has('test-app-id')).toBe(false);
-      expect(executor['messageBuffers'].has('test-app-id')).toBe(false);
-      expect(executor['initializedAgents'].has('test-app-id')).toBe(false);
+    const promise = executor.inspect('acp-test', {
+      command: 'opencode',
+      args: ['acp'],
     });
+    proc.stdout.emit(
+      'data',
+      Buffer.from(`${JSON.stringify({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } })}\n`)
+    );
 
-    it('should handle stopping non-existent process', () => {
-      // Should not throw
-      executor.stop('nonexistent');
-    });
-  });
-
-  describe('stopAll', () => {
-    it('should stop all agent processes', () => {
-      // Add multiple mock processes
-      executor['processes'].set('agent1', mockProcess as any);
-      executor['processes'].set('agent2', mockProcess as any);
-
-      executor.stopAll();
-
-      expect(mockProcess.kill).toHaveBeenCalledTimes(2);
-      expect(executor['processes'].size).toBe(0);
-    });
-  });
-
-  describe('execute', () => {
-    it('should throw an error for non-existent tool', async () => {
-      // Note: This test verifies that execute() properly validates the tool.
-      // Since the mock doesn't fully simulate a running process,
-      // we expect either UNKNOWN_TOOL (tool validation) or a process error.
-      try {
-        await executor.execute(testDescriptor, 'nonexistent_tool', {});
-        expect.fail('Should have thrown');
-      } catch (err) {
-        // Either AaiError or a process-related error from the mock
-        expect(err).toBeDefined();
-      }
-    });
-
-    it('should validate tool exists before execution', async () => {
-      const descriptorWithoutTools: AaiJson = {
-        ...testDescriptor,
-        tools: [],
-      };
-
-      await expect(executor.execute(descriptorWithoutTools, 'any_tool', {})).rejects.toThrow();
-    });
-  });
-
-  describe('error handling', () => {
-    it('should handle invalid JSON-RPC responses', async () => {
-      // This tests the message buffer and parsing logic
-      const buffer = executor['messageBuffers'];
-      buffer.set('test-app', '');
-
-      // Simulate receiving invalid JSON
-      executor['handleMessage']('test-app', 'invalid json\n');
-
-      // Buffer should be cleared after processing
-      expect(buffer.get('test-app')).toBe('');
-    });
-  });
-
-  describe('initialization', () => {
-    it('should track initialized agents', () => {
-      const appId = testDescriptor.app.id;
-      expect(executor['initializedAgents'].has(appId)).toBe(false);
+    return promise.then(() => {
+      executor.stop('acp-test');
+      expect(proc.kill).toHaveBeenCalled();
     });
   });
 });

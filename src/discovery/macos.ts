@@ -1,91 +1,66 @@
 import { exec } from 'node:child_process';
-import { promisify } from 'node:util';
 import { readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { promisify } from 'node:util';
 import { parseAaiJson } from '../parsers/schema.js';
+import type { RuntimeAppRecord } from '../types/aai-json.js';
 import { logger } from '../utils/logger.js';
-import { getLocalizedName } from '../types/aai-json.js';
-import { getSystemLocale } from '../utils/locale.js';
-import type { DesktopDiscovery, DiscoveredDesktopApp, DiscoveryOptions } from './interface.js';
+import { deriveLocalId } from '../utils/ids.js';
+import type { DesktopDiscovery, DiscoveryOptions } from './interface.js';
 
 const execAsync = promisify(exec);
 
-/** Standard macOS application directories */
 const STANDARD_APP_PATHS = ['/Applications', '~/Applications'];
-
-/** macOS Xcode development build directories */
 const XCODE_DEV_PATHS = [
-  // Xcode DerivedData - standard location for build products
   '~/Library/Developer/Xcode/DerivedData/*/Build/Products/Debug',
   '~/Library/Developer/Xcode/DerivedData/*/Build/Products/Release',
 ];
-export class MacOSDiscovery implements DesktopDiscovery {
-  /**
-   * Scan for AAI-enabled desktop applications.
-   * @param options - Discovery options
-   * @param options.devMode - When true, also scans Xcode development build directories
-   */
-  async scan(options?: DiscoveryOptions): Promise<DiscoveredDesktopApp[]> {
-    const searchPaths = [...STANDARD_APP_PATHS];
+const SANDBOX_CONTAINER_PATHS = ['~/Library/Containers/*/Data/Library/Application\\ Support'];
 
-    // Add development paths if devMode is enabled
+export class MacOSDiscovery implements DesktopDiscovery {
+  async scan(options?: DiscoveryOptions): Promise<RuntimeAppRecord[]> {
+    const searchPaths = [...STANDARD_APP_PATHS, ...SANDBOX_CONTAINER_PATHS];
     if (options?.devMode) {
       searchPaths.push(...XCODE_DEV_PATHS);
-      logger.info('Development mode enabled - scanning Xcode build directories');
     }
 
-    // Build find command: paths go directly as find arguments, ~ needs shell expansion
-    // Use zsh nullglob to handle non-matching globs silently
     const pathsArg = searchPaths.join(' ');
-    const findCmd = `setopt nullglob 2>/dev/null; find ${pathsArg} -maxdepth 4 -path "*/Contents/Resources/aai.json" 2>/dev/null`;
+    const findCmd = [
+      'setopt nullglob 2>/dev/null;',
+      `find ${pathsArg} -maxdepth 6 \\( -path "*/Contents/Resources/aai.json" -o -name "aai.json" \\) 2>/dev/null`,
+    ].join(' ');
 
-    let stdout: string;
+    let stdout = '';
     try {
-      const result = await execAsync(findCmd, { shell: '/bin/zsh' });
-      stdout = result.stdout;
+      ({ stdout } = await execAsync(findCmd, { shell: '/bin/zsh' }));
     } catch (err: unknown) {
-      // find exits non-zero if some dirs are inaccessible; stdout still has results
       stdout = (err as { stdout?: string }).stdout ?? '';
     }
 
     const paths = stdout
       .split('\n')
-      .map((p) => p.trim())
+      .map((entry) => entry.trim())
       .filter(Boolean);
 
-    const apps: DiscoveredDesktopApp[] = [];
-    const locale = getSystemLocale();
-
+    const records: RuntimeAppRecord[] = [];
     for (const aaiJsonPath of paths) {
       try {
         const raw = await readFile(aaiJsonPath, 'utf-8');
         const descriptor = parseAaiJson(JSON.parse(raw));
-
-        if (descriptor.platform !== 'macos') continue;
-
-        // bundlePath: go up from Contents/Resources/aai.json → .app dir
-        // aaiJsonPath = /Applications/Foo.app/Contents/Resources/aai.json
-        const bundlePath = dirname(dirname(dirname(aaiJsonPath)));
-
-        // Get localized name
-        const localizedName = getLocalizedName(
-          descriptor.app.name,
-          locale,
-          descriptor.app.defaultLang
-        );
-
-        apps.push({
-          bundlePath,
-          appId: descriptor.app.id,
-          name: localizedName,
-          description: descriptor.app.description,
+        records.push({
+          localId: deriveLocalId(`desktop:${aaiJsonPath}`, 'desktop'),
           descriptor,
+          source: 'desktop',
+          location:
+            aaiJsonPath.endsWith('/Contents/Resources/aai.json')
+              ? dirname(dirname(dirname(aaiJsonPath)))
+              : dirname(aaiJsonPath),
         });
       } catch (err) {
-        logger.warn({ path: aaiJsonPath, err }, 'Failed to parse aai.json');
+        logger.warn({ path: aaiJsonPath, err }, 'Failed to parse macOS descriptor');
       }
     }
 
-    return apps;
+    return records;
   }
 }

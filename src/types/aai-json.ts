@@ -1,210 +1,127 @@
-// ========== Auth Types ==========
-
-export interface OAuth2Auth {
-  type: 'oauth2';
-  oauth2: {
-    authorizationEndpoint: string;
-    tokenEndpoint: string;
-    scopes: string[];
-    pkce: { method: 'S256' };
-    refreshEndpoint?: string;
-    extraParams?: Record<string, string>;
-  };
-}
-
-export interface ApiKeyAuth {
-  type: 'apiKey';
-  apiKey: {
-    location: 'header' | 'query';
-    name: string;
-    prefix?: string;
-    obtainUrl: string;
-    instructions?: string;
-  };
-}
-
-export interface AppCredentialAuth {
-  type: 'appCredential';
-  appCredential: {
-    tokenEndpoint: string;
-    tokenType: 'tenantAccessToken' | 'appAccessToken' | 'userAccessToken';
-    expiresIn: number;
-    instructions?: string;
-  };
-}
-
-export interface CookieAuth {
-  type: 'cookie';
-  cookie: {
-    loginUrl: string;
-    requiredCookies: string[];
-    domain: string;
-    instructions?: string;
-  };
-}
-
-export type AaiAuth = OAuth2Auth | ApiKeyAuth | AppCredentialAuth | CookieAuth;
-// ========== Execution Types ==========
-
-export interface WebExecution {
-  type: 'http';
-  baseUrl?: string;
-  defaultHeaders?: Record<string, string>;
-}
-
-export interface StdioExecution {
-  type: 'stdio';
-  command: string;
-  args?: string[];
-  env?: Record<string, string>;
-  timeout?: number;
-}
-
-export interface AcpStart {
-  command: string;
-  args?: string[];
-  env?: Record<string, string>;
-}
-
-export interface AcpExecution {
-  type: 'acp';
-  start: AcpStart;
-}
-
-export interface AppleEventsExecution {
-  type: 'apple-events';
-  bundleId?: string;
-  eventClass?: string;
-  eventId?: string;
-  timeout?: number;
-}
-
-export interface DbusExecution {
-  type: 'dbus';
-  service?: string;
-  objectPath?: string;
-  interface?: string;
-  bus?: 'session' | 'system';
-  timeout?: number;
-}
-
-export interface ComExecution {
-  type: 'com';
-  progId?: string;
-  timeout?: number;
-}
-
-export type NativeExecution = AppleEventsExecution | DbusExecution | ComExecution;
-
-export type Execution = WebExecution | StdioExecution | AcpExecution | NativeExecution;
-
-// ========== Internationalization ==========
-
-/** BCP 47 language tag */
 export type LanguageTag = string;
 
-/** Internationalized name object. Maps language tags to localized names. */
-export type InternationalizedName = Record<LanguageTag, string>;
+export type InternationalizedName = {
+  default: string;
+} & Record<LanguageTag, string>;
 
-// ========== AaiJson Descriptor ==========
+export interface CommandConfig {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+}
+
+export interface McpStdioConfig extends CommandConfig {
+  transport: 'stdio';
+}
+
+export interface McpRemoteConfig {
+  transport: 'streamable-http' | 'sse';
+  url: string;
+}
+
+export type McpConfig = McpStdioConfig | McpRemoteConfig;
+
+export interface SkillPathConfig {
+  path: string;
+  url?: never;
+}
+
+export interface SkillUrlConfig {
+  url: string;
+  path?: never;
+}
+
+export type SkillConfig = SkillPathConfig | SkillUrlConfig;
+
+export interface AcpAgentConfig extends CommandConfig {}
+
+export interface CliConfig extends CommandConfig {}
+
+export interface McpAccess {
+  protocol: 'mcp';
+  config: McpConfig;
+}
+
+export interface SkillAccess {
+  protocol: 'skill';
+  config: SkillConfig;
+}
+
+export interface AcpAgentAccess {
+  protocol: 'acp-agent';
+  config: AcpAgentConfig;
+}
+
+export interface CliAccess {
+  protocol: 'cli';
+  config: CliConfig;
+}
+
+export type Access = McpAccess | SkillAccess | AcpAgentAccess | CliAccess;
+
+export interface Exposure {
+  keywords: string[];
+  summary: string;
+}
 
 export interface AaiJson {
-  schemaVersion: '1.0';
+  schemaVersion: '2.0';
   version: string;
-  platform: 'macos' | 'linux' | 'windows' | 'web';
   app: {
-    id: string;
-    /** Internationalized name object. e.g., { "en": "Reminders", "zh-CN": "提醒事项" } */
     name: InternationalizedName;
-    /** Default language tag for fallback. Must exist in name object. */
-    defaultLang: LanguageTag;
-    /** Brief description in English (for agent consumption) */
-    description: string;
-    aliases?: string[];
+    iconUrl?: string;
   };
-  execution: Execution;
-  auth?: AaiAuth;
-  tools: Array<{
-    name: string;
-    description: string;
-    parameters: object;
-    returns?: object;
-    execution?: {
-      path: string;
-      method: string;
-      headers?: Record<string, string>;
-    };
-  }>;
+  access: Access;
+  exposure: Exposure;
 }
 
-// ========== Desktop App Discovery ==========
-
-export interface DiscoveredDesktopApp {
-  bundlePath: string;
-  appId: string;
-  name: string;
-  description: string;
+export interface RuntimeAppRecord {
+  localId: string;
   descriptor: AaiJson;
+  source: 'desktop' | 'web' | 'mcp-import' | 'skill-import' | 'acp-agent' | 'cli';
+  location?: string;
 }
 
-// ========== Helper Functions ==========
+export interface DetailedCapability {
+  title: string;
+  body: string;
+}
 
-/**
- * Get localized name from internationalized name object
- * Fallback logic:
- * 1. Exact match: name[locale]
- * 2. Language family fallback: zh-TW -> zh-CN
- * 3. Default: name[defaultLang]
- */
-export function getLocalizedName(
-  name: InternationalizedName,
-  locale: LanguageTag,
-  defaultLang: LanguageTag
-): string {
-  // 1. Exact match
+export function getLocalizedName(name: InternationalizedName, locale: LanguageTag): string {
   if (name[locale]) {
     return name[locale];
   }
 
-  // 2. Language family fallback
-  const lang = locale.split('-')[0];
-  const fallback = Object.keys(name).find((k) => k.startsWith(lang));
+  const family = locale.split('-')[0];
+  const fallback = Object.keys(name).find((key) => key !== 'default' && key.startsWith(family));
   if (fallback && name[fallback]) {
     return name[fallback];
   }
 
-  // 3. Default
-  return name[defaultLang] ?? Object.values(name)[0] ?? '';
+  return name.default;
 }
 
-export function isStdioExecution(execution: Execution): execution is StdioExecution {
-  return execution.type === 'stdio';
+export function isMcpAccess(access: Access): access is McpAccess {
+  return access.protocol === 'mcp';
 }
 
-export function isAcpExecution(execution: Execution): execution is AcpExecution {
-  return execution.type === 'acp';
+export function isSkillAccess(access: Access): access is SkillAccess {
+  return access.protocol === 'skill';
 }
 
-export function isWebExecution(execution: Execution): execution is WebExecution {
-  return execution.type === 'http';
+export function isAcpAgentAccess(access: Access): access is AcpAgentAccess {
+  return access.protocol === 'acp-agent';
 }
 
-export function isAppleEventsExecution(execution: Execution): execution is AppleEventsExecution {
-  return execution.type === 'apple-events';
+export function isCliAccess(access: Access): access is CliAccess {
+  return access.protocol === 'cli';
 }
 
-export function isDbusExecution(execution: Execution): execution is DbusExecution {
-  return execution.type === 'dbus';
+export function isSkillPathConfig(config: SkillConfig): config is SkillPathConfig {
+  return 'path' in config;
 }
 
-export function isComExecution(execution: Execution): execution is ComExecution {
-  return execution.type === 'com';
-}
-
-export function isNativeExecution(execution: Execution): execution is NativeExecution {
-  return (
-    execution.type === 'apple-events' ||
-    execution.type === 'dbus' ||
-    execution.type === 'com'
-  );
+export function isMcpStdioConfig(config: McpConfig): config is McpStdioConfig {
+  return config.transport === 'stdio';
 }

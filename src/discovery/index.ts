@@ -4,7 +4,7 @@ import { WindowsDiscovery } from './windows.js';
 import { LinuxDiscovery } from './linux.js';
 import type { DesktopDiscovery } from './interface.js';
 
-export type { DesktopDiscovery, DiscoveredDesktopApp, DiscoveryOptions } from './interface.js';
+export type { DesktopDiscovery, DiscoveryOptions } from './interface.js';
 
 /**
  * Create a desktop discovery instance for the current platform.

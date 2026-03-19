@@ -1,95 +1,24 @@
 import type { AaiJson } from '../../types/aai-json.js';
 
-/**
- * OpenCode Agent Descriptor
- *
- * Open-source AI coding agent with terminal UI.
- * https://github.com/sst/opencode
- */
 export const opencodeDescriptor: AaiJson = {
-  schemaVersion: '1.0',
+  schemaVersion: '2.0',
   version: '1.0.0',
-  platform: 'macos',
   app: {
-    id: 'dev.sst.opencode',
     name: {
+      default: 'OpenCode',
       en: 'OpenCode',
       'zh-CN': 'OpenCode',
     },
-    defaultLang: 'en',
-    description: 'Open-source AI coding agent with terminal UI, multi-session support',
-    aliases: ['opencode', 'sst', 'code-agent'],
   },
-  execution: {
-    type: 'acp',
-    start: {
+  access: {
+    protocol: 'acp-agent',
+    config: {
       command: 'opencode',
-      args: [],
+      args: ['acp'],
     },
   },
-  tools: [
-    {
-      name: 'session/new',
-      description: 'Create a new coding session',
-      parameters: {
-        type: 'object',
-        properties: {
-          workingDirectory: {
-            type: 'string',
-            description: 'Working directory for the session',
-          },
-          title: {
-            type: 'string',
-            description: 'Optional session title',
-          },
-        },
-      },
-    },
-    {
-      name: 'session/prompt',
-      description: 'Send a prompt to the agent in an active session',
-      parameters: {
-        type: 'object',
-        properties: {
-          sessionId: {
-            type: 'string',
-            description: 'Session ID from session/new',
-          },
-          message: {
-            type: 'string',
-            description: 'The prompt message to send',
-          },
-        },
-        required: ['sessionId', 'message'],
-      },
-    },
-    {
-      name: 'session/load',
-      description: 'Load an existing session',
-      parameters: {
-        type: 'object',
-        properties: {
-          sessionId: {
-            type: 'string',
-            description: 'Session ID to load',
-          },
-        },
-        required: ['sessionId'],
-      },
-    },
-    {
-      name: 'session/cancel',
-      description: 'Cancel ongoing operation in a session',
-      parameters: {
-        type: 'object',
-        properties: {
-          sessionId: {
-            type: 'string',
-            description: 'Session ID',
-          },
-        },
-        required: ['sessionId'],
-      },
-    },
-  ],
+  exposure: {
+    keywords: ['code', 'agent', 'development'],
+    summary: '用于代码编辑、分析和开发任务的 ACP agent。',
+  },
 };

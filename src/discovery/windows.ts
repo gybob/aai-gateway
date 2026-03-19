@@ -1,79 +1,54 @@
 import { exec } from 'node:child_process';
-import { promisify } from 'node:util';
 import { readFile } from 'node:fs/promises';
-import type { DesktopDiscovery, DiscoveredDesktopApp, DiscoveryOptions } from './interface.js';
-import type { AaiJson } from '../types/aai-json.js';
+import { dirname } from 'node:path';
+import { promisify } from 'node:util';
+import { parseAaiJson } from '../parsers/schema.js';
+import type { RuntimeAppRecord } from '../types/aai-json.js';
 import { logger } from '../utils/logger.js';
-import { getLocalizedName } from '../types/aai-json.js';
-import { getSystemLocale } from '../utils/locale.js';
+import { deriveLocalId } from '../utils/ids.js';
+import type { DesktopDiscovery, DiscoveryOptions } from './interface.js';
 
 const execAsync = promisify(exec);
 
-/**
- * Windows Discovery - scan for aai.json files in Windows paths
- */
 export class WindowsDiscovery implements DesktopDiscovery {
-  /**
-   * Scan for AAI-enabled desktop applications.
-   * @param _options - Discovery options
-   */
-  async scan(_options?: DiscoveryOptions): Promise<DiscoveredDesktopApp[]> {
-    const paths = await this.findAaiJsonFiles();
-
-    const apps: DiscoveredDesktopApp[] = [];
-    const locale = getSystemLocale();
+  async scan(_options?: DiscoveryOptions): Promise<RuntimeAppRecord[]> {
+    const paths = await this.findDescriptorPaths();
+    const entries: RuntimeAppRecord[] = [];
 
     for (const aaiJsonPath of paths) {
       try {
         const raw = await readFile(aaiJsonPath, 'utf-8');
-        const descriptor: AaiJson = JSON.parse(raw);
-
-        // Filter by platform
-        if (descriptor.platform !== 'windows') continue;
-
-        // Get localized name
-        const localizedName = getLocalizedName(
-          descriptor.app.name,
-          locale,
-          descriptor.app.defaultLang
-        );
-
-        apps.push({
-          bundlePath: aaiJsonPath,
-          appId: descriptor.app.id,
-          name: localizedName,
-          description: descriptor.app.description,
+        const descriptor = parseAaiJson(JSON.parse(raw));
+        entries.push({
+          localId: deriveLocalId(`desktop:${aaiJsonPath}`, 'desktop'),
           descriptor,
+          source: 'desktop',
+          location: dirname(aaiJsonPath),
         });
       } catch (err) {
-        logger.warn({ path: aaiJsonPath, err }, 'Failed to parse aai.json');
+        logger.warn({ path: aaiJsonPath, err }, 'Failed to parse Windows descriptor');
       }
     }
 
-    return apps;
+    return entries;
   }
 
-  private async findAaiJsonFiles(): Promise<string[]> {
-    const paths: string[] = [];
-
-    // Scan standard Windows paths
+  private async findDescriptorPaths(): Promise<string[]> {
     const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
     const programFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
-    const appData = process.env.APPDATA || '';
     const localAppData = process.env.LOCALAPPDATA || '';
 
     try {
-      // Use PowerShell to find aai.json files
       const { stdout } = await execAsync(
-        `powershell -Command "Get-ChildItem -Path '${programFiles}','${programFilesX86}','${appData}','${localAppData}' -Filter aai.json -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName"`
+        `powershell -Command "Get-ChildItem -Path '${programFiles}','${programFilesX86}','${localAppData}' -Filter aai.json -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName"`
       );
-
-      const lines = stdout.split('\n').filter(Boolean);
-      paths.push(...lines);
+      return stdout
+        .split('\n')
+        .map((entry) => entry.trim())
+        .filter(Boolean);
     } catch (err) {
-      logger.warn({ err }, 'Failed to scan Windows paths');
+      logger.warn({ err }, 'Failed to scan Windows descriptors');
+      return [];
     }
-
-    return paths;
   }
 }

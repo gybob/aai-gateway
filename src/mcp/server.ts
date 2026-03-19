@@ -2,306 +2,197 @@ import type { CallerIdentity } from '../types/consent.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-
-import { logger } from '../utils/logger.js';
-import { AaiError } from '../errors/errors.js';
-import { createDesktopDiscovery, type DiscoveryOptions } from '../discovery/index.js';
-import { fetchWebDescriptor } from '../discovery/web.js';
-import { createSecureStorage } from '../storage/secure-storage/index.js';
-import { createConsentDialog } from '../consent/dialog/index.js';
 import { ConsentManager } from '../consent/manager.js';
-import { createNativeExecutor } from '../executors/native/index.js';
-import { executeWebTool, type WebAuthContext } from '../executors/web.js';
-import { TokenManager } from '../auth/token-manager.js';
-import { CredentialManager } from '../credential/manager.js';
-import { createCredentialDialog } from '../credential/dialog/index.js';
-import { generateAppListDescription, generateOperationGuide } from './guide-generator.js';
-import type { DiscoveredDesktopApp } from '../discovery/interface.js';
-import type { AaiJson } from '../types/aai-json.js';
-import { getLocalizedName, isNativeExecution } from '../types/aai-json.js';
-import { getSystemLocale } from '../utils/locale.js';
-import { scanInstalledAgents, type DiscoveredAgent } from '../discovery/agent-registry.js';
+import { createConsentDialog } from '../consent/dialog/index.js';
+import { createDesktopDiscovery, type DiscoveryOptions } from '../discovery/index.js';
+import { scanInstalledAgents } from '../discovery/agent-registry.js';
+import { fetchWebDescriptor, normalizeUrl } from '../discovery/web.js';
+import { AaiError } from '../errors/errors.js';
 import { getAcpExecutor } from '../executors/acp.js';
+import { executeCli, loadCliDetail } from '../executors/cli.js';
+import { getMcpExecutor } from '../executors/mcp.js';
+import { executeSkill, loadSkillDetail } from '../executors/skill.js';
+import { generateAppListDescription, generateOperationGuide } from './guide-generator.js';
+import { loadImportedMcpHeaders } from './importer.js';
+import { loadManagedDescriptors } from '../storage/managed-descriptors.js';
+import { createSecureStorage, type SecureStorage } from '../storage/secure-storage/index.js';
+import type { AaiJson, DetailedCapability, RuntimeAppRecord } from '../types/aai-json.js';
+import {
+  getLocalizedName,
+  isAcpAgentAccess,
+  isCliAccess,
+  isMcpAccess,
+  isSkillAccess,
+} from '../types/aai-json.js';
+import { getSystemLocale } from '../utils/locale.js';
+import { deriveLocalId } from '../utils/ids.js';
+import { logger } from '../utils/logger.js';
 
 export class AaiGatewayServer {
   private readonly server: Server;
   private readonly options: DiscoveryOptions;
-  private readonly desktopRegistry = new Map<string, DiscoveredDesktopApp>();
-  private readonly agentRegistry = new Map<string, DiscoveredAgent>();
+  private readonly appRegistry = new Map<string, RuntimeAppRecord>();
   private consentManager!: ConsentManager;
-  private tokenManager!: TokenManager;
-  private credentialManager!: CredentialManager;
+  private secureStorage!: SecureStorage;
   private callerIdentity?: CallerIdentity;
+
   constructor(options?: DiscoveryOptions) {
     this.options = options ?? {};
     this.server = new Server(
-      { name: 'aai-gateway', version: '0.3.4' },
-
+      { name: 'aai-gateway', version: '0.4.0' },
       { capabilities: { tools: {} } }
     );
     this.setupHandlers();
   }
 
   async initialize(): Promise<void> {
-    const storage = createSecureStorage();
-    const dialog = createConsentDialog();
-    const credentialDialog = createCredentialDialog();
-    this.consentManager = new ConsentManager(storage, dialog);
-    this.tokenManager = new TokenManager(storage);
-    this.credentialManager = new CredentialManager(storage, credentialDialog);
+    this.secureStorage = createSecureStorage();
+    this.consentManager = new ConsentManager(this.secureStorage, createConsentDialog());
 
-    // Scan desktop apps
     try {
       const discovery = createDesktopDiscovery();
-      const apps = await discovery.scan(this.options);
-      for (const app of apps) {
-        this.desktopRegistry.set(app.appId, app);
+      for (const app of await discovery.scan(this.options)) {
+        this.appRegistry.set(app.localId, app);
       }
-      logger.info({ count: apps.length }, 'Desktop apps discovered');
     } catch (err) {
-      if (AaiError.isAaiError(err) && err.code === 'NOT_IMPLEMENTED') {
-        logger.warn('Desktop discovery not supported on this platform');
-      } else {
-        logger.error({ err }, 'Desktop discovery failed');
-      }
+      logger.error({ err }, 'Desktop discovery failed');
     }
-    // Scan ACP agents
+
     try {
-      const agents = await scanInstalledAgents();
-      for (const agent of agents) {
-        this.agentRegistry.set(agent.appId, agent);
+      for (const agent of await scanInstalledAgents()) {
+        this.appRegistry.set(agent.localId, agent);
       }
-      logger.info({ count: agents.length }, 'ACP agents discovered');
     } catch (err) {
       logger.error({ err }, 'ACP agent discovery failed');
+    }
+
+    try {
+      for (const app of await loadManagedDescriptors()) {
+        this.appRegistry.set(app.localId, app);
+      }
+    } catch (err) {
+      logger.error({ err }, 'Managed descriptor loading failed');
     }
   }
 
   private setupHandlers(): void {
-    // Extract caller identity after initialization using SDK callback
     this.server.oninitialized = () => {
       const clientVersion = this.server.getClientVersion();
       this.callerIdentity = {
         name: clientVersion?.name ?? 'Unknown Client',
         version: clientVersion?.version,
       };
-      logger.info({ caller: this.callerIdentity }, 'Caller identity extracted');
     };
 
-    // tools/list — returns app entries + web:discover + aai:exec
-
-    // tools/list — returns app entries + web:discover + aai:exec
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
-      const tools: Array<{
-        name: string;
-        description: string;
-        inputSchema: object;
-      }> = [];
+      const tools: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }> =
+        Array.from(this.appRegistry.values()).map((app) => ({
+        name: `app:${app.localId}`,
+        description: generateAppListDescription(app.localId, app.descriptor),
+        inputSchema: { type: 'object', properties: {} },
+      }));
 
-      // Desktop apps (one entry per app)
-      for (const app of this.desktopRegistry.values()) {
-        const description = generateAppListDescription({
-          appId: app.appId,
-          name: app.descriptor.app.name,
-          defaultLang: app.descriptor.app.defaultLang,
-          description: app.descriptor.app.description,
-          aliases: app.descriptor.app.aliases,
-        });
-        tools.push({
-          name: `app:${app.appId}`,
-          description,
-          inputSchema: { type: 'object', properties: {} },
-        });
-      }
-
-      // ACP agents (one entry per agent)
-      for (const agent of this.agentRegistry.values()) {
-        const description = `[Agent] ${agent.name}: ${agent.description}`;
-        tools.push({
-          name: `app:${agent.appId}`,
-          description,
-          inputSchema: { type: 'object', properties: {} },
-        });
-      }
-
-      // Web discovery tool
       tools.push({
-        name: 'web:discover',
+        name: 'remote:discover',
         description:
-          'Discover and get operation guide for a Web application. Use when user mentions a web service not in the known apps list. Supports URL, domain, or service name.',
+          'Discover a web app by fetching https://<host>/.well-known/aai.json and return its guide.',
         inputSchema: {
           type: 'object',
           properties: {
-            url: {
-              type: 'string',
-              description: 'Web app URL, domain, or service name (e.g., notion.com, github)',
-            },
+            url: { type: 'string', description: 'Host, domain, or URL' },
           },
           required: ['url'],
-        },
+        } as Record<string, unknown>,
       });
 
-      // Universal execution tool
       tools.push({
         name: 'aai:exec',
         description:
-          'Execute an app operation. Use after reading the operation guide. Parameters: app (app ID or URL), tool (operation name), args (parameters object).',
+          'Execute an operation for a discovered app. Parameters: app, tool, args.',
         inputSchema: {
           type: 'object',
           properties: {
-            app: {
-              type: 'string',
-              description: 'App identifier (e.g., com.apple.reminders) or Web app URL',
-            },
-            tool: {
-              type: 'string',
-              description: 'Operation name (e.g., createReminder)',
-            },
-            args: {
-              type: 'object',
-              description: 'Operation parameters as described in the guide',
-              additionalProperties: true,
-            },
+            app: { type: 'string' },
+            tool: { type: 'string' },
+            args: { type: 'object', additionalProperties: true },
           },
           required: ['app', 'tool'],
-        },
+        } as Record<string, unknown>,
       });
 
-      logger.debug({ toolCount: tools.length }, 'tools/list requested');
       return { tools };
     });
 
-    // tools/call — handle app:*, web:discover, aai:exec
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
 
-      // Handle app:* calls — return operation guide
       if (name.startsWith('app:')) {
-        const appId = name.slice(4);
-        return await this.handleAppGuide(appId);
+        return this.handleAppGuide(name.slice(4));
       }
 
-      // Handle web:discover — fetch and return guide
-      if (name === 'web:discover') {
-        const url = (args as { url?: string })?.url;
+      if (name === 'remote:discover') {
+        const url = (args as { url?: string } | undefined)?.url;
         if (!url) {
           throw new AaiError('INVALID_REQUEST', "Missing 'url' parameter");
         }
-        return await this.handleWebDiscover(url);
+        return this.handleRemoteDiscover(url);
       }
 
-      // Handle aai:exec — execute operation
       if (name === 'aai:exec') {
-        const {
-          app,
-          tool,
-          args: toolArgs,
-        } = args as {
-          app: string;
-          tool: string;
-          args?: Record<string, unknown>;
-        };
-        return await this.handleExec(app, tool, toolArgs ?? {});
+        const payload = args as { app: string; tool: string; args?: Record<string, unknown> };
+        return this.handleExec(payload.app, payload.tool, payload.args ?? {});
       }
 
       throw new AaiError('UNKNOWN_TOOL', `Unknown tool: ${name}`);
     });
   }
 
-  private async handleAppGuide(
-    appId: string
-  ): Promise<{ content: Array<{ type: string; text: string }> }> {
-    // Check desktop apps
-    const desktopApp = this.desktopRegistry.get(appId);
-    if (desktopApp) {
-      const guide = generateOperationGuide(appId, desktopApp.descriptor, 'desktop');
-      return {
-        content: [{ type: 'text', text: guide }],
-      };
+  private async handleAppGuide(appId: string): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const app = this.appRegistry.get(appId);
+    if (!app) {
+      throw new AaiError('UNKNOWN_APP', `App not found: ${appId}`);
     }
 
-    // Check ACP agents
-    const agent = this.agentRegistry.get(appId);
-    if (agent) {
-      const guide = this.generateAgentGuide(appId, agent);
-      return {
-        content: [{ type: 'text', text: guide }],
-      };
-    }
-
-    throw new AaiError('UNKNOWN_APP', `App not found: ${appId}`);
+    const detail = await this.loadLayer3Detail(app.localId, app.descriptor);
+    return {
+      content: [{ type: 'text', text: generateOperationGuide(app.localId, app.descriptor, detail) }],
+    };
   }
 
-  private async handleWebDiscover(
-    urlInput: string
+  private async handleRemoteDiscover(
+    url: string
   ): Promise<{ content: Array<{ type: string; text: string }> }> {
-    const normalizedUrl = this.normalizeUrl(urlInput);
-    const descriptor = await fetchWebDescriptor(normalizedUrl);
+    const descriptor = await fetchWebDescriptor(url);
+    const normalizedUrl = normalizeUrl(url);
+    const localId = deriveLocalId(`web:${new URL(normalizedUrl).hostname}`, 'web');
+    const detail = await this.loadLayer3Detail(localId, descriptor);
 
-    const guide = generateOperationGuide(normalizedUrl, descriptor, 'web');
     return {
-      content: [{ type: 'text', text: guide }],
+      content: [{ type: 'text', text: generateOperationGuide(localId, descriptor, detail) }],
     };
   }
 
   private async handleExec(
-    appId: string,
+    appIdOrUrl: string,
     toolName: string,
     args: Record<string, unknown>
   ): Promise<{ content: Array<{ type: string; text: string }> }> {
-    // Resolve descriptor
-    let descriptor: AaiJson;
-    let appName: string;
+    const resolved = await this.resolveApp(appIdOrUrl);
+    const locale = getSystemLocale();
+    const appName = getLocalizedName(resolved.descriptor.app.name, locale);
 
-    const desktopApp = this.desktopRegistry.get(appId);
-    if (desktopApp) {
-      descriptor = desktopApp.descriptor;
-      appName = desktopApp.name;
-    } else {
-      // Check ACP agents
-      const agent = this.agentRegistry.get(appId);
-      if (agent) {
-        // ACP agent execution - no descriptor needed from file
-        const acpExecutor = getAcpExecutor();
-        const result = await acpExecutor.execute(agent.descriptor, toolName, args);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: typeof result === 'string' ? result : JSON.stringify(result, null, 2),
-            },
-          ],
-        };
-      }
-
-      // Treat as web app URL
-      const normalizedUrl = this.normalizeUrl(appId);
-      descriptor = await fetchWebDescriptor(normalizedUrl);
-      const locale = getSystemLocale();
-      appName = getLocalizedName(descriptor.app.name, locale, descriptor.app.defaultLang);
-    }
-
-    // Find tool
-    const tool = descriptor.tools.find((t) => t.name === toolName);
-    if (!tool) {
-      throw new AaiError('UNKNOWN_TOOL', `Tool '${toolName}' not found in '${appId}'`);
-    }
-
-    // Consent check
     await this.consentManager.checkAndPrompt(
-      descriptor.app.id,
+      resolved.localId,
       appName,
       {
         name: toolName,
-        description: tool.description,
-        parameters: tool.parameters,
+        description: `${resolved.descriptor.access.protocol} operation`,
+        parameters: args,
       },
       this.callerIdentity ?? { name: 'Unknown Client' }
     );
 
-    // Execute
-    const result = await this.executeDescriptorTool(descriptor, toolName, args);
-
+    const result = await this.executeApp(resolved.localId, resolved.descriptor, toolName, args);
     return {
       content: [
         {
@@ -312,105 +203,86 @@ export class AaiGatewayServer {
     };
   }
 
-  /**
-   * Get auth context for web execution based on auth type
-   */
-  private async getWebAuthContext(descriptor: AaiJson): Promise<WebAuthContext | undefined> {
-    if (!descriptor.auth) {
-      return undefined;
-    }
+  private async resolveApp(appIdOrUrl: string): Promise<RuntimeAppRecord> {
+    const existing = this.appRegistry.get(appIdOrUrl);
+    if (existing) return existing;
 
-    const appId = descriptor.app.id;
-
-    switch (descriptor.auth.type) {
-      case 'oauth2': {
-        // Use TokenManager for OAuth2
-        const accessToken = await this.tokenManager.getValidToken(appId, descriptor);
-        return { headers: { Authorization: `Bearer ${accessToken}` } };
-      }
-      case 'apiKey':
-      case 'cookie':
-      case 'appCredential': {
-        // Use CredentialManager for other auth types
-        const credential = await this.credentialManager.getCredential(descriptor);
-        const headers = this.credentialManager.buildAuthHeaders(descriptor, credential);
-        return { headers };
-      }
-      default:
-        return undefined;
-    }
+    const normalizedUrl = normalizeUrl(appIdOrUrl);
+    const descriptor = await fetchWebDescriptor(normalizedUrl);
+    return {
+      localId: deriveLocalId(`web:${new URL(normalizedUrl).hostname}`, 'web'),
+      descriptor,
+      source: 'web',
+      location: normalizedUrl,
+    };
   }
 
-  private async executeDescriptorTool(
+  private async loadLayer3Detail(localId: string, descriptor: AaiJson): Promise<DetailedCapability> {
+    const access = descriptor.access;
+
+    if (isMcpAccess(access)) {
+      const headers = await loadImportedMcpHeaders(this.secureStorage, localId);
+      const tools = await getMcpExecutor().listTools({
+        localId,
+        config: access.config,
+        headers,
+      });
+      return {
+        title: 'MCP Tools',
+        body:
+          tools.length === 0
+            ? 'No MCP tools reported.'
+            : tools
+                .map((tool) => `- ${tool.name}: ${tool.description ?? ''}`.trimEnd())
+                .join('\n'),
+      };
+    }
+
+    if (isSkillAccess(access)) {
+      return loadSkillDetail(access.config);
+    }
+
+    if (isAcpAgentAccess(access)) {
+      return getAcpExecutor().inspect(localId, access.config);
+    }
+
+    return loadCliDetail(access.config);
+  }
+
+  private async executeApp(
+    localId: string,
     descriptor: AaiJson,
     toolName: string,
     args: Record<string, unknown>
   ): Promise<unknown> {
-    const execution = descriptor.execution;
+    const access = descriptor.access;
 
-    if (execution.type === 'http') {
-      const authContext = await this.getWebAuthContext(descriptor);
-      return executeWebTool(descriptor, toolName, args, authContext);
-    }
-
-    if (isNativeExecution(execution)) {
-      const nativeExecutor = createNativeExecutor(execution.type);
-      return nativeExecutor.execute(descriptor.app.id, toolName, args);
-    }
-
-    if (execution.type === 'stdio') {
-      throw new AaiError(
-        'NOT_IMPLEMENTED',
-        `STDIO execution is defined for '${descriptor.app.id}' but not implemented in aai-gateway yet`
+    if (isMcpAccess(access)) {
+      const headers = await loadImportedMcpHeaders(this.secureStorage, localId);
+      return getMcpExecutor().callTool(
+        {
+          localId,
+          config: access.config,
+          headers,
+        },
+        toolName,
+        args
       );
     }
 
-    if (execution.type === 'acp') {
-      throw new AaiError(
-        'INVALID_REQUEST',
-        `ACP execution for '${descriptor.app.id}' must be resolved via the agent registry`
-      );
+    if (isSkillAccess(access)) {
+      return executeSkill(access.config, toolName, args);
     }
 
-    throw new AaiError(
-      'NOT_IMPLEMENTED',
-      `Unsupported execution type '${String((execution as { type?: string }).type)}'`
-    );
-  }
-
-  private normalizeUrl(input: string): string {
-    // Already a URL
-    if (input.startsWith('https://') || input.startsWith('http://')) {
-      return input;
+    if (isAcpAgentAccess(access)) {
+      return getAcpExecutor().execute(localId, access.config, toolName, args);
     }
 
-    // Domain only
-    if (input.includes('.') && !input.includes('/')) {
-      return `https://${input}`;
+    if (isCliAccess(access)) {
+      return executeCli(access.config, toolName, args);
     }
 
-    // Try as domain
-    return `https://${input}`;
-  }
-
-  private generateAgentGuide(appId: string, agent: DiscoveredAgent): string {
-    const sections: string[] = [];
-    sections.push(`# ${agent.name} (ACP Agent)`);
-    sections.push('');
-    sections.push(agent.description);
-    sections.push('');
-    sections.push('## Available Operations');
-    sections.push('');
-    for (const tool of agent.descriptor.tools) {
-      sections.push(`### ${tool.name}`);
-      sections.push(tool.description);
-      sections.push('');
-      sections.push('```');
-      sections.push(`aai:exec({ app: "${appId}", tool: "${tool.name}", args: {...} })`);
-      sections.push('```');
-      sections.push('');
-    }
-    return sections.join('\n');
+    throw new AaiError('NOT_IMPLEMENTED', `Unsupported protocol ${JSON.stringify(access)}`);
   }
 
   async start(): Promise<void> {

@@ -1,91 +1,24 @@
 import type { AaiJson } from '../../types/aai-json.js';
 
-/**
- * Claude Code Agent Descriptor
- *
- * Anthropic's official coding agent.
- * https://www.anthropic.com/claude-code
- */
-export const claudeCodeDescriptor: AaiJson = {
-  schemaVersion: '1.0',
+export const claudeAcpDescriptor: AaiJson = {
+  schemaVersion: '2.0',
   version: '1.0.0',
-  platform: 'macos',
   app: {
-    id: 'com.anthropic.claude-code',
     name: {
+      default: 'Claude Code',
       en: 'Claude Code',
       'zh-CN': 'Claude Code',
     },
-    defaultLang: 'en',
-    description: "Anthropic's official AI coding agent",
-    aliases: ['claude', 'claude-code', 'anthropic'],
   },
-  execution: {
-    type: 'acp',
-    start: {
-      command: 'claude',
-      args: [],
+  access: {
+    protocol: 'acp-agent',
+    config: {
+      command: 'npx',
+      args: ['-y', '@zed-industries/claude-agent-acp'],
     },
   },
-  tools: [
-    {
-      name: 'session/new',
-      description: 'Create a new coding session',
-      parameters: {
-        type: 'object',
-        properties: {
-          workingDirectory: {
-            type: 'string',
-            description: 'Working directory for the session',
-          },
-        },
-      },
-    },
-    {
-      name: 'session/prompt',
-      description: 'Send a prompt to Claude in an active session',
-      parameters: {
-        type: 'object',
-        properties: {
-          sessionId: {
-            type: 'string',
-            description: 'Session ID from session/new',
-          },
-          message: {
-            type: 'string',
-            description: 'The prompt message to send',
-          },
-        },
-        required: ['sessionId', 'message'],
-      },
-    },
-    {
-      name: 'session/load',
-      description: 'Load an existing session',
-      parameters: {
-        type: 'object',
-        properties: {
-          sessionId: {
-            type: 'string',
-            description: 'Session ID to load',
-          },
-        },
-        required: ['sessionId'],
-      },
-    },
-    {
-      name: 'session/cancel',
-      description: 'Cancel ongoing operation',
-      parameters: {
-        type: 'object',
-        properties: {
-          sessionId: {
-            type: 'string',
-            description: 'Session ID',
-          },
-        },
-        required: ['sessionId'],
-      },
-    },
-  ],
+  exposure: {
+    keywords: ['code', 'anthropic', 'agent'],
+    summary: '通过 ACP adapter 接入的 Claude Code agent。',
+  },
 };

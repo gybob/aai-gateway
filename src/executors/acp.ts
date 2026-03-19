@@ -1,7 +1,7 @@
-import { spawn, ChildProcess } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { logger } from '../utils/logger.js';
 import { AaiError } from '../errors/errors.js';
-import type { AaiJson, AcpExecution } from '../types/aai-json.js';
+import type { AcpAgentConfig, DetailedCapability } from '../types/aai-json.js';
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
@@ -24,257 +24,177 @@ interface JsonRpcNotification {
 
 type JsonRpcMessage = JsonRpcResponse | JsonRpcNotification;
 
-/**
- * ACP Executor
- *
- * Executes ACP protocol methods via stdio-based JSON-RPC.
- * Manages agent process lifecycle and message routing.
- */
+interface ProcessState {
+  proc: ChildProcess;
+  buffer: string;
+  initialized: boolean;
+  initializeResult?: Record<string, unknown>;
+}
+
 export class AcpExecutor {
-  private processes = new Map<string, ChildProcess>();
-  private messageBuffers = new Map<string, string>();
+  private states = new Map<string, ProcessState>();
   private pendingRequests = new Map<string, PendingRequest>();
   private requestId = 0;
-  private initializedAgents = new Set<string>();
 
-  private getAcpExecution(descriptor: AaiJson): AcpExecution {
-    if (descriptor.execution.type !== 'acp') {
-      throw new AaiError('INTERNAL_ERROR', 'Descriptor is not an ACP agent');
-    }
-    return descriptor.execution;
+  async inspect(localId: string, config: AcpAgentConfig): Promise<DetailedCapability> {
+    const initialize = (await this.ensureInitialized(localId, config)) as Record<string, unknown>;
+    return {
+      title: 'ACP Agent Details',
+      body: JSON.stringify(initialize, null, 2),
+    };
   }
 
-  /**
-   * Execute an ACP method on an agent
-   */
   async execute(
-    descriptor: AaiJson,
+    localId: string,
+    config: AcpAgentConfig,
     method: string,
     params: Record<string, unknown>
   ): Promise<unknown> {
-    const appId = descriptor.app.id;
+    await this.ensureInitialized(localId, config);
+    return this.sendRequest(localId, method, params, 120000);
+  }
 
-    // Ensure process is running and initialized
-    await this.ensureProcess(descriptor);
+  stop(localId: string): void {
+    const state = this.states.get(localId);
+    if (!state) return;
+    state.proc.kill();
+    this.states.delete(localId);
+  }
 
-    // Send JSON-RPC request
-    const id = ++this.requestId;
-    const request = {
-      jsonrpc: '2.0' as const,
-      id,
-      method,
-      params,
+  private async ensureInitialized(localId: string, config: AcpAgentConfig): Promise<unknown> {
+    const state = this.states.get(localId);
+    if (state?.initialized && state.initializeResult) {
+      return state.initializeResult;
+    }
+
+    if (state) {
+      state.proc.kill();
+      this.states.delete(localId);
+    }
+
+    const proc = spawn(config.command, config.args ?? [], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      cwd: config.cwd,
+      env: { ...process.env, ...config.env },
+    });
+
+    const nextState: ProcessState = {
+      proc,
+      buffer: '',
+      initialized: false,
     };
+    this.states.set(localId, nextState);
 
-    return new Promise((resolve, reject) => {
-      const proc = this.processes.get(appId);
-      if (!proc || !proc.stdin) {
-        reject(new AaiError('SERVICE_UNAVAILABLE', `Agent ${appId} process not running`));
-        return;
-      }
-
-      // Set up timeout
-      const timer = setTimeout(() => {
-        this.pendingRequests.delete(String(id));
-        reject(new AaiError('TIMEOUT', `Request ${method} timed out after 120s`));
-      }, 120000);
-
-      this.pendingRequests.set(String(id), { resolve, reject, timer });
-
-      const message = JSON.stringify(request) + '\n';
-      logger.debug({ appId, method, id }, 'Sending ACP request');
-      proc.stdin.write(message);
+    proc.stdout?.on('data', (data: Buffer) => {
+      this.handleMessage(localId, data.toString());
     });
-  }
 
-  /**
-   * Ensure agent process is running and initialized
-   */
-  private async ensureProcess(descriptor: AaiJson): Promise<void> {
-    const appId = descriptor.app.id;
-    const execution = this.getAcpExecution(descriptor);
-
-    if (this.processes.has(appId) && this.initializedAgents.has(appId)) {
-      return;
-    }
-
-    // Kill existing process if any
-    if (this.processes.has(appId)) {
-      const proc = this.processes.get(appId);
-      proc?.kill();
-      this.processes.delete(appId);
-      this.messageBuffers.delete(appId);
-      this.initializedAgents.delete(appId);
-    }
-
-    return new Promise((resolve, reject) => {
-      logger.info({ appId, command: execution.start.command }, 'Starting ACP agent');
-
-      const proc = spawn(execution.start.command, execution.start.args ?? [], {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env, ...execution.start.env },
-      });
-
-      this.processes.set(appId, proc);
-      this.messageBuffers.set(appId, '');
-
-      // Handle stdout (JSON-RPC responses)
-      proc.stdout?.on('data', (data: Buffer) => {
-        this.handleMessage(appId, data.toString());
-      });
-
-      // Handle stderr (logs)
-      proc.stderr?.on('data', (data: Buffer) => {
-        logger.debug({ appId, stderr: data.toString().trim() }, 'Agent stderr');
-      });
-
-      // Handle process exit
-      proc.on('exit', (code, signal) => {
-        logger.info({ appId, code, signal }, 'ACP agent exited');
-        this.processes.delete(appId);
-        this.messageBuffers.delete(appId);
-        this.initializedAgents.delete(appId);
-      });
-
-      proc.on('error', (err) => {
-        logger.error({ appId, err }, 'ACP agent error');
-        this.processes.delete(appId);
-        this.messageBuffers.delete(appId);
-        this.initializedAgents.delete(appId);
-        reject(new AaiError('SERVICE_UNAVAILABLE', `Failed to start agent: ${err.message}`));
-      });
-
-      // Send initialize request
-      this.sendInitialize(appId, proc)
-        .then(() => {
-          this.initializedAgents.add(appId);
-          resolve();
-        })
-        .catch(reject);
+    proc.stderr?.on('data', (data: Buffer) => {
+      logger.debug({ localId, stderr: data.toString().trim() }, 'ACP agent stderr');
     });
-  }
 
-  /**
-   * Send initialize handshake
-   */
-  private sendInitialize(appId: string, proc: ChildProcess): Promise<void> {
-    const id = ++this.requestId;
-    const request = {
-      jsonrpc: '2.0' as const,
-      id,
-      method: 'initialize',
-      params: {
-        protocolVersion: '2026-03-09',
-        capabilities: {},
+    proc.on('exit', () => {
+      this.states.delete(localId);
+    });
+
+    const initializeResult = await this.sendRequest(
+      localId,
+      'initialize',
+      {
+        protocolVersion: 1,
+        clientCapabilities: {
+          fs: { readTextFile: false, writeTextFile: false },
+          terminal: false,
+        },
         clientInfo: {
           name: 'aai-gateway',
+          title: 'AAI Gateway',
           version: '0.4.0',
         },
       },
-    };
+      15000
+    );
+
+    nextState.initialized = true;
+    nextState.initializeResult = initializeResult as Record<string, unknown>;
+    return initializeResult;
+  }
+
+  private sendRequest(
+    localId: string,
+    method: string,
+    params: Record<string, unknown>,
+    timeoutMs: number
+  ): Promise<unknown> {
+    const state = this.states.get(localId);
+    if (!state?.proc.stdin) {
+      throw new AaiError('SERVICE_UNAVAILABLE', `ACP agent '${localId}' is not running`);
+    }
+
+    const id = ++this.requestId;
+    const payload = JSON.stringify({
+      jsonrpc: '2.0',
+      id,
+      method,
+      params,
+    });
 
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pendingRequests.delete(String(id));
-        reject(new AaiError('TIMEOUT', `Agent ${appId} initialization timed out`));
-      }, 10000);
+        reject(new AaiError('TIMEOUT', `${method} timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
 
-      this.pendingRequests.set(String(id), {
-        resolve: () => resolve(),
-        reject,
-        timer,
-      });
-
-      proc.stdin?.write(JSON.stringify(request) + '\n');
+      this.pendingRequests.set(String(id), { resolve, reject, timer });
+      state.proc.stdin?.write(`${payload}\n`);
     });
   }
 
-  /**
-   * Handle incoming JSON-RPC messages
-   */
-  private handleMessage(appId: string, data: string): void {
-    const buffer = this.messageBuffers.get(appId) ?? '';
-    const newBuffer = buffer + data;
+  private handleMessage(localId: string, data: string): void {
+    const state = this.states.get(localId);
+    if (!state) return;
 
-    // Split by newlines - each line is a complete JSON-RPC message
-    const lines = newBuffer.split('\n');
-    // Keep the last incomplete line in buffer
-    this.messageBuffers.set(appId, lines.pop() ?? '');
+    const combined = state.buffer + data;
+    const lines = combined.split('\n');
+    state.buffer = lines.pop() ?? '';
 
     for (const line of lines) {
-      if (!line.trim()) continue;
+      const trimmed = line.trim();
+      if (!trimmed) continue;
 
       try {
-        const message: JsonRpcMessage = JSON.parse(line);
-        this.dispatchMessage(appId, message);
+        const message = JSON.parse(trimmed) as JsonRpcMessage;
+        this.dispatchMessage(message);
       } catch (err) {
-        logger.warn({ appId, line, err }, 'Failed to parse ACP message');
+        logger.warn({ localId, line: trimmed, err }, 'Failed to parse ACP message');
       }
     }
   }
 
-  /**
-   * Dispatch message to appropriate handler
-   */
-  private dispatchMessage(appId: string, message: JsonRpcMessage): void {
-    // Response to a request
+  private dispatchMessage(message: JsonRpcMessage): void {
     if ('id' in message && !('method' in message)) {
       const pending = this.pendingRequests.get(String(message.id));
-      if (pending) {
-        clearTimeout(pending.timer);
-        this.pendingRequests.delete(String(message.id));
-
-        if ('error' in message && message.error) {
-          pending.reject(
-            new AaiError('INTERNAL_ERROR', message.error.message, { errorData: message.error.data })
-          );
-        } else {
-          pending.resolve(message.result);
-        }
+      if (!pending) {
+        return;
       }
-      return;
-    }
 
-    // Notification (no id, or id but also has method)
-    if ('method' in message && !('id' in message)) {
-      logger.debug({ appId, method: message.method, params: message.params }, 'ACP notification');
-      // TODO: Handle session/update notifications for streaming responses
-    }
-  }
+      clearTimeout(pending.timer);
+      this.pendingRequests.delete(String(message.id));
 
-  /**
-   * Stop a specific agent process
-   */
-  stop(appId: string): void {
-    const proc = this.processes.get(appId);
-    if (proc) {
-      logger.info({ appId }, 'Stopping ACP agent');
-      proc.kill();
-      this.processes.delete(appId);
-      this.messageBuffers.delete(appId);
-      this.initializedAgents.delete(appId);
-    }
-  }
-
-  /**
-   * Stop all agent processes
-   */
-  stopAll(): void {
-    for (const appId of this.processes.keys()) {
-      this.stop(appId);
+      if (message.error) {
+        pending.reject(new AaiError('INTERNAL_ERROR', message.error.message, message.error.data as object));
+      } else {
+        pending.resolve(message.result);
+      }
     }
   }
 }
 
-// Singleton instance
-let executorInstance: AcpExecutor | null = null;
+let singleton: AcpExecutor | undefined;
 
-/**
- * Get the ACP executor singleton
- */
 export function getAcpExecutor(): AcpExecutor {
-  if (!executorInstance) {
-    executorInstance = new AcpExecutor();
+  if (!singleton) {
+    singleton = new AcpExecutor();
   }
-  return executorInstance;
+  return singleton;
 }

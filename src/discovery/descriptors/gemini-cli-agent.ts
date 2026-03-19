@@ -1,91 +1,24 @@
 import type { AaiJson } from '../../types/aai-json.js';
 
-/**
- * Gemini CLI Agent Descriptor
- *
- * Google's Gemini CLI coding agent.
- * https://github.com/google-gemini/gemini-cli
- */
-export const geminiCliDescriptor: AaiJson = {
-  schemaVersion: '1.0',
+export const codexAcpDescriptor: AaiJson = {
+  schemaVersion: '2.0',
   version: '1.0.0',
-  platform: 'macos',
   app: {
-    id: 'com.google.gemini-cli',
     name: {
-      en: 'Gemini CLI',
-      'zh-CN': 'Gemini CLI',
-    },
-    defaultLang: 'en',
-    description: "Google's Gemini CLI coding agent",
-    aliases: ['gemini', 'gemini-cli', 'google'],
-  },
-  execution: {
-    type: 'acp',
-    start: {
-      command: 'gemini',
-      args: [],
+      default: 'Codex',
+      en: 'Codex',
+      'zh-CN': 'Codex',
     },
   },
-  tools: [
-    {
-      name: 'session/new',
-      description: 'Create a new coding session',
-      parameters: {
-        type: 'object',
-        properties: {
-          workingDirectory: {
-            type: 'string',
-            description: 'Working directory for the session',
-          },
-        },
-      },
+  access: {
+    protocol: 'acp-agent',
+    config: {
+      command: 'npx',
+      args: ['-y', '@zed-industries/codex-acp'],
     },
-    {
-      name: 'session/prompt',
-      description: 'Send a prompt to Gemini in an active session',
-      parameters: {
-        type: 'object',
-        properties: {
-          sessionId: {
-            type: 'string',
-            description: 'Session ID from session/new',
-          },
-          message: {
-            type: 'string',
-            description: 'The prompt message to send',
-          },
-        },
-        required: ['sessionId', 'message'],
-      },
-    },
-    {
-      name: 'session/load',
-      description: 'Load an existing session',
-      parameters: {
-        type: 'object',
-        properties: {
-          sessionId: {
-            type: 'string',
-            description: 'Session ID to load',
-          },
-        },
-        required: ['sessionId'],
-      },
-    },
-    {
-      name: 'session/cancel',
-      description: 'Cancel ongoing operation',
-      parameters: {
-        type: 'object',
-        properties: {
-          sessionId: {
-            type: 'string',
-            description: 'Session ID',
-          },
-        },
-        required: ['sessionId'],
-      },
-    },
-  ],
+  },
+  exposure: {
+    keywords: ['code', 'openai', 'agent'],
+    summary: '通过 ACP adapter 接入的 Codex agent。',
+  },
 };
