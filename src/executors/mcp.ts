@@ -6,7 +6,6 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { AaiError } from '../errors/errors.js';
 import type {
   McpConfig,
-  McpExecutorConfig,
   McpExecutorDetail,
   ExecutionResult,
 } from '../types/index.js';
