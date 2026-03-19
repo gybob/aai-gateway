@@ -10,3 +10,33 @@ export { createSecureStorage } from './storage/secure-storage/index.js';
 export type { SecureStorage } from './storage/secure-storage/interface.js';
 export { ConsentManager } from './consent/manager.js';
 export { createConsentDialog } from './consent/dialog/index.js';
+
+// Phase 1 exports
+export type {
+  ExecutorConfig,
+  ExecutorDetail,
+  ExecutionResult,
+  McpExecutorConfig,
+  McpExecutorDetail,
+  SkillExecutorConfig,
+  SkillExecutorDetail,
+  AcpExecutorConfig,
+  AcpExecutorDetail,
+  CliExecutorConfig,
+  CliExecutorDetail,
+  DiscoveryOptions,
+  DiscoverySource,
+  DiscoveryCacheEntry,
+  RegistryItem,
+  Registry,
+  CacheEntry,
+  Command,
+  CommandOptions,
+  ArgumentDef,
+  ParsedArguments,
+} from './types/index.js';
+
+export { getExecutorRegistry, ExecutorRegistry } from './executors/registry.js';
+export type { Executor } from './executors/interface.js';
+export { FileRegistry } from './storage/registry.js';
+export { SimpleCache } from './storage/cache.js';
