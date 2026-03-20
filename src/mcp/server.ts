@@ -1,6 +1,17 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { InMemoryTaskStore } from '@modelcontextprotocol/sdk/experimental/tasks/index.js';
+import {
+  CallToolRequestSchema,
+  CancelTaskRequestSchema,
+  GetTaskPayloadRequestSchema,
+  GetTaskRequestSchema,
+  ListTasksRequestSchema,
+  ListToolsRequestSchema,
+  type CallToolRequest,
+  type CallToolResult,
+  type CreateTaskResult,
+} from '@modelcontextprotocol/sdk/types.js';
 
 import { createConsentDialog } from '../consent/dialog/index.js';
 import { ConsentManager } from '../consent/manager.js';
@@ -27,10 +38,12 @@ import { logger } from '../utils/logger.js';
 
 import { generateAppListDescription, generateOperationGuide } from './guide-generator.js';
 import { loadImportedMcpHeaders } from './importer.js';
+import { McpTaskRunner } from './task-runner.js';
 
 export class AaiGatewayServer {
   private readonly server: Server;
   private readonly options: DiscoveryOptions;
+  private readonly taskRunner: McpTaskRunner;
   private readonly appRegistry = new Map<string, RuntimeAppRecord>();
   private consentManager!: ConsentManager;
   private secureStorage!: SecureStorage;
@@ -39,10 +52,26 @@ export class AaiGatewayServer {
 
   constructor(options?: DiscoveryOptions) {
     this.options = options ?? {};
+    const taskStore = new InMemoryTaskStore();
     this.server = new Server(
       { name: 'aai-gateway', version: '0.4.0' },
-      { capabilities: { tools: {} } }
+      {
+        capabilities: {
+          tools: {},
+          tasks: {
+            list: {},
+            cancel: {},
+            requests: {
+              tools: {
+                call: {},
+              },
+            },
+          },
+        },
+        taskStore,
+      }
     );
+    this.taskRunner = new McpTaskRunner(this.server, taskStore);
     this.setupHandlers();
   }
 
@@ -75,7 +104,12 @@ export class AaiGatewayServer {
     };
 
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
-      const tools: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }> =
+      const tools: Array<{
+        name: string;
+        description: string;
+        inputSchema: Record<string, unknown>;
+        execution?: { taskSupport: 'optional' };
+      }> =
         Array.from(this.appRegistry.values()).map((app) => ({
         name: `app:${app.localId}`,
         description: generateAppListDescription(app.localId, app.descriptor),
@@ -108,12 +142,13 @@ export class AaiGatewayServer {
           },
           required: ['app', 'tool'],
         } as Record<string, unknown>,
+        execution: { taskSupport: 'optional' },
       });
 
       return { tools };
     });
 
-    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    this.server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       const { name, arguments: args } = request.params;
 
       if (name.startsWith('app:')) {
@@ -130,10 +165,32 @@ export class AaiGatewayServer {
 
       if (name === 'aai:exec') {
         const payload = args as { app: string; tool: string; args?: Record<string, unknown> };
-        return this.handleExec(payload.app, payload.tool, payload.args ?? {});
+        return this.handleExec(
+          request as CallToolRequest,
+          extra.requestId,
+          payload.app,
+          payload.tool,
+          payload.args ?? {}
+        );
       }
 
       throw new AaiError('UNKNOWN_TOOL', `Unknown tool: ${name}`);
+    });
+
+    this.server.setRequestHandler(GetTaskRequestSchema, async (request) => {
+      return this.taskRunner.getTask(request.params.taskId);
+    });
+
+    this.server.setRequestHandler(GetTaskPayloadRequestSchema, async (request) => {
+      return this.taskRunner.getTaskResult(request.params.taskId);
+    });
+
+    this.server.setRequestHandler(ListTasksRequestSchema, async (request) => {
+      return this.taskRunner.listTasks(request.params?.cursor);
+    });
+
+    this.server.setRequestHandler(CancelTaskRequestSchema, async (request) => {
+      return this.taskRunner.cancelTask(request.params.taskId);
     });
   }
 
@@ -143,7 +200,7 @@ export class AaiGatewayServer {
       throw new AaiError('UNKNOWN_APP', `App not found: ${appId}`);
     }
 
-    const detail = await this.loadLayer3Detail(app.localId, app.descriptor);
+    const detail = await this.loadGuideDetail(app.localId, app.descriptor);
     return {
       content: [{ type: 'text', text: generateOperationGuide(app.localId, app.descriptor, detail) }],
     };
@@ -162,11 +219,22 @@ export class AaiGatewayServer {
     };
   }
 
+  private async loadGuideDetail(localId: string, descriptor: AaiJson): Promise<DetailedCapability> {
+    try {
+      return await this.loadLayer3Detail(localId, descriptor);
+    } catch (err) {
+      logger.warn({ localId, err }, 'Failed to load live app detail; using static fallback');
+      return createStaticDetail(descriptor, err);
+    }
+  }
+
   private async handleExec(
+    request: CallToolRequest,
+    requestId: string | number,
     appIdOrUrl: string,
     toolName: string,
     args: Record<string, unknown>
-  ): Promise<{ content: Array<{ type: string; text: string }> }> {
+  ): Promise<CallToolResult | CreateTaskResult> {
     const resolved = await this.resolveApp(appIdOrUrl);
     const locale = getSystemLocale();
     const appName = getLocalizedName(resolved.descriptor.app.name, locale);
@@ -182,15 +250,27 @@ export class AaiGatewayServer {
       this.callerIdentity ?? { name: 'Unknown Client' }
     );
 
-    const result = await this.executeApp(resolved.localId, resolved.descriptor, toolName, args);
-    return {
-      content: [
-        {
-          type: 'text',
-          text: typeof result === 'string' ? result : JSON.stringify(result, null, 2),
-        },
-      ],
-    };
+    if (!request.params.task) {
+      const result = await this.executeApp(resolved.localId, resolved.descriptor, toolName, args);
+      return this.toCallToolResult(result);
+    }
+
+    const taskResult = await this.taskRunner.createTask(requestId, request);
+    const taskId = taskResult.task.taskId;
+    const progressToken = request.params._meta?.progressToken;
+
+    this.taskRunner.runTask(taskId, async () => {
+      const result = await this.executeApp(
+        resolved.localId,
+        resolved.descriptor,
+        toolName,
+        args,
+        this.taskRunner.createObserver(taskId, progressToken)
+      );
+      return this.toCallToolResult(result);
+    });
+
+    return taskResult;
   }
 
   private async resolveApp(appIdOrUrl: string): Promise<RuntimeAppRecord> {
@@ -243,7 +323,8 @@ export class AaiGatewayServer {
     localId: string,
     descriptor: AaiJson,
     toolName: string,
-    args: Record<string, unknown>
+    args: Record<string, unknown>,
+    observer?: import('../executors/events.js').ExecutionObserver
   ): Promise<unknown> {
     const access = descriptor.access;
 
@@ -265,7 +346,11 @@ export class AaiGatewayServer {
     }
 
     if (isAcpAgentAccess(access)) {
-      return getAcpExecutor().execute(localId, access.config, toolName, args);
+      const executor = getAcpExecutor();
+      if (observer && executor.executeWithObserver) {
+        return executor.executeWithObserver(localId, access.config, toolName, args, observer);
+      }
+      return executor.execute(localId, access.config, toolName, args);
     }
 
     if (isCliAccess(access)) {
@@ -273,6 +358,17 @@ export class AaiGatewayServer {
     }
 
     throw new AaiError('NOT_IMPLEMENTED', `Unsupported protocol ${JSON.stringify(access)}`);
+  }
+
+  private toCallToolResult(result: unknown): CallToolResult {
+    return {
+      content: [
+        {
+          type: 'text',
+          text: typeof result === 'string' ? result : JSON.stringify(result, null, 2),
+        },
+      ],
+    };
   }
 
   async start(): Promise<void> {
@@ -285,4 +381,44 @@ export class AaiGatewayServer {
 
 export async function createGatewayServer(options?: DiscoveryOptions): Promise<AaiGatewayServer> {
   return new AaiGatewayServer(options);
+}
+
+function createStaticDetail(descriptor: AaiJson, err: unknown): DetailedCapability {
+  switch (descriptor.access.protocol) {
+    case 'acp-agent':
+      return {
+        title: 'ACP Agent Details',
+        body: [
+          'Live ACP inspection is currently unavailable.',
+          `App summary: ${descriptor.exposure.summary}`,
+          'Use `aai:exec` with:',
+          '- `tool: "prompt"` for a simplified prompt flow',
+          '- or `tool: "session/new"` then `tool: "session/prompt"` for explicit session control',
+          `Inspection error: ${err instanceof Error ? err.message : String(err)}`,
+        ].join('\n'),
+      };
+    case 'mcp':
+      return {
+        title: 'MCP Tools',
+        body: [
+          'Live MCP tool discovery is currently unavailable.',
+          `App summary: ${descriptor.exposure.summary}`,
+          `Inspection error: ${err instanceof Error ? err.message : String(err)}`,
+        ].join('\n'),
+      };
+    case 'skill':
+      return {
+        title: 'Skill Details',
+        body: descriptor.exposure.summary,
+      };
+    case 'cli':
+      return {
+        title: 'CLI Details',
+        body: [
+          'Live CLI inspection is currently unavailable.',
+          `App summary: ${descriptor.exposure.summary}`,
+          `Inspection error: ${err instanceof Error ? err.message : String(err)}`,
+        ].join('\n'),
+      };
+  }
 }

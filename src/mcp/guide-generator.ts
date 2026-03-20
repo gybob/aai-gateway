@@ -36,7 +36,8 @@ export function generateOperationGuide(
       lines.push('Set `tool` to the MCP tool name and `args` to the tool arguments object.');
       break;
     case 'acp-agent':
-      lines.push('Set `tool` to the ACP method name such as `session/new` or `session/prompt`.');
+      lines.push('Preferred: use `tool: "prompt"` with `args.text` or `args.message`; the gateway will auto-create a session.');
+      lines.push('Advanced: use `tool: "session/new"` with optional `args.cwd` / `args.mcpServers`, then `tool: "session/prompt"` with `args.sessionId` and either `args.prompt` or `args.text`.');
       break;
     case 'skill':
       lines.push('Use `tool: "read"` and optionally `args.section` to read the skill content.');

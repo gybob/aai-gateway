@@ -10,6 +10,9 @@ export const opencodeDescriptor: AaiJson = {
       'zh-CN': 'OpenCode',
     },
   },
+  discovery: {
+    checks: [{ kind: 'command', command: 'opencode' }],
+  },
   access: {
     protocol: 'acp-agent',
     config: {

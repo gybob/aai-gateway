@@ -8,6 +8,7 @@ import type { RuntimeAppRecord } from '../types/aai-json.js';
 import { deriveLocalId } from '../utils/ids.js';
 import { logger } from '../utils/logger.js';
 
+import { evaluateDescriptorAvailability } from './checks.js';
 import type { DesktopDiscovery, DiscoveryOptions } from './interface.js';
 
 const execAsync = promisify(exec);
@@ -21,11 +22,15 @@ export class WindowsDiscovery implements DesktopDiscovery {
       try {
         const raw = await readFile(aaiJsonPath, 'utf-8');
         const descriptor = parseAaiJson(JSON.parse(raw));
+        const availability = await evaluateDescriptorAvailability(descriptor);
+        if (!availability.available) {
+          continue;
+        }
         entries.push({
           localId: deriveLocalId(`desktop:${aaiJsonPath}`, 'desktop'),
           descriptor,
           source: 'desktop',
-          location: dirname(aaiJsonPath),
+          location: availability.location ?? dirname(aaiJsonPath),
         });
       } catch (err) {
         logger.warn({ path: aaiJsonPath, err }, 'Failed to parse Windows descriptor');

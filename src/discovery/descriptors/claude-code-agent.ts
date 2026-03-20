@@ -10,6 +10,12 @@ export const claudeAcpDescriptor: AaiJson = {
       'zh-CN': 'Claude Code',
     },
   },
+  discovery: {
+    checks: [
+      { kind: 'command', command: 'npx' },
+      { kind: 'command', command: 'claude' },
+    ],
+  },
   access: {
     protocol: 'acp-agent',
     config: {

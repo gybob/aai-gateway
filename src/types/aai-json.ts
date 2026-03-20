@@ -65,6 +65,30 @@ export interface Exposure {
   summary: string;
 }
 
+export interface CommandDiscoveryCheck {
+  kind: 'command';
+  command: string;
+}
+
+export interface FileDiscoveryCheck {
+  kind: 'file';
+  path: string;
+}
+
+export interface PathDiscoveryCheck {
+  kind: 'path';
+  path: string;
+}
+
+export type DiscoveryCheck =
+  | CommandDiscoveryCheck
+  | FileDiscoveryCheck
+  | PathDiscoveryCheck;
+
+export interface DiscoveryRule {
+  checks: DiscoveryCheck[];
+}
+
 export interface AaiJson {
   schemaVersion: '2.0';
   version: string;
@@ -72,6 +96,7 @@ export interface AaiJson {
     name: InternationalizedName;
     iconUrl?: string;
   };
+  discovery?: DiscoveryRule;
   access: Access;
   exposure: Exposure;
 }

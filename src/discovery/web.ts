@@ -8,6 +8,8 @@ import {
 import type { AaiJson } from '../types/aai-json.js';
 import { logger } from '../utils/logger.js';
 
+import { evaluateDescriptorAvailability } from './checks.js';
+
 const FETCH_TIMEOUT_MS = 10_000;
 
 export async function fetchWebDescriptor(url: string): Promise<AaiJson> {
@@ -35,6 +37,13 @@ export async function fetchWebDescriptor(url: string): Promise<AaiJson> {
     }
 
     const descriptor = parseAaiJson(await response.json());
+    const availability = await evaluateDescriptorAvailability(descriptor);
+    if (!availability.available) {
+      throw new AaiError(
+        'SERVICE_UNAVAILABLE',
+        `Descriptor for ${normalizedUrl} failed local discovery checks`
+      );
+    }
     await setDescriptorCache(hostname, descriptor, aaiUrl);
     return descriptor;
   } catch (err) {

@@ -1,6 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AaiGatewayServer } from './server.js';
 
+async function flushMicrotasks(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+async function flushAsyncWork(): Promise<void> {
+  await flushMicrotasks();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 // Mock the MCP SDK
 vi.mock('@modelcontextprotocol/sdk/server/index.js', () => {
   const mockServer = {
@@ -11,6 +21,7 @@ vi.mock('@modelcontextprotocol/sdk/server/index.js', () => {
     }),
     setRequestHandler: vi.fn(),
     connect: vi.fn(),
+    notification: vi.fn().mockResolvedValue(undefined),
   };
 
   return {
@@ -65,7 +76,7 @@ vi.mock('../storage/secure-storage/index.js', () => ({
 
 vi.mock('../consent/dialog/index.js', () => ({
   createConsentDialog: vi.fn().mockReturnValue({
-    show: vi.fn(),
+    show: vi.fn().mockResolvedValue({ decision: 'tool', remember: false }),
   }),
 }));
 
@@ -77,6 +88,14 @@ vi.mock('../utils/logger.js', () => ({
     error: vi.fn(),
     fatal: vi.fn(),
   },
+}));
+
+vi.mock('../executors/acp.js', () => ({
+  getAcpExecutor: vi.fn().mockReturnValue({
+    inspect: vi.fn().mockRejectedValue(new Error('initialize timed out after 15000ms')),
+    execute: vi.fn(),
+    executeWithObserver: vi.fn(),
+  }),
 }));
 
 describe('AaiGatewayServer - Caller Identity Extraction', () => {
@@ -278,7 +297,211 @@ describe('AaiGatewayServer - Caller Identity Extraction', () => {
       expect(names).toContain('app:acp-agent');
       expect(names).toContain('app:mcp-app');
       expect(names).toContain('app:skill-app');
+      const execTool = response.tools.find((tool: { name: string }) => tool.name === 'aai:exec');
+      expect(execTool.execution).toEqual({ taskSupport: 'optional' });
       expect(listCall).toBeDefined();
+    });
+
+    it('falls back to static ACP guide when live inspection fails', async () => {
+      const { createDiscoveryManager } = await import('../discovery/index.js');
+
+      vi.mocked(createDiscoveryManager).mockReturnValue({
+        manager: {
+          register: vi.fn(),
+          scanAll: vi.fn().mockResolvedValue([
+            {
+              localId: 'acp-codex',
+              source: 'acp-agent',
+              location: '/opt/homebrew/bin/codex',
+              descriptor: {
+                schemaVersion: '2.0',
+                version: '1.0.0',
+                app: { name: { default: 'Codex' } },
+                access: {
+                  protocol: 'acp-agent',
+                  config: { command: 'npx', args: ['-y', '@zed-industries/codex-acp'] },
+                },
+                exposure: { keywords: ['code'], summary: 'Codex ACP agent.' },
+              },
+            },
+          ]),
+          getSources: vi.fn().mockReturnValue([]),
+        },
+        sources: {
+          desktop: { scan: vi.fn().mockResolvedValue([]) },
+          agents: { scan: vi.fn().mockResolvedValue([]) },
+          managed: { scan: vi.fn().mockResolvedValue([]) },
+        },
+      } as any);
+
+      const server = new AaiGatewayServer();
+      await server.initialize();
+
+      const handlers = mockServer.setRequestHandler.mock.calls.map((call: any[]) => call[1]);
+      const callHandler = handlers[1];
+      const response = await callHandler({
+        params: {
+          name: 'app:acp-codex',
+          arguments: {},
+        },
+      });
+
+      expect(response.content[0].text).toContain('Live ACP inspection is currently unavailable.');
+      expect(response.content[0].text).toContain('tool: "prompt"');
+    });
+
+    it('returns CreateTaskResult for task-augmented aai:exec requests', async () => {
+      const { createDiscoveryManager } = await import('../discovery/index.js');
+      const { getAcpExecutor } = await import('../executors/acp.js');
+
+      vi.mocked(createDiscoveryManager).mockReturnValue({
+        manager: {
+          register: vi.fn(),
+          scanAll: vi.fn().mockResolvedValue([
+            {
+              localId: 'acp-agent',
+              source: 'acp-agent',
+              location: '/usr/local/bin/opencode',
+              descriptor: {
+                schemaVersion: '2.0',
+                version: '1.0.0',
+                app: { name: { default: 'OpenCode' } },
+                access: { protocol: 'acp-agent', config: { command: 'opencode', args: ['acp'] } },
+                exposure: { keywords: ['code'], summary: 'ACP agent.' },
+              },
+            },
+          ]),
+          getSources: vi.fn().mockReturnValue([]),
+        },
+        sources: {
+          desktop: { scan: vi.fn().mockResolvedValue([]) },
+          agents: { scan: vi.fn().mockResolvedValue([]) },
+          managed: { scan: vi.fn().mockResolvedValue([]) },
+        },
+      } as any);
+
+      vi.mocked(getAcpExecutor).mockReturnValue({
+        inspect: vi.fn().mockRejectedValue(new Error('initialize timed out after 15000ms')),
+        execute: vi.fn(),
+        executeWithObserver: vi.fn().mockResolvedValue({
+          success: true,
+          data: { stopReason: 'end_turn' },
+        }),
+      } as any);
+
+      const server = new AaiGatewayServer();
+      await server.initialize();
+
+      const handlers = mockServer.setRequestHandler.mock.calls.map((call: any[]) => call[1]);
+      const callHandler = handlers[1];
+      const response = await callHandler(
+        {
+          id: 123,
+          params: {
+            name: 'aai:exec',
+            arguments: {
+              app: 'acp-agent',
+              tool: 'prompt',
+              args: { text: 'hello' },
+            },
+            task: { ttl: 1000, pollInterval: 250 },
+            _meta: { progressToken: 'progress-1' },
+          },
+        },
+        { requestId: 123 }
+      );
+
+      expect(response.task.taskId).toBeTruthy();
+      expect(response.task.pollInterval).toBe(250);
+
+      await flushMicrotasks();
+      expect(mockServer.notification).toHaveBeenCalledWith(
+        expect.objectContaining({
+          method: 'notifications/tasks/status',
+        })
+      );
+    });
+
+    it('maps ACP observer task status updates to MCP task notifications', async () => {
+      const { createDiscoveryManager } = await import('../discovery/index.js');
+      const { getAcpExecutor } = await import('../executors/acp.js');
+
+      vi.mocked(createDiscoveryManager).mockReturnValue({
+        manager: {
+          register: vi.fn(),
+          scanAll: vi.fn().mockResolvedValue([
+            {
+              localId: 'acp-agent',
+              source: 'acp-agent',
+              location: '/usr/local/bin/opencode',
+              descriptor: {
+                schemaVersion: '2.0',
+                version: '1.0.0',
+                app: { name: { default: 'OpenCode' } },
+                access: { protocol: 'acp-agent', config: { command: 'opencode', args: ['acp'] } },
+                exposure: { keywords: ['code'], summary: 'ACP agent.' },
+              },
+            },
+          ]),
+          getSources: vi.fn().mockReturnValue([]),
+        },
+        sources: {
+          desktop: { scan: vi.fn().mockResolvedValue([]) },
+          agents: { scan: vi.fn().mockResolvedValue([]) },
+          managed: { scan: vi.fn().mockResolvedValue([]) },
+        },
+      } as any);
+
+      vi.mocked(getAcpExecutor).mockReturnValue({
+        inspect: vi.fn().mockRejectedValue(new Error('initialize timed out after 15000ms')),
+        execute: vi.fn(),
+        executeWithObserver: vi.fn().mockImplementation(
+          async (
+            _localId: string,
+            _config: unknown,
+            _tool: string,
+            _args: Record<string, unknown>,
+            observer: { onTaskStatus?: (event: { status: 'working'; message?: string }) => Promise<void> }
+          ) => {
+            await observer.onTaskStatus?.({ status: 'working', message: 'Agent is working' });
+            return {
+              success: true,
+              data: { stopReason: 'end_turn' },
+            };
+          }
+        ),
+      } as any);
+
+      const server = new AaiGatewayServer();
+      await server.initialize();
+
+      const handlers = mockServer.setRequestHandler.mock.calls.map((call: any[]) => call[1]);
+      const callHandler = handlers[1];
+      await callHandler(
+        {
+          id: 456,
+          params: {
+            name: 'aai:exec',
+            arguments: {
+              app: 'acp-agent',
+              tool: 'prompt',
+              args: { text: 'hello' },
+            },
+            task: { ttl: 1000, pollInterval: 250 },
+          },
+        },
+        { requestId: 456 }
+      );
+
+      await flushAsyncWork();
+      expect(
+        mockServer.notification.mock.calls.some(
+          ([notification]: any[]) =>
+            notification?.method === 'notifications/tasks/status' &&
+            notification?.params?.status === 'working' &&
+            notification?.params?.statusMessage === 'Agent is working'
+        )
+      ).toBe(true);
     });
   });
 });

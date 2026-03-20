@@ -11,6 +11,14 @@
 - 🤝 贡献代码
 - 📢 分享给社区
 
+## 🧪 测试
+
+- [人工测试指南](./MANUAL_TESTING.md) - 详细的手动测试指南
+- [测试摘要](./TESTING_SUMMARY.md) - 测试结果和总结
+- 测试配置: `tests/integration/manual.config.yaml`
+
+## 📚 文档
+
 ## 🏗️ Architecture Overview (v0.4.0)
 
 AAI Gateway features modular discovery and unified storage:

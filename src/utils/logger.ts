@@ -30,24 +30,20 @@ try {
   // Ignore errors if we can't create log dir
 }
 
+function createLoggerDestination(): pino.DestinationStream {
+  try {
+    return pino.destination({ dest: logFile, sync: true });
+  } catch {
+    return pino.destination(2);
+  }
+}
+
 export const logger = pino({
   level: logLevel,
-  transport:
-    process.env.NODE_ENV !== 'production'
-      ? {
-          target: 'pino-pretty',
-          options: {
-            colorize: false,
-            translateTime: 'SYS:standard',
-            ignore: 'pid,hostname',
-            destination: logFile, // Output to file instead of stdout
-          },
-        }
-      : undefined,
   base: {
     service: 'aai-gateway',
   },
-});
+}, createLoggerDestination());
 
 export function createChildLogger(context: LogContext): pino.Logger {
   return logger.child(context);

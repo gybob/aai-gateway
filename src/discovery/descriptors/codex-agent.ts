@@ -10,6 +10,12 @@ export const codexAcpDescriptor: AaiJson = {
       'zh-CN': 'Codex',
     },
   },
+  discovery: {
+    checks: [
+      { kind: 'command', command: 'npx' },
+      { kind: 'command', command: 'codex' },
+    ],
+  },
   access: {
     protocol: 'acp-agent',
     config: {

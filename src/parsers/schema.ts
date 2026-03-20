@@ -56,6 +56,27 @@ const AccessSchema = z.discriminatedUnion('protocol', [
   }),
 ]);
 
+const DiscoverySchema = z.object({
+  checks: z
+    .array(
+      z.discriminatedUnion('kind', [
+        z.object({
+          kind: z.literal('command'),
+          command: z.string().min(1),
+        }),
+        z.object({
+          kind: z.literal('file'),
+          path: z.string().min(1),
+        }),
+        z.object({
+          kind: z.literal('path'),
+          path: z.string().min(1),
+        }),
+      ])
+    )
+    .min(1),
+});
+
 export const AaiJsonSchema = z.object({
   schemaVersion: z.literal('2.0'),
   version: z.string().min(1),
@@ -63,6 +84,7 @@ export const AaiJsonSchema = z.object({
     name: LocalizedNameSchema,
     iconUrl: z.string().url().optional(),
   }),
+  discovery: DiscoverySchema.optional(),
   access: AccessSchema,
   exposure: z.object({
     keywords: z.array(z.string().min(1)).max(8),

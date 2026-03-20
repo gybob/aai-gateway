@@ -1,6 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { evaluateDescriptorAvailability } from '../discovery/checks.js';
 import { parseAaiJson } from '../parsers/schema.js';
 import type { RuntimeAppRecord } from '../types/aai-json.js';
 
@@ -39,6 +40,10 @@ export class ManagedRegistry {
         try {
           const descriptorPath = join(root, entry.name, 'aai.json');
           const descriptor = parseAaiJson(JSON.parse(await readFile(descriptorPath, 'utf-8')));
+          const availability = await evaluateDescriptorAvailability(descriptor);
+          if (!availability.available) {
+            continue;
+          }
           const protocol = descriptor.access.protocol;
 
           let source: RuntimeAppRecord['source'];
@@ -63,7 +68,7 @@ export class ManagedRegistry {
             localId: entry.name,
             descriptor,
             source,
-            location: descriptorPath,
+            location: availability.location ?? descriptorPath,
           });
         } catch {
           // Skip non-app directories or invalid descriptors
