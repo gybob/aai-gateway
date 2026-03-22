@@ -11,7 +11,7 @@ import { InMemoryTaskStore } from '@modelcontextprotocol/sdk/experimental/tasks/
 
 import { logger } from '../utils/logger.js';
 
-import type { ExecutionObserver, ExecutionTaskStatus } from '../executors/events.js';
+import type { ExecutionObserver } from '../executors/events.js';
 
 type PseudoTaskStatus = TaskStatus | 'queued';
 
@@ -48,6 +48,11 @@ export class McpTaskRunner {
   }
 
   async updateTask(taskId: string, status: PseudoTaskStatus, statusMessage?: string): Promise<Task> {
+    const current = await this.getTask(taskId);
+    if (isTerminalTaskStatus(current.status)) {
+      return current;
+    }
+
     if (status !== 'queued') {
       await this.taskStore.updateTaskStatus(taskId, status, statusMessage);
     }
@@ -112,10 +117,26 @@ export class McpTaskRunner {
   ): ExecutionObserver {
     return {
       onTaskStatus: async ({ status, message }) => {
-        await this.updateTask(taskId, normalizeTaskStatus(status), message);
+        const active = this.activeTasks.get(taskId);
+        if (!active || active.cancelled || progressToken === undefined) {
+          return;
+        }
+
+        active.progress += 1;
+        await this.server.notification({
+          method: 'notifications/progress',
+          params: {
+            progressToken,
+            progress: active.progress,
+            ...(message ? { message } : { message: status }),
+          },
+        });
       },
       onMessage: async ({ message }) => {
-        await this.updateTask(taskId, 'working', message);
+        const task = await this.getTask(taskId);
+        if (!isTerminalTaskStatus(task.status)) {
+          await this.updateTask(taskId, 'working', message);
+        }
       },
       onProgress: async ({ progress, message }) => {
         const active = this.activeTasks.get(taskId);
@@ -177,8 +198,4 @@ export class McpTaskRunner {
 
 function isTerminalTaskStatus(status: TaskStatus): boolean {
   return status === 'completed' || status === 'failed' || status === 'cancelled';
-}
-
-function normalizeTaskStatus(status: ExecutionTaskStatus): PseudoTaskStatus {
-  return status;
 }

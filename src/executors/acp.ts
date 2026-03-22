@@ -16,11 +16,11 @@ import type { ExecutionObserver, TaskCapableExecutor } from './events.js';
 interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
-  timer: NodeJS.Timeout;
-  timeoutMs: number;
+  timer?: NodeJS.Timeout;
+  timeoutMs?: number;
   method: string;
   sessionId?: string;
-  updates: string[];
+  outputText: string;
   observer?: ExecutionObserver;
 }
 
@@ -47,8 +47,8 @@ interface ProcessState {
 }
 
 const ACP_INITIALIZE_TIMEOUT_MS = 60000;
-const ACP_REQUEST_TIMEOUT_MS = 600000;
 const ACP_SESSION_TIMEOUT_MS = 30000;
+const ACP_MAX_OUTPUT_CHARS = 200_000;
 
 /**
  * ACP Executor implementation
@@ -150,7 +150,7 @@ export class AcpExecutor
     params: Record<string, unknown>
   ): Promise<unknown> {
     await this.ensureInitialized(localId, config);
-    return this.sendRequest(localId, method, params, ACP_REQUEST_TIMEOUT_MS);
+    return this.sendRequest(localId, method, params, 0);
   }
 
   stop(localId: string): void {
@@ -174,6 +174,8 @@ export class AcpExecutor
       state.proc.kill();
       this.states.delete(localId);
     }
+
+    logger.info({ localId, command: config.command, args: config.args }, 'ACP initialize started');
 
     const proc = spawn(config.command, config.args ?? [], {
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -221,6 +223,7 @@ export class AcpExecutor
 
     nextState.initialized = true;
     nextState.initializeResult = initializeResult as Record<string, unknown>;
+    logger.info({ localId }, 'ACP initialize completed');
     return initializeResult;
   }
 
@@ -235,7 +238,7 @@ export class AcpExecutor
       return {
         method: 'session/prompt',
         params: normalizePromptArgs(args, sessionId),
-        timeoutMs: ACP_REQUEST_TIMEOUT_MS,
+        timeoutMs: 0,
       };
     }
 
@@ -256,23 +259,25 @@ export class AcpExecutor
       return {
         method: operation,
         params: normalizePromptArgs(args, sessionId),
-        timeoutMs: ACP_REQUEST_TIMEOUT_MS,
+        timeoutMs: 0,
       };
     }
 
     return {
       method: operation,
       params: args,
-      timeoutMs: ACP_REQUEST_TIMEOUT_MS,
+      timeoutMs: 0,
     };
   }
 
   private async ensureSession(localId: string, args: Record<string, unknown>): Promise<string> {
     const existing = this.sessionIds.get(localId);
     if (existing) {
+      logger.debug({ localId, sessionId: existing }, 'ACP session reused');
       return existing;
     }
 
+    logger.info({ localId }, 'ACP session/new started');
     const created = (await this.sendRequest(
       localId,
       'session/new',
@@ -290,6 +295,7 @@ export class AcpExecutor
     }
 
     this.sessionIds.set(localId, sessionId);
+    logger.info({ localId, sessionId }, 'ACP session/new completed');
     return sessionId;
   }
 
@@ -313,22 +319,39 @@ export class AcpExecutor
       params,
     });
 
-    return new Promise((resolve, reject) => {
-      const createTimer = () =>
-        setTimeout(() => {
-          this.pendingRequests.delete(String(id));
-          reject(new AaiError('TIMEOUT', `${method} timed out after ${timeoutMs}ms`));
-        }, timeoutMs);
-
-      const timer = createTimer();
-      this.pendingRequests.set(String(id), {
-        resolve,
-        reject,
-        timer,
-        timeoutMs,
+    logger.info(
+      {
+        localId,
         method,
         sessionId: typeof params.sessionId === 'string' ? params.sessionId : undefined,
-        updates: [],
+        timeoutMs: timeoutMs > 0 ? timeoutMs : undefined,
+      },
+      'ACP request started'
+    );
+
+    return new Promise((resolve, reject) => {
+      const timer =
+        timeoutMs > 0
+          ? setTimeout(() => {
+            this.pendingRequests.delete(String(id));
+            logger.error({ localId, method, timeoutMs }, 'ACP request timed out');
+            reject(new AaiError('TIMEOUT', `${method} timed out after ${timeoutMs}ms`));
+          }, timeoutMs)
+          : undefined;
+      this.pendingRequests.set(String(id), {
+        resolve: (value) => {
+          logger.info({ localId, method }, 'ACP request completed');
+          resolve(value);
+        },
+        reject: (error) => {
+          logger.error({ localId, method, error }, 'ACP request failed');
+          reject(error);
+        },
+        timer,
+        timeoutMs: timeoutMs > 0 ? timeoutMs : undefined,
+        method,
+        sessionId: typeof params.sessionId === 'string' ? params.sessionId : undefined,
+        outputText: '',
         observer,
       });
       state.proc.stdin?.write(`${payload}\n`);
@@ -363,7 +386,9 @@ export class AcpExecutor
         return;
       }
 
-      clearTimeout(pending.timer);
+      if (pending.timer) {
+        clearTimeout(pending.timer);
+      }
       this.pendingRequests.delete(String(message.id));
 
       if (message.error) {
@@ -392,13 +417,24 @@ export class AcpExecutor
       }
     }
 
+    logger.debug(
+      {
+        sessionId,
+        hasText: Boolean(text),
+        textLength: text?.length,
+        textPreview: text ? truncateLogPreview(text) : undefined,
+        taskStatus: taskStatus?.status,
+      },
+      'ACP session/update received'
+    );
+
     for (const pending of this.pendingRequests.values()) {
       if (pending.method !== 'session/prompt' || pending.sessionId !== sessionId) {
         continue;
       }
 
       if (text) {
-        pending.updates.push(text);
+        pending.outputText = mergePromptText(pending.outputText, text);
         void pending.observer?.onMessage?.({ message: text });
         void pending.observer?.onProgress?.({ message: text });
       }
@@ -422,7 +458,13 @@ export class AcpExecutor
         continue;
       }
 
-      clearTimeout(pending.timer);
+      if (!pending.timeoutMs) {
+        continue;
+      }
+
+      if (pending.timer) {
+        clearTimeout(pending.timer);
+      }
       pending.timer = setTimeout(() => {
         this.pendingRequests.forEach((value, key) => {
           if (value === pending) {
@@ -460,14 +502,25 @@ function extractUpdateText(params: unknown): string | null {
     return null;
   }
 
-  const content = (update as { content?: unknown }).content;
-  if (!content || typeof content !== 'object') {
+  const sessionUpdate = (update as { sessionUpdate?: unknown }).sessionUpdate;
+  if (
+    sessionUpdate === 'available_commands_update' ||
+    sessionUpdate === 'usage_update' ||
+    sessionUpdate === 'session_title_update'
+  ) {
     return null;
   }
 
-  const type = (content as { type?: unknown }).type;
-  const text = (content as { text?: unknown }).text;
-  return type === 'text' && typeof text === 'string' && text.length > 0 ? text : null;
+  const candidates = [
+    update,
+    (update as { content?: unknown }).content,
+    (update as { output?: unknown }).output,
+    (update as { delta?: unknown }).delta,
+    (update as { response?: unknown }).response,
+  ];
+
+  const fragments = Array.from(new Set(candidates.flatMap((candidate) => collectTextFragments(candidate))));
+  return fragments.length > 0 ? fragments.join('') : null;
 }
 
 function extractTaskStatus(
@@ -549,11 +602,16 @@ function extractStringField(obj: object, key: 'message' | 'title' | 'detail'): s
 }
 
 function mergePromptUpdates(result: unknown, pending: PendingRequest): unknown {
-  if (pending.method !== 'session/prompt' || pending.updates.length === 0) {
+  if (pending.method !== 'session/prompt') {
     return result;
   }
 
-  const outputText = pending.updates.join('');
+  const finalText = extractResultText(result);
+  const outputText = finalText ? mergePromptText(pending.outputText, finalText) : pending.outputText;
+  if (!outputText) {
+    return result;
+  }
+
   if (result && typeof result === 'object') {
     return {
       ...result,
@@ -624,6 +682,87 @@ function createMissingPromptError(): AaiError {
     'INVALID_PARAMS',
     'ACP prompt requires args.prompt (content blocks) or args.text / args.message'
   );
+}
+
+function extractResultText(result: unknown): string | null {
+  const fragments = Array.from(new Set(collectTextFragments(result)));
+  return fragments.length > 0 ? fragments.join('') : null;
+}
+
+function mergePromptText(current: string, incoming: string): string {
+  if (!incoming) {
+    return current;
+  }
+
+  if (!current) {
+    return truncatePromptText(incoming);
+  }
+
+  if (incoming === current || current.endsWith(incoming)) {
+    return current;
+  }
+
+  if (incoming.startsWith(current)) {
+    return truncatePromptText(incoming);
+  }
+
+  return truncatePromptText(current + incoming);
+}
+
+function truncatePromptText(text: string): string {
+  if (text.length <= ACP_MAX_OUTPUT_CHARS) {
+    return text;
+  }
+
+  return text.slice(0, ACP_MAX_OUTPUT_CHARS);
+}
+
+function truncateLogPreview(text: string, maxChars = 160): string {
+  return text.length <= maxChars ? text : `${text.slice(0, maxChars)}...`;
+}
+
+function collectTextFragments(value: unknown): string[] {
+  if (!value) {
+    return [];
+  }
+
+  if (typeof value === 'string') {
+    return value.length > 0 ? [value] : [];
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectTextFragments(item));
+  }
+
+  if (typeof value !== 'object') {
+    return [];
+  }
+
+  const record = value as Record<string, unknown>;
+
+  if (record.type === 'text' && typeof record.text === 'string' && record.text.length > 0) {
+    return [record.text];
+  }
+
+  const direct = [
+    record.outputText,
+    record.text,
+    record.delta,
+    record.content,
+    record.contents,
+    record.output,
+    record.outputs,
+    record.response,
+    record.responses,
+    record.chunk,
+    record.chunks,
+    record.item,
+    record.items,
+    record.result,
+    record.results,
+  ];
+
+  return direct.flatMap((item) => collectTextFragments(item));
 }
 
 let singleton: AcpExecutor | undefined;

@@ -120,12 +120,40 @@ function extractTextFromNotifications(notifications, sessionId) {
     if (msg.method !== 'session/update') continue;
     if (msg.params?.sessionId !== sessionId) continue;
     const update = msg.params?.update;
-    const content = update?.content;
-    if (content?.type === 'text' && typeof content.text === 'string') {
-      chunks.push(content.text);
+    if (
+      update?.sessionUpdate === 'available_commands_update' ||
+      update?.sessionUpdate === 'usage_update'
+    ) {
+      continue;
+    }
+    for (const fragment of new Set(collectTextFragments(update))) {
+      chunks.push(fragment);
     }
   }
   return chunks.join('');
+}
+
+function collectTextFragments(value) {
+  if (!value) return [];
+  if (typeof value === 'string') return value ? [value] : [];
+  if (Array.isArray(value)) return value.flatMap((item) => collectTextFragments(item));
+  if (typeof value !== 'object') return [];
+
+  if (value.type === 'text' && typeof value.text === 'string') {
+    return [value.text];
+  }
+
+  return [
+    value.content,
+    value.contents,
+    value.output,
+    value.outputs,
+    value.delta,
+    value.response,
+    value.responses,
+    value.result,
+    value.results,
+  ].flatMap((item) => collectTextFragments(item));
 }
 
 async function probeAgent(agent) {
@@ -168,7 +196,7 @@ async function probeAgent(agent) {
           },
         ],
       },
-      30000
+      60000
     );
 
     const text = extractTextFromNotifications(probe.notifications, sessionId);

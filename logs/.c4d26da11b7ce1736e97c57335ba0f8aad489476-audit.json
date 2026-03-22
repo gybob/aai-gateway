@@ -34,6 +34,16 @@
             "date": 1773936898512,
             "name": "/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/logs/error-2026-03-20.log",
             "hash": "bfed36863a3f29551a5a1a960b297e301b1d75c22d1bf513b46b62056f6c921f"
+        },
+        {
+            "date": 1774024354438,
+            "name": "/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/logs/error-2026-03-21.log",
+            "hash": "45d74c27b905db1be7df336574f79cdd7c5ba7e0db2a760ec5e7d026c796d43a"
+        },
+        {
+            "date": 1774161702846,
+            "name": "/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/logs/error-2026-03-22.log",
+            "hash": "f5889b5aa9d67dafa208ecb5e36bb7a7c7dc4ceaf33754623327052135d3f218"
         }
     ],
     "hashType": "sha256"

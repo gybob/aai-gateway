@@ -269,6 +269,55 @@ describe('AcpExecutor', () => {
     });
   });
 
+  it('does not create a timeout timer for session/prompt requests', async () => {
+    vi.useFakeTimers();
+    const proc = createMockProcess();
+    mockSpawn.mockReturnValue(proc);
+
+    const executionPromise = executor.execute(
+      'acp-codex',
+      {
+        command: 'npx',
+        args: ['-y', '@zed-industries/codex-acp'],
+      },
+      'session/prompt',
+      {
+        sessionId: 'session-123',
+        prompt: [{ type: 'text', text: 'Long running task' }],
+      }
+    );
+
+    proc.stdout.emit(
+      'data',
+      Buffer.from(
+        `${JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          result: { protocolVersion: 1, agentInfo: { name: 'Codex' } },
+        })}\n`
+      )
+    );
+
+    await flushMicrotasks();
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
+
+    proc.stdout.emit(
+      'data',
+      Buffer.from(
+        `${JSON.stringify({
+          jsonrpc: '2.0',
+          id: 2,
+          result: { stopReason: 'end_turn' },
+        })}\n`
+      )
+    );
+
+    await expect(executionPromise).resolves.toEqual({
+      success: true,
+      data: { stopReason: 'end_turn' },
+    });
+  });
+
   it('forwards session updates to an execution observer', async () => {
     const proc = createMockProcess();
     mockSpawn.mockReturnValue(proc);
@@ -343,5 +392,209 @@ describe('AcpExecutor', () => {
       status: 'working',
       message: 'Agent is working',
     });
+  });
+
+  it('promotes final prompt text into outputText when no text updates were captured', async () => {
+    const proc = createMockProcess();
+    mockSpawn.mockReturnValue(proc);
+
+    const executionPromise = executor.execute(
+      'acp-codex',
+      {
+        command: 'npx',
+        args: ['-y', '@zed-industries/codex-acp'],
+      },
+      'session/prompt',
+      {
+        sessionId: 'session-123',
+        prompt: [{ type: 'text', text: '1+1等于几？' }],
+      }
+    );
+
+    proc.stdout.emit(
+      'data',
+      Buffer.from(
+        `${JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          result: { protocolVersion: 1, agentInfo: { name: 'Codex' } },
+        })}\n`
+      )
+    );
+
+    await flushMicrotasks();
+    proc.stdout.emit(
+      'data',
+      Buffer.from(
+        `${JSON.stringify({
+          jsonrpc: '2.0',
+          id: 2,
+          result: {
+            stopReason: 'end_turn',
+            output: [{ type: 'text', text: '2' }],
+          },
+        })}\n`
+      )
+    );
+
+    await expect(executionPromise).resolves.toEqual({
+      success: true,
+      data: { stopReason: 'end_turn', output: [{ type: 'text', text: '2' }], outputText: '2' },
+    });
+  });
+
+  it('treats cumulative prompt updates as replacements instead of unbounded appends', async () => {
+    const proc = createMockProcess();
+    mockSpawn.mockReturnValue(proc);
+
+    const executionPromise = executor.execute(
+      'acp-codex',
+      {
+        command: 'npx',
+        args: ['-y', '@zed-industries/codex-acp'],
+      },
+      'session/prompt',
+      {
+        sessionId: 'session-123',
+        prompt: [{ type: 'text', text: 'Explain the issue' }],
+      }
+    );
+
+    proc.stdout.emit(
+      'data',
+      Buffer.from(
+        `${JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          result: { protocolVersion: 1, agentInfo: { name: 'Codex' } },
+        })}\n`
+      )
+    );
+
+    await flushMicrotasks();
+    proc.stdout.emit(
+      'data',
+      Buffer.from(
+        `${JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'session/update',
+          params: {
+            sessionId: 'session-123',
+            update: { content: { type: 'text', text: 'A' } },
+          },
+        })}\n`
+      )
+    );
+    proc.stdout.emit(
+      'data',
+      Buffer.from(
+        `${JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'session/update',
+          params: {
+            sessionId: 'session-123',
+            update: { content: { type: 'text', text: 'AB' } },
+          },
+        })}\n`
+      )
+    );
+    proc.stdout.emit(
+      'data',
+      Buffer.from(
+        `${JSON.stringify({
+          jsonrpc: '2.0',
+          id: 2,
+          result: { stopReason: 'end_turn' },
+        })}\n`
+      )
+    );
+
+    await expect(executionPromise).resolves.toEqual({
+      success: true,
+      data: { stopReason: 'end_turn', outputText: 'AB' },
+    });
+  });
+
+  it('still forwards alternating ACP task statuses to the observer in order', async () => {
+    const proc = createMockProcess();
+    mockSpawn.mockReturnValue(proc);
+
+    const observer = {
+      onMessage: vi.fn(),
+      onProgress: vi.fn(),
+      onTaskStatus: vi.fn(),
+    };
+
+    const executionPromise = executor.executeWithObserver(
+      'acp-codex',
+      {
+        command: 'npx',
+        args: ['-y', '@zed-industries/codex-acp'],
+      },
+      'session/prompt',
+      {
+        sessionId: 'session-123',
+        prompt: [{ type: 'text', text: 'hello' }],
+      },
+      observer
+    );
+
+    proc.stdout.emit(
+      'data',
+      Buffer.from(
+        `${JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          result: { protocolVersion: 1, agentInfo: { name: 'Codex' } },
+        })}\n`
+      )
+    );
+
+    await flushMicrotasks();
+    proc.stdout.emit(
+      'data',
+      Buffer.from(
+        `${JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'session/update',
+          params: {
+            sessionId: 'session-123',
+            update: { status: 'completed' },
+          },
+        })}\n`
+      )
+    );
+    proc.stdout.emit(
+      'data',
+      Buffer.from(
+        `${JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'session/update',
+          params: {
+            sessionId: 'session-123',
+            update: { status: 'working' },
+          },
+        })}\n`
+      )
+    );
+    proc.stdout.emit(
+      'data',
+      Buffer.from(
+        `${JSON.stringify({
+          jsonrpc: '2.0',
+          id: 2,
+          result: { stopReason: 'end_turn' },
+        })}\n`
+      )
+    );
+
+    await expect(executionPromise).resolves.toEqual({
+      success: true,
+      data: { stopReason: 'end_turn' },
+    });
+    expect(observer.onTaskStatus.mock.calls).toEqual([
+      [{ status: 'completed' }],
+      [{ status: 'working' }],
+    ]);
   });
 });

@@ -2,11 +2,13 @@ import type { AaiJson, DetailedCapability } from '../types/aai-json.js';
 import { getLocalizedName } from '../types/aai-json.js';
 import { getSystemLocale } from '../utils/locale.js';
 
+import { generateAcpOperationGuide } from './acp-guide-generator.js';
+
 export function generateAppListDescription(_localId: string, descriptor: AaiJson): string {
   const locale = getSystemLocale();
   const localizedName = getLocalizedName(descriptor.app.name, locale);
   const keywords = descriptor.exposure.keywords.join(', ');
-  return `${localizedName}. Keywords: ${keywords}. ${descriptor.exposure.summary}`;
+  return `${localizedName}. Guide only; call this tool to inspect how to use the app, then use aai:exec for execution. Keywords: ${keywords}. ${descriptor.exposure.summary}`;
 }
 
 export function generateOperationGuide(
@@ -14,6 +16,12 @@ export function generateOperationGuide(
   descriptor: AaiJson,
   detail: DetailedCapability
 ): string {
+  const protocol = descriptor.access.protocol;
+
+  if (protocol === 'acp-agent') {
+    return generateAcpOperationGuide(localId, descriptor, detail);
+  }
+
   const locale = getSystemLocale();
   const localizedName = getLocalizedName(descriptor.app.name, locale);
   const lines: string[] = [];
@@ -21,7 +29,7 @@ export function generateOperationGuide(
   lines.push(`# ${localizedName}`);
   lines.push('');
   lines.push(`- App ID: ${localId}`);
-  lines.push(`- Protocol: ${descriptor.access.protocol}`);
+  lines.push(`- Protocol: ${protocol}`);
   lines.push(`- Keywords: ${descriptor.exposure.keywords.join(', ')}`);
   lines.push(`- Summary: ${descriptor.exposure.summary}`);
   lines.push('');
@@ -31,13 +39,9 @@ export function generateOperationGuide(
   lines.push('## Execution');
   lines.push('Use `aai:exec` with the app ID above.');
 
-  switch (descriptor.access.protocol) {
+  switch (protocol) {
     case 'mcp':
       lines.push('Set `tool` to the MCP tool name and `args` to the tool arguments object.');
-      break;
-    case 'acp-agent':
-      lines.push('Preferred: use `tool: "prompt"` with `args.text` or `args.message`; the gateway will auto-create a session.');
-      lines.push('Advanced: use `tool: "session/new"` with optional `args.cwd` / `args.mcpServers`, then `tool: "session/prompt"` with `args.sessionId` and either `args.prompt` or `args.text`.');
       break;
     case 'skill':
       lines.push('Use `tool: "read"` and optionally `args.section` to read the skill content.');
