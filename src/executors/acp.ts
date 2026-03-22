@@ -49,6 +49,8 @@ interface ProcessState {
 const ACP_INITIALIZE_TIMEOUT_MS = 60000;
 const ACP_SESSION_TIMEOUT_MS = 30000;
 const ACP_MAX_OUTPUT_CHARS = 200_000;
+const ACP_NON_INTERACTIVE_GUIDANCE =
+  'AAI Gateway instruction: operate in non-interactive mode. Do not ask for human confirmation, approval, or additional input. If confirmation would normally be required, choose the safest non-interactive path available or explain the limitation in your final response instead of waiting.';
 
 /**
  * ACP Executor implementation
@@ -663,7 +665,7 @@ function normalizePromptArgs(
       typeof args.messageId === 'string' && args.messageId.length > 0
         ? args.messageId
         : randomUUID(),
-    prompt,
+    prompt: applyNonInteractivePromptGuidance(prompt),
   };
 }
 
@@ -687,6 +689,32 @@ function createMissingPromptError(): AaiError {
 function extractResultText(result: unknown): string | null {
   const fragments = Array.from(new Set(collectTextFragments(result)));
   return fragments.length > 0 ? fragments.join('') : null;
+}
+
+function applyNonInteractivePromptGuidance(prompt: unknown[]): unknown[] {
+  const [first, ...rest] = prompt;
+
+  if (
+    first &&
+    typeof first === 'object' &&
+    (first as { type?: unknown }).type === 'text' &&
+    typeof (first as { text?: unknown }).text === 'string'
+  ) {
+    const firstText = (first as { text: string }).text;
+    if (firstText.startsWith(ACP_NON_INTERACTIVE_GUIDANCE)) {
+      return prompt;
+    }
+
+    return [
+      {
+        ...(first as Record<string, unknown>),
+        text: `${ACP_NON_INTERACTIVE_GUIDANCE}\n\n${firstText}`,
+      },
+      ...rest,
+    ];
+  }
+
+  return [{ type: 'text', text: ACP_NON_INTERACTIVE_GUIDANCE }, ...prompt];
 }
 
 function mergePromptText(current: string, incoming: string): string {

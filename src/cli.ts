@@ -2,24 +2,25 @@
 
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { stdin as input, stdout as output } from 'node:process';
-import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 
 import { createDesktopDiscovery } from './discovery/index.js';
 import { getMcpExecutor } from './executors/mcp.js';
 import {
-  generateMcpDescriptor,
+  buildMcpImportConfig,
+  buildSkillExposure,
+  type ExposureMode,
+  buildSkillImportSource,
   importMcpServer,
   importSkill,
   refreshImportedMcpServer,
-  type ExposureDraft,
 } from './mcp/importer.js';
 import { createGatewayServer } from './mcp/server.js';
-import { getMcpRegistryEntry } from './storage/mcp-registry.js';
+import { getMcpRegistryEntry, upsertMcpRegistryEntry } from './storage/mcp-registry.js';
 import { getManagedAppDir } from './storage/paths.js';
 import { createSecureStorage } from './storage/secure-storage/index.js';
-import type { McpConfig } from './types/aai-json.js';
+import { upsertSkillRegistryEntry } from './storage/skill-registry.js';
+import { isMcpAccess, isSkillAccess, isSkillPathConfig, type AaiJson } from './types/aai-json.js';
 import { logger } from './utils/logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -40,11 +41,7 @@ interface ScanOptions extends CommonOptions {
 }
 
 interface ImportOptionsBase extends CommonOptions {
-  localId?: string;
-  name?: string;
-  keywords: string[];
-  summary?: string;
-  assistant: boolean;
+  exposure: ExposureMode;
 }
 
 interface McpImportOptions extends ImportOptionsBase {
@@ -69,7 +66,21 @@ interface SkillImportOptions extends ImportOptionsBase {
   url?: string;
 }
 
-type CliOptions = ServeOptions | ScanOptions | McpImportOptions | McpRefreshOptions | SkillImportOptions;
+interface AppConfigOptions extends CommonOptions {
+  command: 'app-config';
+  localId: string;
+  exposure?: ExposureMode;
+  keywords?: string[];
+  summary?: string;
+}
+
+type CliOptions =
+  | ServeOptions
+  | ScanOptions
+  | McpImportOptions
+  | McpRefreshOptions
+  | SkillImportOptions
+  | AppConfigOptions;
 
 function parseKeyValue(value: string, flag: string): [string, string] {
   const index = value.indexOf('=');
@@ -99,13 +110,11 @@ function parseArgs(args: string[]): CliOptions {
       const arg = args[i];
       const next = args[i + 1];
       switch (arg) {
-        case '--id':
-        case '--name':
-        case '--keyword':
-        case '--summary':
-        case '--assistant':
+        case '--exposure':
+          i += 1;
+          break;
         case '--dev':
-          if (arg !== '--assistant' && arg !== '--dev') i += 1;
+          if (arg !== '--dev') i += 1;
           break;
         case '--transport':
           if (next !== 'streamable-http' && next !== 'sse') {
@@ -146,12 +155,8 @@ function parseArgs(args: string[]): CliOptions {
           if (!arg.startsWith('--')) break;
           if (
             ![
-              '--id',
-              '--name',
-              '--keyword',
-              '--summary',
-              '--assistant',
               '--dev',
+              '--exposure',
               '--transport',
               '--url',
               '--command',
@@ -196,13 +201,11 @@ function parseArgs(args: string[]): CliOptions {
       const arg = args[i];
       const next = args[i + 1];
       switch (arg) {
-        case '--id':
-        case '--name':
-        case '--keyword':
-        case '--summary':
-        case '--assistant':
+        case '--exposure':
+          i += 1;
+          break;
         case '--dev':
-          if (arg !== '--assistant' && arg !== '--dev') i += 1;
+          if (arg !== '--dev') i += 1;
           break;
         case '--path':
           path = next;
@@ -213,7 +216,7 @@ function parseArgs(args: string[]): CliOptions {
           i += 1;
           break;
         default:
-          if (arg.startsWith('--') && !['--path', '--url'].includes(arg)) {
+          if (arg.startsWith('--') && !['--path', '--url', '--exposure'].includes(arg)) {
             throw new Error(`Unknown argument: ${arg}`);
           }
       }
@@ -221,38 +224,70 @@ function parseArgs(args: string[]): CliOptions {
     return { command: 'skill-import', ...base, path, url };
   }
 
+  if (args[0] === 'app' && args[1] === 'config') {
+    const localId = args[2];
+    if (!localId) {
+      throw new Error('Usage: aai-gateway app config <local-id>');
+    }
+
+    let exposure: ExposureMode | undefined;
+    let summary: string | undefined;
+    const keywords: string[] = [];
+
+    for (let i = 3; i < args.length; i += 1) {
+      const arg = args[i];
+      const next = args[i + 1];
+      switch (arg) {
+        case '--dev':
+          break;
+        case '--exposure':
+          if (next !== 'summary' && next !== 'keywords') {
+            throw new Error('--exposure must be summary or keywords');
+          }
+          exposure = next;
+          i += 1;
+          break;
+        case '--summary':
+          summary = next;
+          i += 1;
+          break;
+        case '--keyword':
+          keywords.push(next);
+          i += 1;
+          break;
+        default:
+          if (arg.startsWith('--') && !['--dev', '--exposure', '--summary', '--keyword'].includes(arg)) {
+            throw new Error(`Unknown argument: ${arg}`);
+          }
+      }
+    }
+
+    return {
+      command: 'app-config',
+      dev,
+      localId,
+      ...(exposure ? { exposure } : {}),
+      ...(summary ? { summary } : {}),
+      ...(keywords.length > 0 ? { keywords } : {}),
+    };
+  }
+
   return { command: 'serve', dev };
 }
 
 function parseImportBase(args: string[], dev: boolean): ImportOptionsBase {
-  const keywords: string[] = [];
-  let localId: string | undefined;
-  let name: string | undefined;
-  let summary: string | undefined;
-  let assistant = false;
+  let exposure: ExposureMode | undefined;
 
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     const next = args[i + 1];
     switch (arg) {
-      case '--id':
-        localId = next;
+      case '--exposure':
+        if (next !== 'summary' && next !== 'keywords') {
+          throw new Error('--exposure must be summary or keywords');
+        }
+        exposure = next;
         i += 1;
-        break;
-      case '--name':
-        name = next;
-        i += 1;
-        break;
-      case '--keyword':
-        keywords.push(next);
-        i += 1;
-        break;
-      case '--summary':
-        summary = next;
-        i += 1;
-        break;
-      case '--assistant':
-        assistant = true;
         break;
       case '--dev':
         break;
@@ -261,7 +296,11 @@ function parseImportBase(args: string[], dev: boolean): ImportOptionsBase {
     }
   }
 
-  return { dev, localId, name, keywords, summary, assistant };
+  if (!exposure) {
+    throw new Error('Import requires --exposure summary|keywords');
+  }
+
+  return { dev, exposure };
 }
 
 function printHelp(): void {
@@ -273,6 +312,7 @@ Usage:
   aai-gateway mcp import [options]
   aai-gateway mcp refresh <local-id> [options]
   aai-gateway skill import [options]
+  aai-gateway app config <local-id> [options]
 
 Options:
   --scan        Scan for desktop descriptors and exit
@@ -281,11 +321,7 @@ Options:
   --help, -h    Show help
 
 Shared import options:
-  --id ID                Override generated local ID
-  --name NAME            Override display name
-  --keyword VALUE        Repeatable exposure keyword
-  --summary TEXT         Exposure summary
-  --assistant            Accept generated exposure defaults without interactive review
+  --exposure MODE        Required. One of: summary, keywords
 
 MCP import options:
   --command CMD          Import a local stdio MCP server
@@ -299,58 +335,12 @@ MCP import options:
 Skill import options:
   --path DIR             Import a local skill directory
   --url URL              Import a remote skill root URL
+
+App config options:
+  --exposure MODE        Optional. Regenerate metadata using summary or keywords mode
+  --summary TEXT         Optional. Override the generated summary
+  --keyword VALUE        Optional and repeatable. Override generated keywords
 `);
-}
-
-function buildMcpConfig(options: McpImportOptions): McpConfig {
-  if (options.launchCommand) {
-    return {
-      transport: 'stdio',
-      command: options.launchCommand,
-      args: options.launchArgs,
-      env: Object.keys(options.launchEnv).length > 0 ? options.launchEnv : undefined,
-      cwd: options.launchCwd,
-    };
-  }
-
-  if (options.url) {
-    return {
-      transport: options.transport ?? 'streamable-http',
-      url: options.url,
-    };
-  }
-
-  throw new Error('MCP import requires either --command or --url');
-}
-
-async function ensureExposure(
-  draft: ExposureDraft,
-  assistant: boolean
-): Promise<ExposureDraft> {
-  if (assistant || !process.stdin.isTTY || !process.stdout.isTTY) {
-    return draft;
-  }
-
-  const rl = createInterface({ input, output });
-  try {
-    const keywordsRaw = await rl.question(
-      `Keywords [${draft.keywords.join(', ')}]: `
-    );
-    const summaryRaw = await rl.question(`Summary [${draft.summary}]: `);
-
-    return {
-      keywords:
-        keywordsRaw.trim().length > 0
-          ? keywordsRaw
-              .split(',')
-              .map((value) => value.trim())
-              .filter(Boolean)
-          : draft.keywords,
-      summary: summaryRaw.trim().length > 0 ? summaryRaw.trim() : draft.summary,
-    };
-  } finally {
-    rl.close();
-  }
 }
 
 async function runScan(dev: boolean): Promise<void> {
@@ -374,49 +364,26 @@ async function runScan(dev: boolean): Promise<void> {
 async function runMcpImport(options: McpImportOptions): Promise<void> {
   const storage = createSecureStorage();
   const executor = getMcpExecutor();
-  const config = buildMcpConfig(options);
-
-  const preview = generateMcpDescriptor(
-    {
-      localId: options.localId,
-      name: options.name,
-      config,
-      exposure:
-        options.summary || options.keywords.length > 0
-          ? {
-              keywords: options.keywords.length > 0 ? options.keywords : ['mcp'],
-              summary: options.summary ?? 'Imported MCP server.',
-            }
-          : undefined,
-    },
-    await executor.listTools({
-      localId: options.localId ?? 'preview',
-      config,
-      headers: options.headers,
-    })
-  );
-
-  const exposure = await ensureExposure(
-    {
-      keywords:
-        options.keywords.length > 0 ? options.keywords : preview.exposure.keywords,
-      summary: options.summary ?? preview.exposure.summary,
-    },
-    options.assistant
-  );
+  const config = buildMcpImportConfig({
+    transport: options.transport,
+    url: options.url,
+    command: options.launchCommand,
+    args: options.launchArgs,
+    env: options.launchEnv,
+    cwd: options.launchCwd,
+  });
 
   const result = await importMcpServer(executor, storage, {
-    localId: options.localId,
-    name: options.name,
     config,
     headers: options.headers,
-    exposure,
+    exposureMode: options.exposure,
   });
 
   console.log(`Imported MCP app: ${result.entry.localId}`);
   console.log(`Descriptor: ${result.entry.descriptorPath}`);
   console.log(`Managed directory: ${getManagedAppDir(result.entry.localId)}`);
   console.log(`Keywords: ${result.descriptor.exposure.keywords.join(', ')}`);
+  console.log(`Summary: ${result.descriptor.exposure.summary}`);
 }
 
 async function runMcpRefresh(options: McpRefreshOptions): Promise<void> {
@@ -425,24 +392,11 @@ async function runMcpRefresh(options: McpRefreshOptions): Promise<void> {
     throw new Error(`Unknown imported MCP app: ${options.localId}`);
   }
 
-  const currentDescriptor = JSON.parse(readFileSync(entry.descriptorPath, 'utf-8')) as {
-    exposure?: ExposureDraft;
-  };
-
-  const exposure = await ensureExposure(
-    {
-      keywords:
-        options.keywords.length > 0 ? options.keywords : currentDescriptor.exposure?.keywords ?? [],
-      summary: options.summary ?? currentDescriptor.exposure?.summary ?? 'Imported MCP server.',
-    },
-    options.assistant
-  );
-
   const result = await refreshImportedMcpServer(
     getMcpExecutor(),
     createSecureStorage(),
     entry,
-    exposure
+    options.exposure
   );
 
   console.log(`Refreshed MCP app: ${result.entry.localId}`);
@@ -450,30 +404,88 @@ async function runMcpRefresh(options: McpRefreshOptions): Promise<void> {
 }
 
 async function runSkillImport(options: SkillImportOptions): Promise<void> {
-  if (!options.path && !options.url) {
-    throw new Error('Skill import requires either --path or --url');
-  }
-
-  const defaultName = options.name ?? (options.path ? options.path.split('/').filter(Boolean).pop() : 'Imported Skill');
-  const exposure = await ensureExposure(
-    {
-      keywords: options.keywords.length > 0 ? options.keywords : ['skill'],
-      summary: options.summary ?? `${defaultName} imported into AAI Gateway.`,
-    },
-    options.assistant
-  );
-
-  const result = await importSkill({
-    localId: options.localId,
-    name: options.name,
+  const source = buildSkillImportSource({
     path: options.path,
     url: options.url,
-    exposure,
+  });
+
+  const result = await importSkill({
+    path: source.path,
+    url: source.url,
+    exposureMode: options.exposure,
   });
 
   console.log(`Imported skill: ${result.localId}`);
   console.log(`Descriptor: ${join(getManagedAppDir(result.localId), 'aai.json')}`);
   console.log(`Skill directory: ${result.managedPath}`);
+  console.log(`Keywords: ${result.descriptor.exposure.keywords.join(', ')}`);
+  console.log(`Summary: ${result.descriptor.exposure.summary}`);
+}
+
+async function runAppConfig(options: AppConfigOptions): Promise<void> {
+  const descriptorPath = join(getManagedAppDir(options.localId), 'aai.json');
+  const descriptor = JSON.parse(readFileSync(descriptorPath, 'utf-8')) as AaiJson;
+
+  let nextDescriptor = descriptor;
+
+  if (options.exposure && isMcpAccess(descriptor.access)) {
+    const entry = await getMcpRegistryEntry(options.localId);
+    if (!entry) {
+      throw new Error(`Unknown imported MCP app: ${options.localId}`);
+    }
+
+    const refreshed = await refreshImportedMcpServer(
+      getMcpExecutor(),
+      createSecureStorage(),
+      entry,
+      options.exposure
+    );
+    nextDescriptor = refreshed.descriptor;
+  } else if (options.exposure && isSkillAccess(descriptor.access)) {
+    if (!isSkillPathConfig(descriptor.access.config)) {
+      throw new Error(`Imported skill '${options.localId}' is missing a local skill path`);
+    }
+
+    const skillContent = readFileSync(join(descriptor.access.config.path, 'SKILL.md'), 'utf-8');
+    nextDescriptor = {
+      ...descriptor,
+      exposure: buildSkillExposure(descriptor.app.name.default, skillContent, options.exposure),
+    };
+  }
+
+  nextDescriptor = {
+    ...nextDescriptor,
+    exposure: {
+      keywords: options.keywords ?? nextDescriptor.exposure.keywords,
+      summary: options.summary ?? nextDescriptor.exposure.summary,
+    },
+  };
+
+  if (isMcpAccess(nextDescriptor.access)) {
+    await upsertMcpRegistryEntry(
+      {
+        localId: options.localId,
+        protocol: 'mcp',
+        config: nextDescriptor.access.config,
+      },
+      nextDescriptor
+    );
+  } else if (isSkillAccess(nextDescriptor.access)) {
+    await upsertSkillRegistryEntry(
+      {
+        localId: options.localId,
+        protocol: 'skill',
+        config: nextDescriptor.access.config,
+      },
+      nextDescriptor
+    );
+  } else {
+    throw new Error(`App '${options.localId}' is not an imported MCP app or imported skill`);
+  }
+
+  console.log(`Updated app: ${options.localId}`);
+  console.log(`Keywords: ${nextDescriptor.exposure.keywords.join(', ')}`);
+  console.log(`Summary: ${nextDescriptor.exposure.summary}`);
 }
 
 async function main(): Promise<void> {
@@ -503,6 +515,9 @@ async function main(): Promise<void> {
       return;
     case 'skill-import':
       await runSkillImport(options);
+      return;
+    case 'app-config':
+      await runAppConfig(options);
       return;
     case 'serve': {
       const server = await createGatewayServer({ devMode: options.dev });

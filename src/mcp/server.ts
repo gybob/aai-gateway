@@ -1,12 +1,11 @@
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { InMemoryTaskStore } from '@modelcontextprotocol/sdk/experimental/tasks/index.js';
 import {
   CallToolRequestSchema,
-  CancelTaskRequestSchema,
-  GetTaskPayloadRequestSchema,
-  GetTaskRequestSchema,
-  ListTasksRequestSchema,
   ListToolsRequestSchema,
   type CallToolRequest,
   type CallToolResult,
@@ -29,13 +28,20 @@ import {
   legacyLoadSkillDetail as loadSkillDetail,
 } from '../executors/skill.js';
 import { createSecureStorage, type SecureStorage } from '../storage/secure-storage/index.js';
-import type { AaiJson, DetailedCapability, RuntimeAppRecord } from '../types/aai-json.js';
+import {
+  getMcpRegistryEntry,
+  type McpRegistryEntry,
+  upsertMcpRegistryEntry,
+} from '../storage/mcp-registry.js';
+import { upsertSkillRegistryEntry } from '../storage/skill-registry.js';
+import type { AaiJson, DetailedCapability, McpConfig, RuntimeAppRecord } from '../types/aai-json.js';
 import {
   getLocalizedName,
   isAcpAgentAccess,
   isCliAccess,
   isMcpAccess,
   isSkillAccess,
+  isSkillPathConfig,
 } from '../types/aai-json.js';
 import type { CallerIdentity } from '../types/consent.js';
 import { deriveLocalId } from '../utils/ids.js';
@@ -46,7 +52,16 @@ import {
   generateAppListDescription,
   generateOperationGuide,
 } from '../guides/app-guide-generator.js';
-import { loadImportedMcpHeaders } from './importer.js';
+import {
+  buildMcpImportConfig,
+  buildSkillExposure,
+  type ExposureMode,
+  buildSkillImportSource,
+  importMcpServer,
+  importSkill,
+  loadImportedMcpHeaders,
+  refreshImportedMcpServer,
+} from './importer.js';
 import { McpTaskRunner } from './task-runner.js';
 import type { ExecutionObserver } from '../executors/events.js';
 
@@ -55,6 +70,8 @@ import type { ExecutionObserver } from '../executors/events.js';
  * Must be well below the default MCP client request timeout (60 s).
  */
 const ACP_KEEPALIVE_INTERVAL_MS = 15_000;
+const DOWNSTREAM_INACTIVITY_TIMEOUT_MS = 300_000;
+const ACP_DOWNSTREAM_INACTIVITY_TIMEOUT_MS = 180_000;
 
 export class AaiGatewayServer {
   private readonly server: Server;
@@ -207,6 +224,171 @@ export class AaiGatewayServer {
         execution: { taskSupport: 'optional' },
       });
 
+      tools.push({
+        name: 'mcp:import',
+        description:
+          'Import an MCP server into AAI Gateway managed apps so it becomes available to app:<generated-id> and aai:exec. Match the CLI import shape: use command plus optional args/env/cwd for a local stdio server, or use url plus optional transport ("streamable-http" by default, or "sse") and headers for a remote server. Before calling this tool, ask the user whether they want exposure mode "summary" or "keywords"; do not choose it silently.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            transport: {
+              type: 'string',
+              enum: ['streamable-http', 'sse'],
+              description:
+                'Optional. Only used with url for remote MCP imports. Defaults to "streamable-http".',
+            },
+            command: {
+              type: 'string',
+              description:
+                'Use this for a local stdio MCP import. The executable to launch, for example "npx" or "uvx". If command is present, the import is treated as stdio.',
+            },
+            args: {
+              type: 'array',
+              items: { type: 'string' },
+              description:
+                'Optional for local stdio MCP imports. Command arguments, for example ["-y", "@modelcontextprotocol/server-filesystem", "/repo"].',
+            },
+            env: {
+              type: 'object',
+              additionalProperties: { type: 'string' },
+              description: 'Optional for local stdio MCP imports. Environment variables passed to the MCP process.',
+            },
+            cwd: {
+              type: 'string',
+              description: 'Optional for local stdio MCP imports. Working directory used when launching the MCP process.',
+            },
+            url: {
+              type: 'string',
+              description:
+                'Use this for a remote MCP import. The remote MCP endpoint URL.',
+            },
+            headers: {
+              type: 'object',
+              additionalProperties: { type: 'string' },
+              description:
+                'Optional for remote transports. HTTP headers such as Authorization for the remote MCP endpoint.',
+            },
+            exposure: {
+              type: 'string',
+              enum: ['summary', 'keywords'],
+              description:
+                'Required. Do not guess this value. Ask the user to choose before calling the tool. Use "summary" when the user wants the AI to understand when this MCP should be used without needing exact trigger words. Use "keywords" when the user wants to leave room for more tools, but is comfortable mentioning related keywords more explicitly to trigger this MCP.',
+            },
+          },
+          required: ['exposure'],
+          examples: [
+            {
+              command: 'npx',
+              args: ['-y', '@modelcontextprotocol/server-filesystem', '/repo'],
+              exposure: 'summary',
+            },
+            {
+              url: 'https://example.com/mcp',
+              headers: { Authorization: 'Bearer <token>' },
+              exposure: 'keywords',
+            },
+          ],
+        } as Record<string, unknown>,
+      });
+
+      tools.push({
+        name: 'mcp:refresh',
+        description:
+          'Refresh an imported MCP app and regenerate its exposure using either summary mode or keywords mode.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            localId: {
+              type: 'string',
+              description: 'Required. The localId of a previously imported MCP app.',
+            },
+            exposure: {
+              type: 'string',
+              enum: ['summary', 'keywords'],
+              description:
+                'Required. Regenerate the imported app exposure using summary mode or keywords mode.',
+            },
+          },
+          required: ['localId', 'exposure'],
+        } as Record<string, unknown>,
+      });
+
+      tools.push({
+        name: 'skill:import',
+        description:
+          'Import a local or remote skill into AAI Gateway managed apps so it becomes available to app:<generated-id> and aai:exec. Use either path for a local skill directory or url for a remote skill root that exposes SKILL.md. Before calling this tool, ask the user whether they want exposure mode "summary" or "keywords"; do not choose it silently.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            path: {
+              type: 'string',
+              description:
+                'Use this for a local skill import. Point to a directory containing SKILL.md and any companion files.',
+            },
+            url: {
+              type: 'string',
+              description:
+                'Use this for a remote skill import. The gateway will fetch <url>/SKILL.md and store it as a managed skill.',
+            },
+            exposure: {
+              type: 'string',
+              enum: ['summary', 'keywords'],
+              description:
+                'Required. Do not guess this value. Ask the user to choose before calling the tool. Use "summary" when the user wants the AI to understand when this skill should be used without needing exact trigger words. Use "keywords" when the user wants to leave room for more tools, but is comfortable mentioning related keywords more explicitly to trigger this skill.',
+            },
+          },
+          required: ['exposure'],
+          examples: [
+            {
+              path: '/absolute/path/to/skill',
+              exposure: 'summary',
+            },
+            {
+              url: 'https://example.com/skill',
+              exposure: 'keywords',
+            },
+          ],
+        } as Record<string, unknown>,
+      });
+
+      tools.push({
+        name: 'import:config',
+        description:
+          'Inspect or update the generated exposure metadata for an imported MCP app or imported skill. Use this after import if you want to change exposure mode, keywords, or summary without re-importing.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            localId: {
+              type: 'string',
+              description:
+                'Optional if app is provided. The imported app id, for example "server-filesystem".',
+            },
+            app: {
+              type: 'string',
+              description:
+                'Optional if localId is provided. Accepts either "app:<id>" or the plain imported app id.',
+            },
+            exposure: {
+              type: 'string',
+              enum: ['summary', 'keywords'],
+              description:
+                'Optional. Regenerate exposure using summary mode or keywords mode before applying any manual summary or keyword overrides. "keywords" leaves room for more tools, but usually needs more explicit keyword mentions to trigger.',
+            },
+            keywords: {
+              type: 'array',
+              items: { type: 'string' },
+              description:
+                'Optional. Replace the generated keywords with these exact keywords. Use this when you want more precise trigger words.',
+            },
+            summary: {
+              type: 'string',
+              description:
+                'Optional. Replace the generated summary with this exact summary. Use this when you want the AI to understand more clearly when the imported app should be used.',
+            },
+          },
+        } as Record<string, unknown>,
+      });
+
       return { tools };
     });
 
@@ -244,24 +426,25 @@ export class AaiGatewayServer {
         );
       }
 
+      if (name === 'mcp:import') {
+        return this.handleMcpImport(args as Record<string, unknown> | undefined);
+      }
+
+      if (name === 'skill:import') {
+        return this.handleSkillImport(args as Record<string, unknown> | undefined);
+      }
+
+      if (name === 'mcp:refresh') {
+        return this.handleMcpRefresh(args as Record<string, unknown> | undefined);
+      }
+
+      if (name === 'import:config') {
+        return this.handleImportConfig(args as Record<string, unknown> | undefined);
+      }
+
       throw new AaiError('UNKNOWN_TOOL', `Unknown tool: ${name}`);
     });
 
-    this.server.setRequestHandler(GetTaskRequestSchema, async (request) => {
-      return this.taskRunner.getTask(request.params.taskId);
-    });
-
-    this.server.setRequestHandler(GetTaskPayloadRequestSchema, async (request) => {
-      return this.taskRunner.getTaskResult(request.params.taskId);
-    });
-
-    this.server.setRequestHandler(ListTasksRequestSchema, async (request) => {
-      return this.taskRunner.listTasks(request.params?.cursor);
-    });
-
-    this.server.setRequestHandler(CancelTaskRequestSchema, async (request) => {
-      return this.taskRunner.cancelTask(request.params.taskId);
-    });
   }
 
   private async handleAppGuide(
@@ -290,6 +473,273 @@ export class AaiGatewayServer {
 
     return {
       content: [{ type: 'text', text: generateOperationGuide(localId, descriptor, detail) }],
+    };
+  }
+
+  private async handleMcpImport(
+    args: Record<string, unknown> | undefined
+  ): Promise<CallToolResult> {
+    const options = parseMcpImportArguments(args);
+
+    const result = await importMcpServer(getMcpExecutor(), this.secureStorage, {
+      config: options.config,
+      headers: options.headers,
+      exposureMode: options.exposureMode,
+    });
+
+    this.appRegistry.set(result.entry.localId, {
+      localId: result.entry.localId,
+      descriptor: result.descriptor,
+      source: 'mcp-import',
+      location: result.entry.descriptorPath,
+    });
+
+    const detail: DetailedCapability = {
+      title: 'MCP Tools',
+      body:
+        result.tools.length === 0
+          ? 'No MCP tools reported.'
+          : result.tools
+            .map((tool) => `- ${tool.name}: ${tool.description ?? ''}`.trimEnd())
+            .join('\n'),
+    };
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: [
+            `Imported MCP app: ${result.entry.localId}`,
+            `App tool name after restart: app:${result.entry.localId}`,
+            `Descriptor: ${result.entry.descriptorPath}`,
+            `Exposure mode: ${options.exposureMode}`,
+            `Generated keywords: ${result.descriptor.exposure.keywords.join(', ')}`,
+            `Generated summary: ${result.descriptor.exposure.summary}`,
+            ...describeExposureBehavior(options.exposureMode, result.descriptor.exposure),
+            '请重启后，才能使用新导入的工具。',
+            'If you want to change the exposure mode, summary, or keywords later, call `import:config` with this localId.',
+            '',
+            generateOperationGuide(result.entry.localId, result.descriptor, detail),
+          ].join('\n'),
+        },
+      ],
+    };
+  }
+
+  private async handleMcpRefresh(
+    args: Record<string, unknown> | undefined
+  ): Promise<CallToolResult> {
+    const localId = asOptionalString(args?.localId);
+    if (!localId) {
+      throw new AaiError('INVALID_REQUEST', "mcp:refresh requires 'localId'");
+    }
+
+    const entry = await this.resolveImportedMcpEntry(localId);
+    if (!entry) {
+      throw new AaiError('UNKNOWN_APP', `Imported MCP app not found: ${localId}`);
+    }
+
+    const exposureMode = parseExposureMode(args?.exposure);
+
+    const result = await refreshImportedMcpServer(
+      getMcpExecutor(),
+      this.secureStorage,
+      entry,
+      exposureMode
+    );
+
+    this.appRegistry.set(result.entry.localId, {
+      localId: result.entry.localId,
+      descriptor: result.descriptor,
+      source: 'mcp-import',
+      location: result.entry.descriptorPath,
+    });
+
+    const detail: DetailedCapability = {
+      title: 'MCP Tools',
+      body:
+        result.tools.length === 0
+          ? 'No MCP tools reported.'
+          : result.tools
+            .map((tool) => `- ${tool.name}: ${tool.description ?? ''}`.trimEnd())
+            .join('\n'),
+    };
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: [
+            `Refreshed MCP app: ${result.entry.localId}`,
+            `Descriptor: ${result.entry.descriptorPath}`,
+            `Exposure mode: ${exposureMode}`,
+            `Generated keywords: ${result.descriptor.exposure.keywords.join(', ')}`,
+            `Generated summary: ${result.descriptor.exposure.summary}`,
+            ...describeExposureBehavior(exposureMode, result.descriptor.exposure),
+            '请重启后，才能使用更新后的工具配置。',
+            '',
+            generateOperationGuide(result.entry.localId, result.descriptor, detail),
+          ].join('\n'),
+        },
+      ],
+    };
+  }
+
+  private async resolveImportedMcpEntry(localId: string): Promise<McpRegistryEntry | null> {
+    const registryEntry = await getMcpRegistryEntry(localId);
+    if (registryEntry) {
+      return registryEntry;
+    }
+
+    const app = this.appRegistry.get(localId);
+    if (!app || app.source !== 'mcp-import' || !isMcpAccess(app.descriptor.access) || !app.location) {
+      return null;
+    }
+
+    return {
+      id: localId,
+      localId,
+      protocol: 'mcp',
+      config: app.descriptor.access.config,
+      descriptorPath: app.location,
+      importedAt: '',
+      updatedAt: '',
+    };
+  }
+
+  private async handleSkillImport(
+    args: Record<string, unknown> | undefined
+  ): Promise<CallToolResult> {
+    const options = parseSkillImportArguments(args);
+
+    const result = await importSkill({
+      path: options.path,
+      url: options.url,
+      exposureMode: options.exposureMode,
+    });
+
+    this.appRegistry.set(result.localId, {
+      localId: result.localId,
+      descriptor: result.descriptor,
+      source: 'skill-import',
+      location: result.managedPath,
+    });
+
+    const detail = await this.loadGuideDetail(result.localId, result.descriptor);
+    return {
+      content: [
+        {
+          type: 'text',
+          text: [
+            `Imported skill: ${result.localId}`,
+            `App tool name after restart: app:${result.localId}`,
+            `Skill directory: ${result.managedPath}`,
+            `Exposure mode: ${options.exposureMode}`,
+            `Generated keywords: ${result.descriptor.exposure.keywords.join(', ')}`,
+            `Generated summary: ${result.descriptor.exposure.summary}`,
+            ...describeExposureBehavior(options.exposureMode, result.descriptor.exposure),
+            '请重启后，才能使用新导入的工具。',
+            'If you want to change the exposure mode, summary, or keywords later, call `import:config` with this localId.',
+            '',
+            generateOperationGuide(result.localId, result.descriptor, detail),
+          ].join('\n'),
+        },
+      ],
+    };
+  }
+
+  private async handleImportConfig(
+    args: Record<string, unknown> | undefined
+  ): Promise<CallToolResult> {
+    const options = parseImportConfigArguments(args);
+    const app = this.appRegistry.get(options.localId);
+    if (!app || (app.source !== 'mcp-import' && app.source !== 'skill-import')) {
+      throw new AaiError('UNKNOWN_APP', `Imported app not found: ${options.localId}`);
+    }
+
+    let descriptor = app.descriptor;
+    let inferredExposureMode = options.exposureMode;
+
+    if (options.exposureMode && isMcpAccess(app.descriptor.access) && app.source === 'mcp-import') {
+      const entry = await this.resolveImportedMcpEntry(options.localId);
+      if (!entry) {
+        throw new AaiError('UNKNOWN_APP', `Imported MCP app not found: ${options.localId}`);
+      }
+
+      const refreshed = await refreshImportedMcpServer(
+        getMcpExecutor(),
+        this.secureStorage,
+        entry,
+        options.exposureMode
+      );
+      descriptor = refreshed.descriptor;
+    } else if (options.exposureMode && isSkillAccess(app.descriptor.access) && app.source === 'skill-import') {
+      if (!isSkillPathConfig(app.descriptor.access.config)) {
+        throw new AaiError('INVALID_REQUEST', 'Imported skill is missing a local skill path');
+      }
+
+      const skillContent = await readFile(join(app.descriptor.access.config.path, 'SKILL.md'), 'utf-8');
+      descriptor = {
+        ...app.descriptor,
+        exposure: buildSkillExposure(
+          app.descriptor.app.name.default,
+          skillContent,
+          options.exposureMode
+        ),
+      };
+    }
+
+    const nextDescriptor: AaiJson = {
+      ...descriptor,
+      exposure: {
+        keywords: options.keywords ?? descriptor.exposure.keywords,
+        summary: options.summary ?? descriptor.exposure.summary,
+      },
+    };
+
+    if (isMcpAccess(app.descriptor.access) && app.source === 'mcp-import') {
+      await upsertMcpRegistryEntry(
+        {
+          localId: options.localId,
+          protocol: 'mcp',
+          config: app.descriptor.access.config,
+        },
+        nextDescriptor
+      );
+    } else if (isSkillAccess(app.descriptor.access) && app.source === 'skill-import') {
+      await upsertSkillRegistryEntry(
+        {
+          localId: options.localId,
+          protocol: 'skill',
+          config: app.descriptor.access.config,
+        },
+        nextDescriptor
+      );
+    }
+
+    this.appRegistry.set(options.localId, {
+      ...app,
+      descriptor: nextDescriptor,
+    });
+
+    if (!inferredExposureMode) {
+      inferredExposureMode = inferExposureMode(nextDescriptor.exposure);
+    }
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: [
+            `Updated imported app: ${options.localId}`,
+            `Exposure mode: ${inferredExposureMode}`,
+            `Keywords: ${nextDescriptor.exposure.keywords.join(', ')}`,
+            `Summary: ${nextDescriptor.exposure.summary}`,
+            ...describeExposureBehavior(inferredExposureMode, nextDescriptor.exposure),
+            '请重启后，才能使用更新后的工具配置。',
+          ].join('\n'),
+        },
+      ],
     };
   }
 
@@ -376,14 +826,13 @@ export class AaiGatewayServer {
       const keepalive = isAcpPrompt ? this.startKeepalive(progressToken) : undefined;
 
       try {
-        const observer =
-          progressToken !== undefined ? this.createProgressObserver(progressToken) : undefined;
-        const result = await this.executeApp(
+        const upstreamObserver = this.createUpstreamObserver(progressToken);
+        const result = await this.executeAppWithInactivityTimeout(
           resolved.localId,
           resolved.descriptor,
           toolName,
           args,
-          observer
+          upstreamObserver
         );
         logger.info(
           {
@@ -428,6 +877,19 @@ export class AaiGatewayServer {
 
     const taskResult = await this.taskRunner.createTask(requestId, taskRequest);
     const taskId = taskResult.task.taskId;
+    const immediateTaskResponse = this.createImmediateTaskResponse(
+      resolved.localId,
+      resolved.descriptor.access.protocol,
+      toolName,
+      taskId
+    );
+    const taskResultWithImmediateResponse: CreateTaskResult = {
+      ...taskResult,
+      _meta: {
+        ...(taskResult._meta ?? {}),
+        'io.modelcontextprotocol/model-immediate-response': immediateTaskResponse,
+      },
+    };
 
     logger.info(
       {
@@ -443,7 +905,7 @@ export class AaiGatewayServer {
 
     this.taskRunner.runTask(taskId, async () => {
       try {
-        const result = await this.executeApp(
+        const result = await this.executeAppWithInactivityTimeout(
           resolved.localId,
           resolved.descriptor,
           toolName,
@@ -481,7 +943,7 @@ export class AaiGatewayServer {
       }
     });
 
-    return taskResult;
+    return taskResultWithImmediateResponse;
   }
 
   private async resolveApp(appIdOrUrl: string): Promise<RuntimeAppRecord> {
@@ -549,7 +1011,8 @@ export class AaiGatewayServer {
           headers,
         },
         toolName,
-        args
+        args,
+        observer
       );
     }
 
@@ -570,6 +1033,103 @@ export class AaiGatewayServer {
     }
 
     throw new AaiError('NOT_IMPLEMENTED', `Unsupported protocol ${JSON.stringify(access)}`);
+  }
+
+  private async executeAppWithInactivityTimeout(
+    localId: string,
+    descriptor: AaiJson,
+    toolName: string,
+    args: Record<string, unknown>,
+    observer?: ExecutionObserver
+  ): Promise<unknown> {
+    const timeoutMs = isAcpAgentAccess(descriptor.access)
+      ? ACP_DOWNSTREAM_INACTIVITY_TIMEOUT_MS
+      : DOWNSTREAM_INACTIVITY_TIMEOUT_MS;
+
+    return new Promise((resolve, reject) => {
+      let completed = false;
+      let timer: NodeJS.Timeout | undefined;
+
+      const finish = (callback: () => void) => {
+        if (completed) {
+          return;
+        }
+        completed = true;
+        if (timer) {
+          clearTimeout(timer);
+        }
+        callback();
+      };
+
+      const scheduleTimeout = () => {
+        if (timer) {
+          clearTimeout(timer);
+        }
+        timer = setTimeout(() => {
+          const error = new AaiError(
+            'TIMEOUT',
+            `Downstream '${localId}' timed out after ${timeoutMs}ms without any activity`
+          );
+          void this.cleanupTimedOutExecution(localId, descriptor).finally(() => {
+            finish(() => reject(error));
+          });
+        }, timeoutMs);
+      };
+
+      const activityObserver = this.wrapExecutionObserver(observer, scheduleTimeout);
+      scheduleTimeout();
+
+      this.executeApp(localId, descriptor, toolName, args, activityObserver).then(
+        (result) => finish(() => resolve(result)),
+        (error) => finish(() => reject(error))
+      );
+    });
+  }
+
+  private wrapExecutionObserver(
+    observer: ExecutionObserver | undefined,
+    onActivity: () => void
+  ): ExecutionObserver {
+    return {
+      onMessage: async (event) => {
+        onActivity();
+        await observer?.onMessage?.(event);
+      },
+      onProgress: async (event) => {
+        onActivity();
+        await observer?.onProgress?.(event);
+      },
+      onTaskStatus: async (event) => {
+        onActivity();
+        await observer?.onTaskStatus?.(event);
+      },
+    };
+  }
+
+  private async cleanupTimedOutExecution(localId: string, descriptor: AaiJson): Promise<void> {
+    const access = descriptor.access;
+
+    try {
+      if (isMcpAccess(access)) {
+        await getMcpExecutor().close(localId);
+        return;
+      }
+
+      if (isAcpAgentAccess(access)) {
+        await getAcpExecutor().disconnect(localId);
+      }
+    } catch (err) {
+      logger.warn({ localId, err }, 'Failed to clean up timed out downstream execution');
+    }
+  }
+
+  private createImmediateTaskResponse(
+    localId: string,
+    protocol: string,
+    toolName: string,
+    taskId: string
+  ): string {
+    return `Started background task ${taskId} for ${localId} (${protocol}:${toolName}). Poll tasks/get or tasks/result for the final output.`;
   }
 
   /**
@@ -611,11 +1171,24 @@ export class AaiGatewayServer {
     };
   }
 
-  private createProgressObserver(progressToken: string | number): ExecutionObserver {
+  private createUpstreamObserver(progressToken?: string | number): ExecutionObserver {
     let progress = 0;
 
     return {
       onMessage: async ({ message }) => {
+        await this.server.notification({
+          method: 'notifications/message',
+          params: {
+            level: 'info',
+            logger: 'aai-gateway',
+            data: message,
+          },
+        });
+
+        if (progressToken === undefined) {
+          return;
+        }
+
         progress += 1;
         await this.server.notification({
           method: 'notifications/progress',
@@ -627,6 +1200,10 @@ export class AaiGatewayServer {
         });
       },
       onProgress: async ({ progress: nextProgress, message }) => {
+        if (progressToken === undefined) {
+          return;
+        }
+
         progress = nextProgress ?? progress + 1;
         await this.server.notification({
           method: 'notifications/progress',
@@ -638,6 +1215,10 @@ export class AaiGatewayServer {
         });
       },
       onTaskStatus: async ({ status, message }) => {
+        if (progressToken === undefined) {
+          return;
+        }
+
         progress += 1;
         await this.server.notification({
           method: 'notifications/progress',
@@ -765,8 +1346,160 @@ function truncateLogPreview(value: string, maxChars = 160): string {
   return value.length <= maxChars ? value : `${value.slice(0, maxChars)}...`;
 }
 
+function parseMcpImportArguments(args: Record<string, unknown> | undefined): {
+  config: McpConfig;
+  headers?: Record<string, string>;
+  exposureMode: ExposureMode;
+} {
+  try {
+    return {
+      config: buildMcpImportConfig({
+        transport:
+          args?.transport === 'streamable-http' || args?.transport === 'sse'
+            ? args.transport
+            : undefined,
+        url: asOptionalString(args?.url),
+        command: asOptionalString(args?.command),
+        args: asStringArray(args?.args),
+        env: isStringRecord(args?.env) ? args.env : undefined,
+        cwd: asOptionalString(args?.cwd),
+      }),
+      headers: isStringRecord(args?.headers) ? args.headers : undefined,
+      exposureMode: parseExposureMode(args?.exposure),
+    };
+  } catch (err) {
+    throw new AaiError('INVALID_REQUEST', err instanceof Error ? err.message : String(err));
+  }
+}
+
+function parseSkillImportArguments(args: Record<string, unknown> | undefined): {
+  path?: string;
+  url?: string;
+  exposureMode: ExposureMode;
+} {
+  try {
+    const source = buildSkillImportSource({
+      path: asOptionalString(args?.path),
+      url: asOptionalString(args?.url),
+    });
+
+    return {
+      path: source.path,
+      url: source.url,
+      exposureMode: parseExposureMode(args?.exposure),
+    };
+  } catch (err) {
+    throw new AaiError('INVALID_REQUEST', err instanceof Error ? err.message : String(err));
+  }
+}
+
+function parseImportConfigArguments(args: Record<string, unknown> | undefined): {
+  localId: string;
+  exposureMode?: ExposureMode;
+  keywords?: string[];
+  summary?: string;
+} {
+  const localId = normalizeImportedAppId(args?.localId, args?.app);
+  if (!localId) {
+    throw new AaiError('INVALID_REQUEST', "import:config requires 'localId' or 'app'");
+  }
+
+  const exposure = args?.exposure;
+  const keywords = args?.keywords === undefined ? undefined : asNonEmptyStringArray(args.keywords);
+  const summary = args?.summary === undefined ? undefined : asOptionalString(args.summary);
+
+  if (args?.summary !== undefined && !summary) {
+    throw new AaiError('INVALID_REQUEST', "import:config received an empty 'summary'");
+  }
+
+  return {
+    localId,
+    exposureMode: exposure === undefined ? undefined : parseExposureMode(exposure),
+    keywords,
+    summary,
+  };
+}
+
+function normalizeImportedAppId(localIdValue: unknown, appValue: unknown): string | undefined {
+  const localId = asOptionalString(localIdValue);
+  if (localId) {
+    return localId;
+  }
+
+  const app = asOptionalString(appValue);
+  if (!app) {
+    return undefined;
+  }
+
+  return app.startsWith('app:') ? app.slice(4) : app;
+}
+
+function parseExposureMode(value: unknown): ExposureMode {
+  if (value === 'summary' || value === 'keywords') {
+    return value;
+  }
+
+  throw new Error("Import requires 'exposure' to be either 'summary' or 'keywords'");
+}
+
+function asOptionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+}
+
+function asNonEmptyStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    throw new AaiError('INVALID_REQUEST', "Expected 'keywords' to be an array of strings");
+  }
+
+  const items = value
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+
+  if (items.length === 0) {
+    throw new AaiError('INVALID_REQUEST', "import:config received an empty 'keywords' array");
+  }
+
+  return Array.from(new Set(items)).slice(0, 8);
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+
+  return Object.values(value).every((item) => typeof item === 'string');
+}
+
 export async function createGatewayServer(options?: DiscoveryOptions): Promise<AaiGatewayServer> {
   return new AaiGatewayServer(options);
+}
+
+function inferExposureMode(exposure: AaiJson['exposure']): ExposureMode {
+  return exposure.summary.startsWith('Use for ') ? 'keywords' : 'summary';
+}
+
+function describeExposureBehavior(
+  exposureMode: ExposureMode,
+  exposure: AaiJson['exposure']
+): string[] {
+  const keywordHint = exposure.keywords.join(', ');
+  if (exposureMode === 'keywords') {
+    return [
+      `Trigger behavior: this imported app is optimized for explicit term matching. It is more likely to be selected when the request includes related words such as ${keywordHint}.`,
+      `Trigger summary: ${exposure.summary}`,
+    ];
+  }
+
+  return [
+    `Trigger behavior: this imported app is optimized for intent matching. It can be selected when the request matches this summary even if the request does not use the exact keywords.`,
+    `Trigger summary: ${exposure.summary}`,
+    `Related keywords: ${keywordHint}`,
+  ];
 }
 
 function createStaticDetail(descriptor: AaiJson, err: unknown): DetailedCapability {

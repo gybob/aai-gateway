@@ -33,25 +33,24 @@ export function generateAcpOperationGuide(
     '- Final answer text may arrive through `session/update`; the gateway collects it and returns merged text.'
   );
   lines.push(
-    '- For long-running prompts, prefer MCP progress-enabled `aai:exec` so the client can keep the request alive while `session/update` arrives.'
+    '- During a synchronous `aai:exec` prompt, the gateway forwards `session/update` text upstream as streaming `notifications/message` events.'
   );
   lines.push(
-    '- For long-running `prompt` or `session/prompt`, **always set `task: {}`** in the `aai:exec` call. This enables async task mode and prevents the MCP client from timing out.'
+    '- Recommended ACP prompt call shape: `app`, `tool`, and `args`, then consume the streamed `notifications/message` updates plus the final tool response.'
   );
   lines.push(
-    '- If `task: {}` is not supported by your client, include `progressToken` in the `aai:exec` call to enable progress-based timeout reset.'
+    '- If your client supports progress notifications, include `progressToken` in the `aai:exec` call so long-running prompts can reset the client request timeout.'
   );
   lines.push('');
-  lines.push('## Wrong / Correct');
+  lines.push('## Recommended Calls');
   lines.push(
-    `- Wrong: pass \`app:${localId}\` to your platform Task/subagent API as the agent type.`
-  );
-  lines.push(`- Wrong: call \`aai:exec\` with only \`app\`, \`tool\`, and \`args\` for a prompt.`);
-  lines.push(
-    `- Correct: call \`aai:exec\` with \`app: "${localId}"\`, \`tool: "prompt"\`, \`args: { text: "..." }\`, and \`task: {}\`.`
+    `- Use \`aai:exec\` with \`{ app: "${localId}", tool: "prompt", args: { text: "..." } }\` for a one-off prompt.`
   );
   lines.push(
-    `- Correct: if your client does not support \`task\`, call \`aai:exec\` with \`progressToken\` instead.`
+    `- Use \`aai:exec\` with \`{ app: "${localId}", tool: "prompt", args: { text: "Summarize this repo" }, progressToken: "progress-1" }\` when you want timeout-reset progress notifications.`
+  );
+  lines.push(
+    `- Use \`aai:exec\` with \`{ app: "${localId}", tool: "session/prompt", args: { sessionId: "<session-id>", prompt: [{ type: "text", text: "Continue" }] } }\` to continue an existing ACP session.`
   );
 
   const capabilityLines = summarizeAcpRuntimeCapabilities(runtime);

@@ -10,6 +10,7 @@ import type {
   ExecutionResult,
 } from '../types/index.js';
 
+import type { ExecutionObserver } from './events.js';
 import type { Executor } from './interface.js';
 
 export interface McpListedTool {
@@ -29,16 +30,24 @@ export interface McpConnectionTarget {
   headers?: Record<string, string>;
 }
 
+export interface McpServerInfo {
+  name: string;
+  version: string;
+}
+
 interface ClientState {
   client: Client;
   targetKey: string;
   config: McpConfig;
   headers?: Record<string, string>;
+  activityListeners: Set<(message: unknown) => void>;
 }
 
 function serializeTarget(target: McpConnectionTarget): string {
   return JSON.stringify({ config: target.config, headers: target.headers ?? {} });
 }
+
+const MCP_MAX_REQUEST_TIMEOUT_MS = 2_147_483_647;
 
 /**
  * MCP Executor implementation
@@ -62,10 +71,16 @@ export class McpExecutor implements Executor<McpConfig  , McpExecutorDetail> {
 
     const client = new Client({ name: 'aai-gateway', version: '0.3.5' }, { capabilities: {} });
     const transport = this.createTransport(config);
+    const activityListeners = new Set<(message: unknown) => void>();
+    transport.onmessage = (message) => {
+      for (const listener of Array.from(activityListeners)) {
+        listener(message);
+      }
+    };
 
     try {
       await client.connect(transport);
-      this.clients.set(localId, { client, targetKey, config });
+      this.clients.set(localId, { client, targetKey, config, activityListeners });
     } catch (err) {
       throw new AaiError(
         'SERVICE_UNAVAILABLE',
@@ -163,28 +178,64 @@ export class McpExecutor implements Executor<McpConfig  , McpExecutorDetail> {
     }
   }
 
+  async getServerInfo(target: McpConnectionTarget): Promise<McpServerInfo | undefined> {
+    const client = await this.connectLegacy(target);
+    return client.getServerVersion() as McpServerInfo | undefined;
+  }
+
   async callTool(
     target: McpConnectionTarget,
     toolName: string,
-    args: Record<string, unknown>
+    args: Record<string, unknown>,
+    observer?: ExecutionObserver
   ): Promise<unknown> {
     const execute = async (): Promise<unknown> => {
       const client = await this.connectLegacy(target);
-      const result = (await client.callTool({
-        name: toolName,
-        arguments: args,
-      })) as {
-        structuredContent?: unknown;
-        content?: Array<{ type?: string; text?: string }>;
+      const state = this.clients.get(target.localId);
+      if (!state) {
+        throw new AaiError('SERVICE_UNAVAILABLE', `MCP app '${target.localId}' is not connected`);
+      }
+
+      const activityListener = (message: unknown) => {
+        const notificationMessage = extractNotificationMessage(message);
+        if (notificationMessage) {
+          void observer?.onMessage?.({ message: notificationMessage });
+        }
       };
 
-      if (result.structuredContent) {
-        return result.structuredContent;
+      state.activityListeners.add(activityListener);
+
+      try {
+        const result = (await client.callTool(
+          {
+            name: toolName,
+            arguments: args,
+          },
+          undefined,
+          {
+            timeout: MCP_MAX_REQUEST_TIMEOUT_MS,
+            onprogress: (progress) => {
+              void observer?.onProgress?.({
+                progress: progress.progress,
+                ...(progress.message ? { message: progress.message } : {}),
+              });
+            },
+          }
+        )) as {
+        structuredContent?: unknown;
+        content?: Array<{ type?: string; text?: string }>;
+        };
+
+        if (result.structuredContent) {
+          return result.structuredContent;
+        }
+        if (result.content?.length === 1 && result.content[0]?.type === 'text') {
+          return result.content[0].text;
+        }
+        return result.content ?? null;
+      } finally {
+        state.activityListeners.delete(activityListener);
       }
-      if (result.content?.length === 1 && result.content[0]?.type === 'text') {
-        return result.content[0].text;
-      }
-      return result.content ?? null;
     };
 
     try {
@@ -222,6 +273,34 @@ export class McpExecutor implements Executor<McpConfig  , McpExecutorDetail> {
         return new SSEClientTransport(new URL(config.url));
     }
   }
+}
+
+function extractNotificationMessage(message: unknown): string | null {
+  if (!message || typeof message !== 'object') {
+    return null;
+  }
+
+  const method = (message as { method?: unknown }).method;
+  if (method !== 'notifications/message') {
+    return null;
+  }
+
+  const params = (message as { params?: unknown }).params;
+  if (!params || typeof params !== 'object') {
+    return null;
+  }
+
+  const data = (params as { data?: unknown }).data;
+  if (typeof data === 'string' && data.length > 0) {
+    return data;
+  }
+
+  if (data !== undefined) {
+    const serialized = JSON.stringify(data);
+    return serialized && serialized !== 'null' ? serialized : null;
+  }
+
+  return null;
 }
 
 let singleton: McpExecutor | undefined;
