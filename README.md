@@ -1,273 +1,216 @@
 # AAI Gateway
 
-## 📢 项目状态
-
-**该项目正在积极开发中，很快就会发布。**
-
-欢迎大家参与开发贡献！如果您对项目感兴趣或有任何想法，欢迎：
-
-- 🐛 提交 Issue 和 Feature Request
-- 💬 参与讨论
-- 🤝 贡献代码
-- 📢 分享给社区
-
-## 🧪 测试
-
-- [人工测试指南](./MANUAL_TESTING.md) - 详细的手动测试指南
-- [测试摘要](./TESTING_SUMMARY.md) - 测试结果和总结
-- 测试配置: `tests/integration/manual.config.yaml`
-
-## 📚 文档
-
-## 🏗️ Architecture Overview (v0.4.0)
-
-AAI Gateway features modular discovery and unified storage:
-
-### Discovery Layer
-
-```
-DiscoveryManager
-├── DesktopDiscoverySource (priority 100)
-├── AgentDiscoverySource (priority 90)
-└── ManagedDiscoverySource (priority 80)
-```
-
-- **DiscoveryManager**: Centralized discovery with caching
-- **Discovery Sources**: Modular, pluggable discovery implementations
-- **Priority-based execution**: Sources execute in priority order
-- **Automatic caching**: Results cached with 5-minute TTL
-
-### Storage Layer
-
-```
-FileRegistry<T>
-├── McpRegistry (manages MCP servers)
-├── SkillRegistry (manages skills)
-└── ManagedRegistry (manages gateway apps)
-```
-
-- **FileRegistry**: Generic file-based registry with JSON storage
-- **SimpleCache**: In-memory cache with TTL support
-- **Unified API**: Consistent interface across all storage operations
-
-### Integration
-
-The MCP server now uses `DiscoveryManager` for all discovery operations:
-
-```typescript
-import { createDiscoveryManager } from './discovery/index.js';
-
-const { manager } = createDiscoveryManager();
-const apps = await manager.scanAll({ devMode: true });
-```
-
----
-
 ## One MCP. Many Apps. Less Context.
 
-AAI Gateway is one MCP server that lets local agents reach heterogeneous apps through one entrypoint.
+AAI Gateway turns many apps, agents, skills, and MCP servers into one MCP server.
 
-It is built around a small AAI descriptor whose job is not to redefine downstream protocols, but to solve two concrete problems:
+You connect your AI tool once. AAI Gateway handles discovery, import, routing, and exposure control behind that single entrypoint.
 
-- context explosion
-- unified onboarding across different protocol families
+Why this matters:
 
-## Core Idea
+- One MCP connection instead of one MCP per app
+- Smaller context because tools are exposed at the app level first, not dumped all at once
+- A cleaner path to mix MCP servers, skills, ACP agents, and CLI-backed apps
 
-AAI is a minimal descriptor, not an execution protocol.
+AAI Gateway is for one goal: make tool ecosystems feel smaller, sharper, and easier for agents to use.
 
-It contains only:
+## How To Use
 
-- `app`: display metadata for listing and authorization
-- `access`: how the gateway connects to the target
-- `exposure`: the first two exposure layers
+### 1. Connect Your AI Tool To AAI Gateway
 
-Detailed capability information is loaded on demand from the underlying system:
+Examples below assume `aai-gateway` is already on your `PATH`.
 
-- `mcp` -> MCP-native discovery
-- `skill` -> `SKILL.md` and related assets from a local skill directory or remote skill root
-- `acp-agent` -> ACP-native initialization and session metadata
-- `cli` -> gateway-managed CLI integration
+If you run from source, build first with:
 
-## Why This Exists
-
-Traditional tool registries push too much detail too early:
-
-```text
-50 apps x 20 tools each = 1000+ items in context
+```bash
+npm install
+npm run build
 ```
 
-AAI Gateway reduces that pressure by using layered exposure:
+Then replace `aai-gateway` in the examples with:
 
-- Layer 1: `keywords`
-- Layer 2: `summary`
-- Layer 3: detailed capability metadata loaded only when needed
+```bash
+node /absolute/path/to/aai-gateway/dist/cli.js
+```
 
-The gateway therefore becomes:
+### Claude Code
 
-- one local registry of apps
-- one MCP entrypoint for local agents
-- one place to manage exposure level and app enable/disable policy
+Official docs: <https://code.claude.com/docs/en/mcp>
 
-## Descriptor Shape
+```bash
+claude mcp add --transport stdio aai-gateway -- aai-gateway
+```
+
+### Codex
+
+Official docs: <https://developers.openai.com/learn/docs-mcp>
+
+```bash
+codex mcp add aai-gateway -- aai-gateway
+```
+
+### OpenCode
+
+Official docs: <https://opencode.ai/docs/config> and <https://opencode.ai/docs/mcp-servers/>
+
+Add this to `~/.config/opencode/opencode.json` or your project `opencode.json`:
 
 ```json
 {
-  "schemaVersion": "2.0",
-  "version": "1.0.0",
-  "app": {
-    "name": {
-      "default": "Example App",
-      "en": "Example App",
-      "zh-CN": "示例应用"
-    },
-    "iconUrl": "https://example.com/icon.png"
-  },
-  "access": {
-    "protocol": "mcp",
-    "config": {}
-  },
-  "exposure": {
-    "keywords": ["example", "tool"],
-    "summary": "A short summary for layer-2 exposure."
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "aai-gateway": {
+      "type": "local",
+      "command": ["aai-gateway"],
+      "enabled": true
+    }
   }
 }
 ```
 
-Rules:
+### What You Get After Connecting
 
-- `app.name.default` is required
-- `app.iconUrl` is optional
-- `exposure` contains only `keywords` and `summary`
-- no centralized `tools`
-- no embedded user policy
-- descriptor-defined execution model
+Once connected, your AI tool can use AAI Gateway tools such as:
 
-## Access Protocols
+- `remote:discover`
+- `aai:exec`
+- `mcp:import`
+- `skill:import`
+- `mcp:refresh`
+- `import:config`
 
-### `mcp`
+### 2. Import An MCP Server
 
-Use this when the target is an MCP server.
+You can import through the AI tool or through the CLI.
 
-Supported config shapes:
+AI tools should call `mcp:import` and ask the user to choose an exposure mode first:
 
-```json
-{
-  "protocol": "mcp",
-  "config": {
-    "transport": "stdio",
-    "command": "npx",
-    "args": ["-y", "@modelcontextprotocol/server-filesystem"]
-  }
-}
+- `summary`: easier automatic triggering
+- `keywords`: leaves room for more tools, but usually needs more explicit keyword mentions
+
+CLI examples:
+
+Local stdio MCP:
+
+```bash
+aai-gateway mcp import \
+  --command npx \
+  --arg -y \
+  --arg @modelcontextprotocol/server-filesystem \
+  --arg /tmp \
+  --exposure summary
 ```
 
-```json
-{
-  "protocol": "mcp",
-  "config": {
-    "transport": "streamable-http",
-    "url": "https://example.com/mcp"
-  }
-}
+Remote Streamable HTTP MCP:
+
+```bash
+aai-gateway mcp import \
+  --url https://example.com/mcp \
+  --transport streamable-http \
+  --exposure summary
 ```
 
-```json
-{
-  "protocol": "mcp",
-  "config": {
-    "transport": "sse",
-    "url": "https://example.com/sse"
-  }
-}
+Remote SSE MCP:
+
+```bash
+aai-gateway mcp import \
+  --url https://example.com/sse \
+  --transport sse \
+  --exposure keywords
 ```
 
-Layer-3 detail comes from MCP-native discovery.
+After import, AAI Gateway returns:
 
-### `skill`
+- the generated app id
+- the generated `keywords`
+- the generated `summary`
+- the guide tool name: `app:<id>`
 
-Use this when the target is a skill directory.
+Important:
+
+- Restart your AI tool before using the newly imported tool.
+- After restart, the imported app will appear as `app:<id>`.
+- Use `aai:exec` to actually run the imported app’s operations.
+
+### 3. Import A Skill
+
+Skills are imported app wrappers around `SKILL.md`.
 
 Local skill:
 
-```json
-{
-  "protocol": "skill",
-  "config": {
-    "path": "/Users/bob/.local/share/aai-gateway/apps/openai-docs/"
-  }
-}
+```bash
+aai-gateway skill import \
+  --path /absolute/path/to/skill \
+  --exposure summary
 ```
 
 Remote skill:
 
-```json
-{
-  "protocol": "skill",
-  "config": {
-    "url": "https://example.com/.well-known/skill/"
-  }
-}
+```bash
+aai-gateway skill import \
+  --url https://example.com/skill \
+  --exposure keywords
 ```
 
-Layer-3 detail comes from the skill root, including `SKILL.md` and any related assets.
+Just like MCP import, skill import returns:
 
-### `acp-agent`
+- the generated app id
+- generated `keywords`
+- generated `summary`
+- the guide tool name: `app:<id>`
 
-Use this when the target speaks ACP over stdio.
+Then restart your AI tool before using the imported skill.
 
-This includes:
+### 4. Update Exposure Later
 
-- native ACP agents
-- ACP adapters wrapping another agent
+If the generated metadata is not right, update it later without re-importing.
 
-Config shape:
+From the AI tool:
 
-```json
-{
-  "protocol": "acp-agent",
-  "config": {
-    "command": "opencode",
-    "args": ["acp"]
-  }
-}
+- call `import:config`
+- pass either `app: "app:<id>"` or `localId: "<id>"`
+- optionally update `exposure`, `keywords`, and `summary`
+
+From the CLI:
+
+```bash
+aai-gateway app config server-filesystem \
+  --exposure keywords \
+  --keyword filesystem \
+  --keyword file \
+  --summary "Use this app for local file reads, writes, listing, and search."
 ```
 
-Adapter example:
+Then restart your AI tool before using the updated metadata.
 
-```json
-{
-  "protocol": "acp-agent",
-  "config": {
-    "command": "npx",
-    "args": ["-y", "@zed-industries/codex-acp"]
-  }
-}
-```
+### 5. Built-In ACP Agent Support
 
-Layer-3 detail comes from ACP-native initialization and session metadata.
+AAI Gateway currently auto-discovers these ACP agents when they are installed:
 
-### `cli`
+- OpenCode via `opencode acp`
+- Claude Code via `npx -y @zed-industries/claude-agent-acp`
+- Codex via `npx -y @zed-industries/codex-acp`
 
-Use this when the target is operated as a command-line app but does not expose MCP or ACP directly.
+These agents are exposed through AAI Gateway as normal apps and can be invoked through `aai:exec`.
 
-Config shape:
+## Discovery For App Developers
 
-```json
-{
-  "protocol": "cli",
-  "config": {
-    "command": "claude",
-    "args": ["-p"]
-  }
-}
-```
+AAI Gateway discovers apps from four places:
 
-The descriptor does not define CLI capability schemas. Layer-3 detail is managed by the gateway's CLI integration logic.
+- desktop descriptors
+- web descriptors
+- gateway-managed imports
+- built-in ACP agent descriptors
 
-## Full Examples
+### The AAI Descriptor
 
-### MCP app
+The descriptor is a small `aai.json` file. It tells AAI Gateway:
+
+- what the app is
+- how to connect to it
+- how to expose it at low context cost
+
+Minimal example:
 
 ```json
 {
@@ -275,206 +218,108 @@ The descriptor does not define CLI capability schemas. Layer-3 detail is managed
   "version": "1.0.0",
   "app": {
     "name": {
-      "default": "Filesystem",
-      "en": "Filesystem",
-      "zh-CN": "文件系统"
-    },
-    "iconUrl": "https://example.com/icons/filesystem.png"
-  },
-  "access": {
-    "protocol": "mcp",
-    "config": {
-      "transport": "stdio",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem"]
-    }
-  },
-  "exposure": {
-    "keywords": ["files", "local", "filesystem"],
-    "summary": "用于读取、写入、列出和搜索本地文件。"
-  }
-}
-```
-
-### Skill app
-
-```json
-{
-  "schemaVersion": "2.0",
-  "version": "1.0.0",
-  "app": {
-    "name": {
-      "default": "OpenAI Docs",
-      "en": "OpenAI Docs",
-      "zh-CN": "OpenAI 文档"
-    }
-  },
-  "access": {
-    "protocol": "skill",
-    "config": {
-      "url": "https://example.com/.well-known/skill/"
-    }
-  },
-  "exposure": {
-    "keywords": ["openai", "docs", "api"],
-    "summary": "用于查询 OpenAI API 和官方文档。"
-  }
-}
-```
-
-### ACP agent
-
-```json
-{
-  "schemaVersion": "2.0",
-  "version": "1.0.0",
-  "app": {
-    "name": {
-      "default": "OpenCode",
-      "en": "OpenCode",
-      "zh-CN": "OpenCode"
-    }
-  },
-  "access": {
-    "protocol": "acp-agent",
-    "config": {
-      "command": "opencode",
-      "args": ["acp"]
-    }
-  },
-  "exposure": {
-    "keywords": ["code", "agent", "development"],
-    "summary": "用于代码编辑、分析和开发任务的 ACP agent。"
-  }
-}
-```
-
-### CLI app
-
-```json
-{
-  "schemaVersion": "2.0",
-  "version": "1.0.0",
-  "app": {
-    "name": {
-      "default": "Claude CLI",
-      "en": "Claude CLI",
-      "zh-CN": "Claude CLI"
+      "default": "Example App"
     }
   },
   "access": {
     "protocol": "cli",
     "config": {
-      "command": "claude",
-      "args": ["-p"]
+      "command": "example-app"
     }
   },
   "exposure": {
-    "keywords": ["code", "cli", "assistant"],
-    "summary": "通过命令行方式调用的本地 agent。"
+    "keywords": ["example", "utility"],
+    "summary": "Use this app when the user wants to work with Example App."
   }
 }
 ```
 
-## Discovery
+Supported `access.protocol` values today:
 
-AAI Gateway should support three descriptor locations:
+- `mcp`
+- `skill`
+- `acp-agent`
+- `cli`
 
-- desktop apps: ship a descriptor with the app or another app-owned location that the gateway scans
-- CLI apps: install descriptors into a gateway-managed local directory
-- web apps: publish a descriptor at a fixed well-known URL
+### Where To Put `aai.json`
 
-Suggested locations:
+#### Web Apps
 
-| Type | Location |
-| --- | --- |
-| Web app | `https://<host>/.well-known/aai.json` |
-| macOS app | `<App>.app/Contents/Resources/aai.json` |
-| Windows app | `<App directory>/aai.json` |
-| Linux app | `/usr/share/<app>/aai.json` |
-| Gateway-managed CLI install | `~/.local/share/aai-gateway/apps/<app>/aai.json` |
+Publish it at:
 
-Notes:
-
-- macOS sandboxed apps should not be required to write into the gateway-managed directory
-- imported `mcp`, imported `skill`, and gateway-managed CLI assets belong under the gateway-managed directory
-- imported skills are stored as full directories, not just a single `SKILL.md`
-
-## Authorization
-
-AAI Gateway keeps the first authorization stage focused on display metadata.
-
-The consent UI should identify the app using:
-
-- `app.name`
-- `app.iconUrl`
-
-User policy such as:
-
-- enabled / disabled
-- per-agent visibility
-- exposure level
-
-belongs to gateway-local configuration, not to the descriptor.
-
-## Installation
-
-Add AAI Gateway to your MCP client configuration:
-
-```json
-{
-  "mcpServers": {
-    "aai-gateway": {
-      "command": "npx",
-      "args": ["aai-gateway"]
-    }
-  }
-}
+```text
+https://<your-host>/.well-known/aai.json
 ```
 
-## MCP Import
+AAI Gateway fetches that path when the user calls `remote:discover`.
 
-AAI Gateway can import an existing MCP server and generate a minimal AAI descriptor from MCP-native discovery.
+#### macOS Apps
 
-All human-facing management commands use the `aai-gateway ...` CLI.
+Recommended locations scanned by the gateway:
 
-It should also support importing skills. Imported integrations are gateway-owned assets:
+- `<YourApp>.app/Contents/Resources/aai.json`
+- `~/Library/Containers/<container>/Data/Library/Application Support/aai.json`
+- `~/Library/Containers/<container>/Data/Library/Application Support/aai-gateway/aai.json`
 
-- imported MCP servers get generated local descriptors
-- imported skills are copied or downloaded into a gateway-managed local directory
-- `keywords` and `summary` can be collected in the CLI or generated with agent assistance and then confirmed by the user
+#### Linux Apps
 
-Examples:
+The gateway scans for `aai.json` under:
 
-```bash
-aai-gateway mcp import --name "Filesystem MCP" --command npx --arg -y --arg @modelcontextprotocol/server-filesystem
-```
+- `/usr/share`
+- `/usr/local/share`
+- `~/.local/share`
 
-```bash
-aai-gateway mcp import --id remote-docs --name "Remote Docs" --url https://example.com/mcp --transport streamable-http
-```
+#### Windows Apps
 
-```bash
-aai-gateway mcp refresh remote-docs
-```
+The gateway scans for `aai.json` under:
 
-```bash
-aai-gateway skill import --path /path/to/skill-dir
-```
+- `C:\Program Files`
+- `C:\Program Files (x86)`
+- `%LOCALAPPDATA%`
 
-```bash
-aai-gateway skill import --url https://example.com/.well-known/skill/
-```
+### Descriptor Guidelines
 
-## License
+Keep descriptors small and practical:
 
-Apache-2.0
+- make `app.name.default` clear
+- keep `keywords` short and high-signal
+- make `summary` explain when the app should be used
+- put detailed capability data in the downstream protocol, not in the descriptor
 
-## Links
+If your app already speaks MCP, keep the descriptor minimal and let MCP provide tool detail lazily.
 
-- **[AAI Protocol Spec](https://github.com/gybob/aai-protocol)** - protocol work
-- [Report Issues](https://github.com/gybob/aai-gateway/issues) - bug reports and feature requests
+## Submit A Pull Request To Preload A Descriptor
 
-## License
+If you want AAI Gateway to ship with a descriptor by default, open a PR.
 
-Apache-2.0
+What to include:
+
+- the descriptor itself
+- a safe discovery rule that proves the app is actually installed
+- the connection config
+- a short explanation of why the integration should be bundled
+
+Today, built-in ACP agent descriptors live in:
+
+- `src/discovery/descriptors/`
+
+And they are registered in:
+
+- `src/discovery/agent-registry.ts`
+
+For a typical PR:
+
+1. Add the descriptor file.
+2. Add or update discovery checks.
+3. Register it in the appropriate discovery source.
+4. Update the README if the new integration is user-facing.
+
+If you are unsure whether an integration should be bundled, open an issue first.
+
+## Disclaimer
+
+AAI Gateway is still under active development.
+
+You should expect rough edges, missing pieces, and bugs.
+
+Contributions are welcome.
