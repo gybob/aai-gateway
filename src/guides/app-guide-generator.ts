@@ -1,5 +1,8 @@
+import { dirname } from 'node:path';
+
+import { getManagedAppsRoot } from '../storage/paths.js';
 import type { AaiJson, DetailedCapability } from '../types/aai-json.js';
-import { getLocalizedName } from '../types/aai-json.js';
+import { getLocalizedName, isSkillPathConfig } from '../types/aai-json.js';
 import { getSystemLocale } from '../utils/locale.js';
 
 import { generateAcpOperationGuide } from './acp-guide-generator.js';
@@ -45,6 +48,11 @@ export function generateOperationGuide(
       break;
     case 'skill':
       lines.push('Use `tool: "read"` and optionally `args.section` to read the skill content.');
+      if (isSkillPathConfig(descriptor.access.config)) {
+        lines.push(`Gateway-managed skill base path: ${getManagedAppsRoot()}`);
+        lines.push(`Skill directory: ${descriptor.access.config.path}`);
+        lines.push(`Skill base path for this app: ${dirname(descriptor.access.config.path)}`);
+      }
       break;
     case 'cli':
       lines.push('Use `tool: "run"` or a subcommand name. Pass `args.argv` as a string array and `args.stdin` as optional text.');

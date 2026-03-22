@@ -20,6 +20,7 @@ import { getMcpRegistryEntry } from './storage/mcp-registry.js';
 import { getManagedAppDir } from './storage/paths.js';
 import { createSecureStorage } from './storage/secure-storage/index.js';
 import type { McpConfig } from './types/aai-json.js';
+import { loadAaiConfig } from './utils/config.js';
 import { logger } from './utils/logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -33,6 +34,9 @@ interface CommonOptions {
 
 interface ServeOptions extends CommonOptions {
   command: 'serve';
+  host?: string;
+  port?: number;
+  path?: string;
 }
 
 interface ScanOptions extends CommonOptions {
@@ -221,7 +225,38 @@ function parseArgs(args: string[]): CliOptions {
     return { command: 'skill-import', ...base, path, url };
   }
 
-  return { command: 'serve', dev };
+  let host: string | undefined;
+  let port: number | undefined;
+  let path: string | undefined;
+
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    const next = args[i + 1];
+
+    switch (arg) {
+      case '--dev':
+        break;
+      case '--host':
+        host = next;
+        i += 1;
+        break;
+      case '--port':
+        port = parsePort(next, '--port');
+        i += 1;
+        break;
+      case '--path':
+        path = next;
+        i += 1;
+        break;
+      default:
+        if (arg.startsWith('--')) {
+          throw new Error(`Unknown argument: ${arg}`);
+        }
+        break;
+    }
+  }
+
+  return { command: 'serve', dev, host, port, path };
 }
 
 function parseImportBase(args: string[], dev: boolean): ImportOptionsBase {
@@ -277,6 +312,9 @@ Usage:
 Options:
   --scan        Scan for desktop descriptors and exit
   --dev         Enable development mode
+  --host HOST   Bind streamable HTTP server to host
+  --port PORT   Bind streamable HTTP server to port
+  --path PATH   Serve MCP streamable HTTP endpoint at path
   --version     Show version
   --help, -h    Show help
 
@@ -505,8 +543,14 @@ async function main(): Promise<void> {
       await runSkillImport(options);
       return;
     case 'serve': {
-      const server = await createGatewayServer({ devMode: options.dev });
-      await server.start();
+      const config = loadAaiConfig();
+      const configured = await createGatewayServer({
+        devMode: options.dev,
+        host: (options as ServeOptions).host ?? config.server?.host,
+        port: (options as ServeOptions).port ?? config.server?.port,
+        path: (options as ServeOptions).path ?? config.server?.path,
+      });
+      await configured.start();
       return;
     }
   }
@@ -516,3 +560,11 @@ main().catch((err) => {
   logger.fatal({ err }, 'Fatal error');
   process.exit(1);
 });
+
+function parsePort(value: string | undefined, flag: string): number {
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`${flag} must be an integer between 1 and 65535`);
+  }
+  return port;
+}

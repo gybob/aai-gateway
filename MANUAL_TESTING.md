@@ -145,16 +145,16 @@ TEST_DATA_DIR=/tmp/aai-gateway-test
 
 **测试步骤：**
 ```bash
-# 启动 MCP 服务器
+# 启动 MCP streamable HTTP 服务器
 npm run dev
 
 # 或者使用 CLI
-./dist/cli.js serve
+./dist/cli.js serve --host 127.0.0.1 --port 8765 --path /mcp
 ```
 
 **预期结果：**
 - 服务器成功启动
-- 控制台输出包含 "MCP server started" 或类似消息
+- 控制台输出包含 streamable HTTP 启动信息
 - 无错误信息
 
 **验证点：**
@@ -168,7 +168,7 @@ npm run dev
 
 **测试步骤：**
 ```bash
-./dist/cli.js serve --dev
+./dist/cli.js serve --dev --host 127.0.0.1 --port 8765 --path /mcp
 ```
 
 **预期结果：**
@@ -191,8 +191,8 @@ npm run dev
    {
      "mcpServers": {
        "aai-gateway": {
-         "command": "node",
-         "args": ["/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/dist/index.js"]
+         "transport": "streamable-http",
+         "url": "http://127.0.0.1:8765/mcp"
        }
      }
    }
@@ -208,6 +208,7 @@ npm run dev
 **验证点：**
 - [ ] 连接建立成功
 - [ ] 工具列表非空
+- [ ] 多个 AI 工具可复用同一个 HTTP 端点
 - [ ] 初始化握手完成
 
 ---
@@ -584,12 +585,14 @@ node test-cache.ts
 - 技能成功导入
 - 列表包含导入的技能
 - 删除操作成功
+- app guide 中包含 gateway-managed skill base path
 
 **验证点：**
 - [ ] 导入操作成功
 - [ ] 技能目录正确复制
 - [ ] 列表包含新技能
 - [ ] 删除操作成功
+- [ ] skill guide 明确显示 gateway-managed skill path
 
 ---
 

@@ -1,4 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { AaiGatewayServer } from './server.js';
 
 async function flushMicrotasks(): Promise<void> {
@@ -101,9 +105,11 @@ vi.mock('../executors/acp.js', () => ({
 
 describe('AaiGatewayServer - Caller Identity Extraction', () => {
   let mockServer: any;
+  let tempDir: string;
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    tempDir = await mkdtemp(join(tmpdir(), 'aai-gateway-server-test-'));
 
     // Get the mock server instance
     const { _mockServer } = await import('@modelcontextprotocol/sdk/server/index.js');
@@ -112,6 +118,10 @@ describe('AaiGatewayServer - Caller Identity Extraction', () => {
     // Reset state
     mockServer._clientVersion = null;
     mockServer.oninitialized = null;
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
   });
 
   describe('caller identity extraction', () => {
@@ -908,6 +918,231 @@ describe('AaiGatewayServer - Caller Identity Extraction', () => {
       );
 
       expect(response.task.taskId).toBeTruthy();
+    });
+
+    it('streams ACP session updates as MCP message notifications without requiring progressToken', async () => {
+      const { createDiscoveryManager } = await import('../discovery/index.js');
+      const { getAcpExecutor } = await import('../executors/acp.js');
+
+      vi.mocked(createDiscoveryManager).mockReturnValue({
+        manager: {
+          register: vi.fn(),
+          scanAll: vi.fn().mockResolvedValue([
+            {
+              localId: 'acp-agent',
+              source: 'acp-agent',
+              location: '/usr/local/bin/opencode',
+              descriptor: {
+                schemaVersion: '2.0',
+                version: '1.0.0',
+                app: { name: { default: 'OpenCode' } },
+                access: { protocol: 'acp-agent', config: { command: 'opencode', args: ['acp'] } },
+                exposure: { keywords: ['code'], summary: 'ACP agent.' },
+              },
+            },
+          ]),
+          getSources: vi.fn().mockReturnValue([]),
+        },
+        sources: {
+          desktop: { scan: vi.fn().mockResolvedValue([]) },
+          agents: { scan: vi.fn().mockResolvedValue([]) },
+          managed: { scan: vi.fn().mockResolvedValue([]) },
+        },
+      } as any);
+
+      vi.mocked(getAcpExecutor).mockReturnValue({
+        connect: vi.fn().mockResolvedValue(undefined),
+        inspect: vi.fn().mockResolvedValue({
+          title: 'ACP Agent Details',
+          body: 'Mock',
+        }),
+        execute: vi.fn(),
+        executeWithObserver: vi.fn().mockImplementation(
+          async (
+            _localId: string,
+            _config: unknown,
+            _tool: string,
+            _args: Record<string, unknown>,
+            observer: { onMessage?: (event: { message: string }) => Promise<void> }
+          ) => {
+            await observer.onMessage?.({ message: 'working' });
+            return {
+              success: true,
+              data: { outputText: 'done' },
+            };
+          }
+        ),
+      } as any);
+
+      const server = new AaiGatewayServer();
+      await server.initialize();
+
+      const handlers = mockServer.setRequestHandler.mock.calls.map((call: any[]) => call[1]);
+      const callHandler = handlers[1];
+      await callHandler(
+        {
+          id: 991,
+          params: {
+            name: 'aai:exec',
+            arguments: {
+              app: 'acp-agent',
+              tool: 'prompt',
+              args: { text: 'hello' },
+            },
+          },
+        },
+        { requestId: 991 }
+      );
+
+      expect(
+        mockServer.notification.mock.calls.some(
+          ([notification]: any[]) =>
+            notification?.method === 'notifications/message' &&
+            notification?.params?.data === 'working'
+        )
+      ).toBe(true);
+    });
+
+    it('scopes ACP execution local ids per connected client context', async () => {
+      const { createDiscoveryManager } = await import('../discovery/index.js');
+      const { getAcpExecutor } = await import('../executors/acp.js');
+
+      const executeWithObserver = vi.fn().mockResolvedValue({
+        success: true,
+        data: { outputText: 'done' },
+      });
+
+      vi.mocked(createDiscoveryManager).mockReturnValue({
+        manager: {
+          register: vi.fn(),
+          scanAll: vi.fn().mockResolvedValue([
+            {
+              localId: 'acp-agent',
+              source: 'acp-agent',
+              location: '/usr/local/bin/opencode',
+              descriptor: {
+                schemaVersion: '2.0',
+                version: '1.0.0',
+                app: { name: { default: 'OpenCode' } },
+                access: { protocol: 'acp-agent', config: { command: 'opencode', args: ['acp'] } },
+                exposure: { keywords: ['code'], summary: 'ACP agent.' },
+              },
+            },
+          ]),
+          getSources: vi.fn().mockReturnValue([]),
+        },
+        sources: {
+          desktop: { scan: vi.fn().mockResolvedValue([]) },
+          agents: { scan: vi.fn().mockResolvedValue([]) },
+          managed: { scan: vi.fn().mockResolvedValue([]) },
+        },
+      } as any);
+
+      vi.mocked(getAcpExecutor).mockReturnValue({
+        connect: vi.fn().mockResolvedValue(undefined),
+        inspect: vi.fn().mockResolvedValue({
+          title: 'ACP Agent Details',
+          body: 'Mock',
+        }),
+        execute: vi.fn(),
+        executeWithObserver,
+      } as any);
+
+      const callsBeforeOne = mockServer.setRequestHandler.mock.calls.length;
+      const serverOne = new AaiGatewayServer(undefined, { clientContextId: 'client-one' });
+      await serverOne.initialize();
+      const callHandlerOne = mockServer.setRequestHandler.mock.calls[callsBeforeOne + 1][1];
+
+      const callsBeforeTwo = mockServer.setRequestHandler.mock.calls.length;
+      const serverTwo = new AaiGatewayServer(undefined, { clientContextId: 'client-two' });
+      await serverTwo.initialize();
+      const callHandlerTwo = mockServer.setRequestHandler.mock.calls[callsBeforeTwo + 1][1];
+
+      await callHandlerOne(
+        {
+          id: 992,
+          params: {
+            name: 'aai:exec',
+            arguments: {
+              app: 'acp-agent',
+              tool: 'prompt',
+              args: { text: 'hello from one' },
+            },
+          },
+        },
+        { requestId: 992 }
+      );
+
+      await callHandlerTwo(
+        {
+          id: 993,
+          params: {
+            name: 'aai:exec',
+            arguments: {
+              app: 'acp-agent',
+              tool: 'prompt',
+              args: { text: 'hello from two' },
+            },
+          },
+        },
+        { requestId: 993 }
+      );
+
+      const localIds = executeWithObserver.mock.calls.map((call) => call[0]);
+      expect(localIds).toContain('client-one:acp-agent');
+      expect(localIds).toContain('client-two:acp-agent');
+    });
+
+    it('includes gateway-managed skill paths in generated skill guidance', async () => {
+      const { createDiscoveryManager } = await import('../discovery/index.js');
+      const skillRoot = join(tempDir, 'managed-skill');
+      await mkdir(skillRoot, { recursive: true });
+      await writeFile(join(skillRoot, 'SKILL.md'), '# Managed Skill\n\nBody\n', 'utf8');
+
+      vi.mocked(createDiscoveryManager).mockReturnValue({
+        manager: {
+          register: vi.fn(),
+          scanAll: vi.fn().mockResolvedValue([
+            {
+              localId: 'skill-app',
+              source: 'skill-import',
+              location: skillRoot,
+              descriptor: {
+                schemaVersion: '2.0',
+                version: '1.0.0',
+                app: { name: { default: 'Managed Skill' } },
+                access: { protocol: 'skill', config: { path: skillRoot } },
+                exposure: { keywords: ['skill'], summary: 'Managed skill.' },
+              },
+            },
+          ]),
+          getSources: vi.fn().mockReturnValue([]),
+        },
+        sources: {
+          desktop: { scan: vi.fn().mockResolvedValue([]) },
+          agents: { scan: vi.fn().mockResolvedValue([]) },
+          managed: { scan: vi.fn().mockResolvedValue([]) },
+        },
+      } as any);
+
+      const server = new AaiGatewayServer();
+      await server.initialize();
+
+      const handlers = mockServer.setRequestHandler.mock.calls.map((call: any[]) => call[1]);
+      const callHandler = handlers[1];
+      const response = await callHandler(
+        {
+          id: 994,
+          params: {
+            name: 'app:skill-app',
+            arguments: {},
+          },
+        },
+        { requestId: 994 }
+      );
+
+      expect(response.content[0].text).toContain('Gateway-managed skill base path');
+      expect(response.content[0].text).toContain(skillRoot);
     });
   });
 });

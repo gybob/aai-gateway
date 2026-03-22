@@ -419,18 +419,38 @@ belongs to gateway-local configuration, not to the descriptor.
 
 ## Installation
 
-Add AAI Gateway to your MCP client configuration:
+Start AAI Gateway as a local streamable HTTP endpoint:
+
+```bash
+aai-gateway serve --host 127.0.0.1 --port 8765 --path /mcp
+```
+
+You can also set defaults in `~/.aai/config.json`:
+
+```json
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8765,
+    "path": "/mcp"
+  }
+}
+```
+
+Then point your MCP client at the HTTP endpoint instead of launching `aai-gateway` over stdio:
 
 ```json
 {
   "mcpServers": {
     "aai-gateway": {
-      "command": "npx",
-      "args": ["aai-gateway"]
+      "transport": "streamable-http",
+      "url": "http://127.0.0.1:8765/mcp"
     }
   }
 }
 ```
+
+Multiple AI tools can share the same gateway instance through this single listener. They do not need separate ports; the gateway isolates runtime state per MCP session.
 
 ## MCP Import
 
@@ -443,6 +463,7 @@ It should also support importing skills. Imported integrations are gateway-owned
 - imported MCP servers get generated local descriptors
 - imported skills are copied or downloaded into a gateway-managed local directory
 - `keywords` and `summary` can be collected in the CLI or generated with agent assistance and then confirmed by the user
+- skill guidance returned by the gateway includes the gateway-managed skill base path so upstream AI tools can read the correct files instead of assuming their own default skill directories
 
 Examples:
 

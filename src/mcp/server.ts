@@ -1,5 +1,8 @@
+import { randomUUID } from 'node:crypto';
+import { createServer as createHttpServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http';
+
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { InMemoryTaskStore } from '@modelcontextprotocol/sdk/experimental/tasks/index.js';
 import {
   CallToolRequestSchema,
@@ -8,6 +11,7 @@ import {
   GetTaskRequestSchema,
   ListTasksRequestSchema,
   ListToolsRequestSchema,
+  isInitializeRequest,
   type CallToolRequest,
   type CallToolResult,
   type CreateTaskResult,
@@ -55,19 +59,52 @@ import type { ExecutionObserver } from '../executors/events.js';
  * Must be well below the default MCP client request timeout (60 s).
  */
 const ACP_KEEPALIVE_INTERVAL_MS = 15_000;
+export const DEFAULT_GATEWAY_HOST = '127.0.0.1';
+export const DEFAULT_GATEWAY_PORT = 8765;
+export const DEFAULT_GATEWAY_PATH = '/mcp';
+
+export interface GatewayServerOptions extends DiscoveryOptions {
+  host?: string;
+  port?: number;
+  path?: string;
+}
+
+interface SharedGatewayState {
+  appRegistry: Map<string, RuntimeAppRecord>;
+  consentManager: ConsentManager;
+  secureStorage: SecureStorage;
+  discoveryManager?: import('../discovery/manager.js').DiscoveryManager;
+}
+
+interface GatewaySessionContext {
+  clientContextId: string;
+  sharedState?: SharedGatewayState;
+}
+
+interface GatewaySessionState {
+  gateway: AaiGatewayServer;
+  transport: StreamableHTTPServerTransport;
+  clientContextId: string;
+}
 
 export class AaiGatewayServer {
   private readonly server: Server;
   private readonly options: DiscoveryOptions;
   private readonly taskRunner: McpTaskRunner;
-  private readonly appRegistry = new Map<string, RuntimeAppRecord>();
+  private readonly appRegistry: Map<string, RuntimeAppRecord>;
+  private readonly clientContextId: string;
   private consentManager!: ConsentManager;
   private secureStorage!: SecureStorage;
   private callerIdentity?: CallerIdentity;
   private discoveryManager?: import('../discovery/manager.js').DiscoveryManager;
+  private readonly sharedState?: SharedGatewayState;
+  private initialized = false;
 
-  constructor(options?: DiscoveryOptions) {
+  constructor(options?: DiscoveryOptions, context?: GatewaySessionContext) {
     this.options = options ?? {};
+    this.clientContextId = context?.clientContextId ?? 'standalone';
+    this.sharedState = context?.sharedState;
+    this.appRegistry = context?.sharedState?.appRegistry ?? new Map<string, RuntimeAppRecord>();
     const taskStore = new InMemoryTaskStore();
     this.server = new Server(
       { name: 'aai-gateway', version: '0.4.0' },
@@ -93,6 +130,18 @@ export class AaiGatewayServer {
   }
 
   async initialize(): Promise<void> {
+    if (this.initialized) {
+      return;
+    }
+
+    if (this.sharedState) {
+      this.secureStorage = this.sharedState.secureStorage;
+      this.consentManager = this.sharedState.consentManager;
+      this.discoveryManager = this.sharedState.discoveryManager;
+      this.initialized = true;
+      return;
+    }
+
     this.secureStorage = createSecureStorage();
     this.consentManager = new ConsentManager(this.secureStorage, createConsentDialog());
 
@@ -109,41 +158,7 @@ export class AaiGatewayServer {
     } catch (err) {
       logger.error({ err }, 'Discovery failed');
     }
-
-    // Eagerly pre-warm ACP agent processes so the first prompt doesn't pay
-    // the full initialization + session-creation penalty (up to 90 s).
-    this.prewarmAcpAgents();
-  }
-
-  /**
-   * Pre-initializes all discovered ACP agents in the background so that the
-   * `initialize` + `session/new` handshake has already finished by the time a
-   * prompt request arrives.  Failures are non-fatal; the regular lazy path
-   * will retry when the prompt is actually executed.
-   */
-  private prewarmAcpAgents(): void {
-    const acpApps = Array.from(this.appRegistry.values()).filter(
-      (app) => app.descriptor.access.protocol === 'acp-agent'
-    );
-
-    if (acpApps.length === 0) return;
-
-    logger.info({ count: acpApps.length }, 'Pre-warming ACP agents');
-
-    for (const app of acpApps) {
-      const config = app.descriptor.access.config as import('../types/index.js').AcpAgentConfig;
-      void getAcpExecutor()
-        .connect(app.localId, config)
-        .then(() => {
-          logger.info({ localId: app.localId }, 'ACP agent pre-warm completed');
-        })
-        .catch((err) => {
-          logger.warn(
-            { localId: app.localId, err },
-            'ACP agent pre-warm failed (will retry lazily)'
-          );
-        });
-    }
+    this.initialized = true;
   }
 
   private setupHandlers(): void {
@@ -377,7 +392,9 @@ export class AaiGatewayServer {
 
       try {
         const observer =
-          progressToken !== undefined ? this.createProgressObserver(progressToken) : undefined;
+          isAcpPrompt || progressToken !== undefined
+            ? this.createProgressObserver(progressToken)
+            : undefined;
         const result = await this.executeApp(
           resolved.localId,
           resolved.descriptor,
@@ -525,7 +542,7 @@ export class AaiGatewayServer {
     }
 
     if (isAcpAgentAccess(access)) {
-      return getAcpExecutor().inspect(localId, access.config);
+      return getAcpExecutor().inspect(this.scopeLocalId(localId), access.config);
     }
 
     return loadCliDetail(access.config);
@@ -559,10 +576,11 @@ export class AaiGatewayServer {
 
     if (isAcpAgentAccess(access)) {
       const executor = getAcpExecutor();
+      const scopedLocalId = this.scopeLocalId(localId);
       if (observer && executor.executeWithObserver) {
-        return executor.executeWithObserver(localId, access.config, toolName, args, observer);
+        return executor.executeWithObserver(scopedLocalId, access.config, toolName, args, observer);
       }
-      return executor.execute(localId, access.config, toolName, args);
+      return executor.execute(scopedLocalId, access.config, toolName, args);
     }
 
     if (isCliAccess(access)) {
@@ -611,12 +629,25 @@ export class AaiGatewayServer {
     };
   }
 
-  private createProgressObserver(progressToken: string | number): ExecutionObserver {
+  private createProgressObserver(progressToken?: string | number): ExecutionObserver {
     let progress = 0;
 
     return {
       onMessage: async ({ message }) => {
         progress += 1;
+        await this.server.notification({
+          method: 'notifications/message',
+          params: {
+            level: 'info',
+            logger: 'aai-gateway',
+            data: message,
+          },
+        });
+
+        if (progressToken === undefined) {
+          return;
+        }
+
         await this.server.notification({
           method: 'notifications/progress',
           params: {
@@ -628,6 +659,21 @@ export class AaiGatewayServer {
       },
       onProgress: async ({ progress: nextProgress, message }) => {
         progress = nextProgress ?? progress + 1;
+        if (message) {
+          await this.server.notification({
+            method: 'notifications/message',
+            params: {
+              level: 'info',
+              logger: 'aai-gateway',
+              data: message,
+            },
+          });
+        }
+
+        if (progressToken === undefined) {
+          return;
+        }
+
         await this.server.notification({
           method: 'notifications/progress',
           params: {
@@ -639,6 +685,19 @@ export class AaiGatewayServer {
       },
       onTaskStatus: async ({ status, message }) => {
         progress += 1;
+        await this.server.notification({
+          method: 'notifications/message',
+          params: {
+            level: status === 'failed' ? 'error' : 'info',
+            logger: 'aai-gateway',
+            data: message ?? status,
+          },
+        });
+
+        if (progressToken === undefined) {
+          return;
+        }
+
         await this.server.notification({
           method: 'notifications/progress',
           params: {
@@ -675,11 +734,17 @@ export class AaiGatewayServer {
     };
   }
 
-  async start(): Promise<void> {
+  async connectTransport(transport: StreamableHTTPServerTransport): Promise<void> {
     await this.initialize();
-    const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    logger.info('AAI Gateway started (stdio)');
+  }
+
+  async close(): Promise<void> {
+    await this.server.close();
+  }
+
+  private scopeLocalId(localId: string): string {
+    return `${this.clientContextId}:${localId}`;
   }
 }
 
@@ -765,8 +830,254 @@ function truncateLogPreview(value: string, maxChars = 160): string {
   return value.length <= maxChars ? value : `${value.slice(0, maxChars)}...`;
 }
 
-export async function createGatewayServer(options?: DiscoveryOptions): Promise<AaiGatewayServer> {
-  return new AaiGatewayServer(options);
+export class AaiGatewayHttpServer {
+  private readonly discoveryOptions: DiscoveryOptions;
+  private readonly host: string;
+  private readonly path: string;
+  private port: number;
+  private readonly sessions = new Map<string, GatewaySessionState>();
+  private sharedState?: SharedGatewayState;
+  private httpServer?: HttpServer;
+
+  constructor(options?: GatewayServerOptions) {
+    const normalized = options ?? {};
+    this.discoveryOptions = { devMode: normalized.devMode };
+    this.host = normalized.host ?? DEFAULT_GATEWAY_HOST;
+    this.port = normalized.port ?? DEFAULT_GATEWAY_PORT;
+    this.path = normalizePath(normalized.path ?? DEFAULT_GATEWAY_PATH);
+  }
+
+  async start(): Promise<void> {
+    if (this.httpServer) {
+      return;
+    }
+
+    this.sharedState = await createSharedGatewayState(this.discoveryOptions);
+    this.httpServer = createHttpServer((req, res) => {
+      void this.handleHttpRequest(req, res);
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: Error) => {
+        this.httpServer?.off('error', onError);
+        reject(error);
+      };
+
+      this.httpServer?.once('error', onError);
+      this.httpServer?.listen(this.port, this.host, () => {
+        this.httpServer?.off('error', onError);
+        const address = this.httpServer?.address();
+        if (address && typeof address === 'object') {
+          this.port = address.port;
+        }
+        resolve();
+      });
+    });
+
+    logger.info(
+      { host: this.host, port: this.port, path: this.path },
+      'AAI Gateway started (streamable-http)'
+    );
+  }
+
+  async stop(): Promise<void> {
+    const activeSessions = Array.from(this.sessions.values());
+    this.sessions.clear();
+
+    await Promise.allSettled(activeSessions.map(async ({ gateway, transport }) => {
+      await transport.close();
+      await gateway.close();
+    }));
+
+    if (this.httpServer) {
+      await new Promise<void>((resolve, reject) => {
+        this.httpServer?.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      });
+      this.httpServer = undefined;
+    }
+  }
+
+  getUrl(): string {
+    return `http://${this.host}:${this.port}${this.path}`;
+  }
+
+  private async handleHttpRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    try {
+      if (!matchesPath(req, this.path)) {
+        res.statusCode = 404;
+        res.end('Not Found');
+        return;
+      }
+
+      const method = req.method ?? 'GET';
+      const body = method === 'POST' ? await readRequestBody(req, res) : undefined;
+      if (method === 'POST' && body === INVALID_JSON) {
+        return;
+      }
+
+      const sessionId = getHeaderValue(req.headers['mcp-session-id']);
+      const existing = sessionId ? this.sessions.get(sessionId) : undefined;
+
+      if (existing) {
+        await existing.transport.handleRequest(req, res, body);
+        return;
+      }
+
+      if (method === 'POST' && isInitializeRequest(body)) {
+        const created = await this.createSession();
+        await created.transport.handleRequest(req, res, body);
+        return;
+      }
+
+      res.statusCode = 400;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({
+        jsonrpc: '2.0',
+        error: {
+          code: -32000,
+          message: 'Bad Request: No valid session ID provided',
+        },
+        id: null,
+      }));
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to handle streamable HTTP request');
+      if (!res.headersSent) {
+        res.statusCode = 500;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({
+          jsonrpc: '2.0',
+          error: {
+            code: -32603,
+            message: 'Internal server error',
+          },
+          id: null,
+        }));
+      }
+    }
+  }
+
+  private async createSession(): Promise<GatewaySessionState> {
+    if (!this.sharedState) {
+      throw new Error('Gateway shared state was not initialized');
+    }
+
+    const clientContextId = randomUUID();
+    const gateway = new AaiGatewayServer(this.discoveryOptions, {
+      clientContextId,
+      sharedState: this.sharedState,
+    });
+    await gateway.initialize();
+
+    let transport!: StreamableHTTPServerTransport;
+    transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+      onsessioninitialized: (sessionId) => {
+        this.sessions.set(sessionId, { gateway, transport, clientContextId });
+      },
+    });
+
+    transport.onclose = () => {
+      const sessionId = transport.sessionId;
+      if (sessionId) {
+        this.sessions.delete(sessionId);
+      }
+      void gateway.close();
+    };
+
+    await gateway.connectTransport(transport);
+    return { gateway, transport, clientContextId };
+  }
+}
+
+export async function createGatewayServer(options?: GatewayServerOptions): Promise<AaiGatewayHttpServer> {
+  return new AaiGatewayHttpServer(options);
+}
+
+const INVALID_JSON = Symbol('invalid-json');
+
+async function createSharedGatewayState(options: DiscoveryOptions): Promise<SharedGatewayState> {
+  const secureStorage = createSecureStorage();
+  const consentManager = new ConsentManager(secureStorage, createConsentDialog());
+  const appRegistry = new Map<string, RuntimeAppRecord>();
+
+  const { manager } = createDiscoveryManager();
+
+  try {
+    const discoveredApps = await manager.scanAll(options);
+    for (const app of discoveredApps) {
+      appRegistry.set(app.localId, app);
+    }
+    logger.info({ count: discoveredApps.length }, 'Discovery completed');
+  } catch (err) {
+    logger.error({ err }, 'Discovery failed');
+  }
+
+  return {
+    appRegistry,
+    consentManager,
+    secureStorage,
+    discoveryManager: manager,
+  };
+}
+
+function normalizePath(value: string): string {
+  if (!value.startsWith('/')) {
+    return `/${value}`;
+  }
+  return value;
+}
+
+function matchesPath(req: IncomingMessage, expectedPath: string): boolean {
+  if (!req.url) {
+    return false;
+  }
+
+  const url = new URL(req.url, `http://${req.headers.host ?? '127.0.0.1'}`);
+  return url.pathname === expectedPath;
+}
+
+function getHeaderValue(value: string | string[] | undefined): string | undefined {
+  if (Array.isArray(value)) {
+    return value[0];
+  }
+  return value;
+}
+
+async function readRequestBody(
+  req: IncomingMessage,
+  res: ServerResponse
+): Promise<unknown | typeof INVALID_JSON> {
+  const chunks: Buffer[] = [];
+
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+
+  if (chunks.length === 0) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
+  } catch {
+    res.statusCode = 400;
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({
+      jsonrpc: '2.0',
+      error: {
+        code: -32700,
+        message: 'Parse error',
+      },
+      id: null,
+    }));
+    return INVALID_JSON;
+  }
 }
 
 function createStaticDetail(descriptor: AaiJson, err: unknown): DetailedCapability {

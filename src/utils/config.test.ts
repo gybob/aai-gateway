@@ -25,12 +25,30 @@ describe('aai config', () => {
 
   it('loads log level from ~/.aai/config.json', async () => {
     await mkdir(tempDir, { recursive: true });
-    await writeFile(join(tempDir, 'config.json'), JSON.stringify({ logLevel: 'debug' }), 'utf8');
+    await writeFile(
+      join(tempDir, 'config.json'),
+      JSON.stringify({
+        logLevel: 'debug',
+        server: {
+          host: '127.0.0.1',
+          port: 8765,
+          path: '/mcp',
+        },
+      }),
+      'utf8'
+    );
 
     const { loadAaiConfig, getAaiConfigPath } = await import('./config.js');
 
     expect(getAaiConfigPath()).toBe(join(tempDir, 'config.json'));
-    expect(loadAaiConfig()).toEqual({ logLevel: 'debug' });
+    expect(loadAaiConfig()).toEqual({
+      logLevel: 'debug',
+      server: {
+        host: '127.0.0.1',
+        port: 8765,
+        path: '/mcp',
+      },
+    });
   });
 
   it('ignores invalid config values', async () => {
@@ -39,6 +57,25 @@ describe('aai config', () => {
 
     const { loadAaiConfig } = await import('./config.js');
 
-    expect(loadAaiConfig()).toEqual({ logLevel: undefined });
+    expect(loadAaiConfig()).toEqual({ logLevel: undefined, server: undefined });
+  });
+
+  it('ignores invalid server config values', async () => {
+    await mkdir(tempDir, { recursive: true });
+    await writeFile(
+      join(tempDir, 'config.json'),
+      JSON.stringify({
+        server: {
+          host: '',
+          port: 70000,
+          path: '',
+        },
+      }),
+      'utf8'
+    );
+
+    const { loadAaiConfig } = await import('./config.js');
+
+    expect(loadAaiConfig()).toEqual({ logLevel: undefined, server: undefined });
   });
 });

@@ -51,6 +51,11 @@ describe('ServeCommand', () => {
 
     const options2 = command?.parse(['--dev']);
     expect(options2?.dev).toBe(true);
+
+    const options3 = command?.parse(['--host', '127.0.0.1', '--port', '8765', '--path', '/mcp']);
+    expect(options3?.host).toBe('127.0.0.1');
+    expect(options3?.port).toBe(8765);
+    expect(options3?.path).toBe('/mcp');
   });
 
   it('should execute createGatewayServer', async () => {

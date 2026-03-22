@@ -37,6 +37,9 @@ Usage:
 Options:
   --scan        Scan for desktop descriptors and exit
   --dev         Enable development mode
+  --host HOST   Bind streamable HTTP server to host
+  --port PORT   Bind streamable HTTP server to port
+  --path PATH   Serve MCP streamable HTTP endpoint at path
   --version     Show version
   --help, -h    Show help
 
