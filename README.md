@@ -18,27 +18,16 @@ AAI Gateway is for one goal: make tool ecosystems feel smaller, sharper, and eas
 
 ### 1. Connect Your AI Tool To AAI Gateway
 
-Examples below assume `aai-gateway` is already on your `PATH`.
+You do not need to preinstall `aai-gateway`.
 
-If you run from source, build first with:
-
-```bash
-npm install
-npm run build
-```
-
-Then replace `aai-gateway` in the examples with:
-
-```bash
-node /absolute/path/to/aai-gateway/dist/cli.js
-```
+Use the same style users already know from mainstream MCP setups: launch it through `npx`.
 
 ### Claude Code
 
 Official docs: <https://code.claude.com/docs/en/mcp>
 
 ```bash
-claude mcp add --transport stdio aai-gateway -- aai-gateway
+claude mcp add --transport stdio aai-gateway -- npx -y aai-gateway
 ```
 
 ### Codex
@@ -46,7 +35,7 @@ claude mcp add --transport stdio aai-gateway -- aai-gateway
 Official docs: <https://developers.openai.com/learn/docs-mcp>
 
 ```bash
-codex mcp add aai-gateway -- aai-gateway
+codex mcp add aai-gateway -- npx -y aai-gateway
 ```
 
 ### OpenCode
@@ -61,7 +50,7 @@ Add this to `~/.config/opencode/opencode.json` or your project `opencode.json`:
   "mcp": {
     "aai-gateway": {
       "type": "local",
-      "command": ["aai-gateway"],
+      "command": ["npx", "-y", "aai-gateway"],
       "enabled": true
     }
   }
@@ -81,42 +70,48 @@ Once connected, your AI tool can use AAI Gateway tools such as:
 
 ### 2. Import An MCP Server
 
-You can import through the AI tool or through the CLI.
+The main workflow is: copy a mainstream MCP config snippet into your AI tool and ask it to import that server through AAI Gateway.
 
-AI tools should call `mcp:import` and ask the user to choose an exposure mode first:
+The AI tool should:
+
+1. read the MCP config you pasted
+2. ask you to choose an exposure mode
+3. call `mcp:import`
+
+AAI Gateway keeps the import parameters close to normal MCP config shapes:
+
+- stdio MCP: `command`, `args`, `env`, `cwd`
+- remote MCP: `url`, optional `transport`, optional `headers`
+
+Before import, the AI tool should ask you to choose:
 
 - `summary`: easier automatic triggering
 - `keywords`: leaves room for more tools, but usually needs more explicit keyword mentions
 
-CLI examples:
+Example: import a normal stdio MCP config
 
-Local stdio MCP:
-
-```bash
-aai-gateway mcp import \
-  --command npx \
-  --arg -y \
-  --arg @modelcontextprotocol/server-filesystem \
-  --arg /tmp \
-  --exposure summary
+```json
+{
+  "command": "npx",
+  "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+}
 ```
 
-Remote Streamable HTTP MCP:
+Example: import a normal remote Streamable HTTP MCP config
 
-```bash
-aai-gateway mcp import \
-  --url https://example.com/mcp \
-  --transport streamable-http \
-  --exposure summary
+```json
+{
+  "url": "https://example.com/mcp"
+}
 ```
 
-Remote SSE MCP:
+Example: import a normal remote SSE MCP config
 
-```bash
-aai-gateway mcp import \
-  --url https://example.com/sse \
-  --transport sse \
-  --exposure keywords
+```json
+{
+  "url": "https://example.com/sse",
+  "transport": "sse"
+}
 ```
 
 After import, AAI Gateway returns:
@@ -134,22 +129,25 @@ Important:
 
 ### 3. Import A Skill
 
-Skills are imported app wrappers around `SKILL.md`.
+Skills are imported through the AI tool as well.
 
-Local skill:
+Ask the AI tool to call `skill:import`, then give it either:
 
-```bash
-aai-gateway skill import \
-  --path /absolute/path/to/skill \
-  --exposure summary
+- a local skill path
+- a remote skill root URL that exposes `SKILL.md`
+
+Examples:
+
+```json
+{
+  "path": "/absolute/path/to/skill"
+}
 ```
 
-Remote skill:
-
-```bash
-aai-gateway skill import \
-  --url https://example.com/skill \
-  --exposure keywords
+```json
+{
+  "url": "https://example.com/skill"
+}
 ```
 
 Just like MCP import, skill import returns:
@@ -161,39 +159,17 @@ Just like MCP import, skill import returns:
 
 Then restart your AI tool before using the imported skill.
 
-### 4. Update Exposure Later
+### 4. Supported ACP Agents
 
-If the generated metadata is not right, update it later without re-importing.
+AAI Gateway can also control app-like agents through ACP.
 
-From the AI tool:
+Currently supported ACP agent types:
 
-- call `import:config`
-- pass either `app: "app:<id>"` or `localId: "<id>"`
-- optionally update `exposure`, `keywords`, and `summary`
+- OpenCode
+- Claude Code
+- Codex
 
-From the CLI:
-
-```bash
-aai-gateway app config server-filesystem \
-  --exposure keywords \
-  --keyword filesystem \
-  --keyword file \
-  --summary "Use this app for local file reads, writes, listing, and search."
-```
-
-Then restart your AI tool before using the updated metadata.
-
-### 5. Built-In ACP Agent Support
-
-AAI Gateway currently auto-discovers these ACP agents when they are installed:
-
-- OpenCode via `opencode acp`
-- Claude Code via `npx -y @zed-industries/claude-agent-acp`
-- Codex via `npx -y @zed-industries/codex-acp`
-
-These agents are exposed through AAI Gateway as normal apps and can be invoked through `aai:exec`.
-
-## Discovery For App Developers
+## App Auto Discovery
 
 AAI Gateway discovers apps from four places:
 
