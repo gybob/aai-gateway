@@ -43,6 +43,7 @@ import type { CallerIdentity } from '../types/consent.js';
 import { deriveLocalId } from '../utils/ids.js';
 import { getSystemLocale } from '../utils/locale.js';
 import { logger } from '../utils/logger.js';
+import { AAI_GATEWAY_NAME, AAI_GATEWAY_VERSION } from '../version.js';
 
 import {
   generateAppListDescription,
@@ -87,7 +88,7 @@ export class AaiGatewayServer {
     this.options = options ?? {};
     const taskStore = new InMemoryTaskStore();
     this.server = new Server(
-      { name: 'aai-gateway', version: '0.4.1' },
+      { name: AAI_GATEWAY_NAME, version: AAI_GATEWAY_VERSION },
       {
         capabilities: {
           tools: {},

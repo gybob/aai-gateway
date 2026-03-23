@@ -1,16 +1,8 @@
-import { readFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
 import { logger } from '../utils/logger.js';
+import { AAI_GATEWAY_VERSION } from '../version.js';
 
 import { registerCommands } from './commands/index.js';
 import { ArgumentParser } from './parser.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const packageJson = JSON.parse(readFileSync(join(__dirname, '../../package.json'), 'utf-8'));
-const VERSION = packageJson.version;
 
 /**
  * Print help message
@@ -54,7 +46,7 @@ For more information on a specific command, see the documentation.
 export async function runCli(args: string[]): Promise<void> {
   // Check for global options
   if (args.includes('--version')) {
-    console.log(VERSION);
+    console.log(AAI_GATEWAY_VERSION);
     return;
   }
 

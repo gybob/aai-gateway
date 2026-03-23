@@ -10,6 +10,7 @@ import type {
   ExecutionResult,
 } from '../types/index.js';
 import { logger } from '../utils/logger.js';
+import { AAI_GATEWAY_NAME, AAI_GATEWAY_VERSION } from '../version.js';
 
 import type { ExecutionObserver, TaskCapableExecutor } from './events.js';
 
@@ -215,9 +216,9 @@ export class AcpExecutor
           terminal: false,
         },
         clientInfo: {
-          name: 'aai-gateway',
+          name: AAI_GATEWAY_NAME,
           title: 'AAI Gateway',
-          version: '0.4.1',
+          version: AAI_GATEWAY_VERSION,
         },
       },
       ACP_INITIALIZE_TIMEOUT_MS

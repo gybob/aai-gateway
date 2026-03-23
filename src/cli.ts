@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 
 import { existsSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 
 import { createDesktopDiscovery } from './discovery/index.js';
 import { getMcpExecutor } from './executors/mcp.js';
@@ -24,11 +23,7 @@ import { createSecureStorage } from './storage/secure-storage/index.js';
 import { upsertSkillRegistryEntry } from './storage/skill-registry.js';
 import { isMcpAccess, isSkillAccess, type AaiJson } from './types/aai-json.js';
 import { logger } from './utils/logger.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const packageJson = JSON.parse(readFileSync(join(__dirname, '../package.json'), 'utf-8'));
-const VERSION = packageJson.version;
+import { AAI_GATEWAY_VERSION } from './version.js';
 
 interface CommonOptions {
   dev: boolean;
@@ -483,7 +478,7 @@ async function main(): Promise<void> {
   const args = process.argv.slice(2);
 
   if (args.includes('--version')) {
-    console.log(VERSION);
+    console.log(AAI_GATEWAY_VERSION);
     return;
   }
 

@@ -9,6 +9,7 @@ import type {
   McpExecutorDetail,
   ExecutionResult,
 } from '../types/index.js';
+import { AAI_GATEWAY_NAME, AAI_GATEWAY_VERSION } from '../version.js';
 
 import type { ExecutionObserver } from './events.js';
 import type { Executor } from './interface.js';
@@ -69,7 +70,10 @@ export class McpExecutor implements Executor<McpConfig  , McpExecutorDetail> {
       await this.disconnect(localId);
     }
 
-    const client = new Client({ name: 'aai-gateway', version: '0.4.1' }, { capabilities: {} });
+    const client = new Client(
+      { name: AAI_GATEWAY_NAME, version: AAI_GATEWAY_VERSION },
+      { capabilities: {} }
+    );
     const transport = this.createTransport(config);
     const activityListeners = new Set<(message: unknown) => void>();
     transport.onmessage = (message) => {
