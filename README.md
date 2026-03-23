@@ -9,7 +9,17 @@ You connect your AI tool once. AAI Gateway handles discovery, import, routing, a
 Why this matters:
 
 - One MCP connection instead of one MCP per app
-- Smaller context because tools are exposed at the app level first, not dumped all at once
+- Smaller context through progressive disclosure — AAI Gateway never exposes raw tool definitions upfront
+
+  **App-level exposure, not tool-level.** Tools are grouped into apps and only the app interface is visible initially. Users interact through `app:<id>` guides instead of seeing dozens of individual tools.
+
+  **Two app interfaces, user chooses:**
+
+  - `summary` — a natural language description; good for automatic triggering
+  - `keywords` — a compact keyword set; further reduces context overhead when users reference tools explicitly
+
+  Both modes keep the full tool capability available downstream — it just stays hidden until actually needed.
+
 - A cleaner path to mix MCP servers, skills, ACP agents, and CLI-backed apps
 
 AAI Gateway is for one goal: make tool ecosystems feel smaller, sharper, and easier for agents to use.
