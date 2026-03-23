@@ -14,6 +14,11 @@ export default defineConfig({
     rollupOptions: {
       external: [
         /^node:/,
+        /^@modelcontextprotocol\/sdk(?:\/.*)?$/,
+        /^ajv(?:\/.*)?$/,
+        /^zod(?:\/.*)?$/,
+        /^pino(?:\/.*)?$/,
+        /^pino-pretty(?:\/.*)?$/,
         'path',
         'fs',
         'fs/promises',
@@ -26,11 +31,6 @@ export default defineConfig({
         'events',
         'stream',
         'url',
-        '@modelcontextprotocol/sdk',
-        'ajv',
-        'pino',
-        'pino-pretty',
-        'zod',
       ],
       output: {
         entryFileNames: '[name].js',
