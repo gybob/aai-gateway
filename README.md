@@ -29,19 +29,21 @@ AAI Gateway is for one goal: make tool ecosystems feel smaller, sharper, and eas
 
 You do not need to preinstall `aai-gateway`.
 
-Use the same style users already know from mainstream MCP setups: launch it through `npx`.
+Register it as a user-level MCP server and launch it through `npx`.
 
 ### Claude Code
 
 Official docs: <https://code.claude.com/docs/en/mcp>
 
 ```bash
-claude mcp add --transport stdio aai-gateway -- npx -y aai-gateway
+claude mcp add --scope user --transport stdio aai-gateway -- npx -y aai-gateway
 ```
 
 ### Codex
 
 Official docs: <https://developers.openai.com/learn/docs-mcp>
+
+Codex stores MCP server entries in the user config at `~/.codex/config.toml`.
 
 ```bash
 codex mcp add aai-gateway -- npx -y aai-gateway
@@ -51,7 +53,7 @@ codex mcp add aai-gateway -- npx -y aai-gateway
 
 Official docs: <https://opencode.ai/docs/config> and <https://opencode.ai/docs/mcp-servers/>
 
-Add this to `~/.config/opencode/opencode.json` or your project `opencode.json`:
+Add this to your user config at `~/.config/opencode/opencode.json`:
 
 ```json
 {
