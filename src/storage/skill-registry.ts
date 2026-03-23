@@ -14,6 +14,7 @@ export interface SkillRegistryEntry {
   localId: string;
   protocol: 'skill';
   config: SkillConfig;
+  exposureMode?: 'summary' | 'keywords';
   descriptorPath: string;
   importedAt: string;
   updatedAt: string;
@@ -36,6 +37,7 @@ export class SkillRegistry {
         localId: entry.localId,
         protocol: entry.protocol,
         config: entry.config,
+        exposureMode: entry.exposureMode,
         descriptorPath: entry.descriptorPath,
         importedAt: entry.importedAt,
         updatedAt: entry.updatedAt,
@@ -114,10 +116,8 @@ export class SkillRegistry {
   }
 }
 
-/**
- * Create a singleton Skill registry instance
- */
 let skillRegistryInstance: SkillRegistry | null = null;
+
 export function getSkillRegistry(): SkillRegistry {
   if (!skillRegistryInstance) {
     skillRegistryInstance = new SkillRegistry();
@@ -128,6 +128,10 @@ export function getSkillRegistry(): SkillRegistry {
 // Backward compatibility exports
 export async function listSkillRegistryEntries(): Promise<SkillRegistryEntry[]> {
   return getSkillRegistry().list();
+}
+
+export async function getSkillRegistryEntry(localId: string): Promise<SkillRegistryEntry | null> {
+  return getSkillRegistry().get(localId);
 }
 
 export async function upsertSkillRegistryEntry(

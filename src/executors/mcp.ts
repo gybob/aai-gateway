@@ -69,7 +69,7 @@ export class McpExecutor implements Executor<McpConfig  , McpExecutorDetail> {
       await this.disconnect(localId);
     }
 
-    const client = new Client({ name: 'aai-gateway', version: '0.3.5' }, { capabilities: {} });
+    const client = new Client({ name: 'aai-gateway', version: '0.4.1' }, { capabilities: {} });
     const transport = this.createTransport(config);
     const activityListeners = new Set<(message: unknown) => void>();
     transport.onmessage = (message) => {

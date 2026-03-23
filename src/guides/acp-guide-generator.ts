@@ -38,16 +38,10 @@ export function generateAcpOperationGuide(
   lines.push(
     '- Recommended ACP prompt call shape: `app`, `tool`, and `args`, then consume the streamed `notifications/message` updates plus the final tool response.'
   );
-  lines.push(
-    '- If your client supports progress notifications, include `progressToken` in the `aai:exec` call so long-running prompts can reset the client request timeout.'
-  );
   lines.push('');
   lines.push('## Recommended Calls');
   lines.push(
     `- Use \`aai:exec\` with \`{ app: "${localId}", tool: "prompt", args: { text: "..." } }\` for a one-off prompt.`
-  );
-  lines.push(
-    `- Use \`aai:exec\` with \`{ app: "${localId}", tool: "prompt", args: { text: "Summarize this repo" }, progressToken: "progress-1" }\` when you want timeout-reset progress notifications.`
   );
   lines.push(
     `- Use \`aai:exec\` with \`{ app: "${localId}", tool: "session/prompt", args: { sessionId: "<session-id>", prompt: [{ type: "text", text: "Continue" }] } }\` to continue an existing ACP session.`

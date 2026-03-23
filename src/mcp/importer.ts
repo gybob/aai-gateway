@@ -2,15 +2,14 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 
 import type { McpExecutor, McpListedTool } from '../executors/mcp.js';
-import { parseAaiJson } from '../parsers/schema.js';
+import type { SecureStorage } from '../storage/secure-storage/interface.js';
 import {
   getMcpRegistryEntry,
   upsertMcpRegistryEntry,
   type McpRegistryEntry,
 } from '../storage/mcp-registry.js';
 import { getManagedAppDir } from '../storage/paths.js';
-import type { SecureStorage } from '../storage/secure-storage/interface.js';
-import { upsertSkillRegistryEntry } from '../storage/skill-registry.js';
+import { getSkillRegistryEntry, upsertSkillRegistryEntry } from '../storage/skill-registry.js';
 import type { AaiJson, McpConfig } from '../types/aai-json.js';
 import { deriveLocalId, slugify } from '../utils/ids.js';
 
@@ -18,15 +17,30 @@ const SECRET_PREFIX = 'mcp-import-headers-';
 
 export type ExposureMode = 'summary' | 'keywords';
 
+export const IMPORT_LIMITS = {
+  commandLength: 256,
+  urlLength: 2048,
+  pathLength: 2048,
+  cwdLength: 2048,
+  argCount: 64,
+  argLength: 1024,
+  envCount: 32,
+  envKeyLength: 128,
+  envValueLength: 2048,
+  headerCount: 32,
+  headerKeyLength: 128,
+  headerValueLength: 4096,
+} as const;
+
+export const EXPOSURE_LIMITS = {
+  keywordCount: 8,
+  keywordLength: 32,
+  summaryLength: 200,
+} as const;
+
 export interface ExposureDraft {
   keywords: string[];
   summary: string;
-}
-
-export interface McpImportOptions {
-  config: McpConfig;
-  headers?: Record<string, string>;
-  exposureMode: ExposureMode;
 }
 
 export interface McpImportConfigInput {
@@ -38,13 +52,68 @@ export interface McpImportConfigInput {
   cwd?: string;
 }
 
+export interface McpImportPreviewOptions {
+  config: McpConfig;
+  headers?: Record<string, string>;
+}
+
+export interface McpImportOptions extends McpImportPreviewOptions {
+  exposureMode: ExposureMode;
+  keywords: string[];
+  summary: string;
+}
+
+export interface McpImportPreview {
+  localId: string;
+  name: string;
+  tools: McpListedTool[];
+}
+
 export interface McpImportedResult {
   entry: McpRegistryEntry;
   descriptor: AaiJson;
   tools: McpListedTool[];
 }
 
+export interface SkillImportSourceInput {
+  path?: string;
+  url?: string;
+}
+
+export interface SkillImportPreviewOptions extends SkillImportSourceInput {}
+
+export interface SkillImportOptions extends SkillImportSourceInput {
+  exposureMode: ExposureMode;
+  keywords: string[];
+  summary: string;
+}
+
+export interface SkillImportPreview {
+  localId: string;
+  name: string;
+  description?: string;
+  content: string;
+}
+
+interface SkillFrontMatter {
+  name?: string;
+  description?: string;
+  body: string;
+}
+
 export function buildMcpImportConfig(input: McpImportConfigInput): McpConfig {
+  validateOptionalStringLength(input.command, 'command', IMPORT_LIMITS.commandLength);
+  validateOptionalStringLength(input.url, 'url', IMPORT_LIMITS.urlLength);
+  validateOptionalStringLength(input.cwd, 'cwd', IMPORT_LIMITS.cwdLength);
+  validateStringArrayLength(input.args, 'args', IMPORT_LIMITS.argCount, IMPORT_LIMITS.argLength);
+  validateStringRecordLength(
+    input.env,
+    'env',
+    IMPORT_LIMITS.envCount,
+    IMPORT_LIMITS.envKeyLength,
+    IMPORT_LIMITS.envValueLength
+  );
+
   const command = input.command && input.command.length > 0 ? input.command : undefined;
   const url = input.url && input.url.length > 0 ? input.url : undefined;
 
@@ -67,9 +136,8 @@ export function buildMcpImportConfig(input: McpImportConfigInput): McpConfig {
   }
 
   if (url) {
-    const transport = input.transport ?? 'streamable-http';
     return {
-      transport,
+      transport: input.transport ?? 'streamable-http',
       url,
     };
   }
@@ -77,71 +145,294 @@ export function buildMcpImportConfig(input: McpImportConfigInput): McpConfig {
   throw new Error('MCP import requires either command or url');
 }
 
+export function buildSkillImportSource(input: SkillImportSourceInput): SkillImportSourceInput {
+  validateOptionalStringLength(input.path, 'path', IMPORT_LIMITS.pathLength);
+  validateOptionalStringLength(input.url, 'url', IMPORT_LIMITS.urlLength);
+
+  const path = input.path && input.path.length > 0 ? input.path : undefined;
+  const url = input.url && input.url.length > 0 ? input.url : undefined;
+
+  if (path && url) {
+    throw new Error('Skill import accepts either path or url, but not both');
+  }
+
+  if (!path && !url) {
+    throw new Error('Skill import requires either path or url');
+  }
+
+  return { path, url };
+}
+
+export function validateImportHeaders(headers?: Record<string, string>): void {
+  validateStringRecordLength(
+    headers,
+    'headers',
+    IMPORT_LIMITS.headerCount,
+    IMPORT_LIMITS.headerKeyLength,
+    IMPORT_LIMITS.headerValueLength
+  );
+}
+
+export function normalizeExposureInput(input: {
+  keywords: string[];
+  summary: string;
+}): ExposureDraft {
+  const keywords = Array.from(
+    new Set(
+      input.keywords
+        .map((keyword) => keyword.trim())
+        .filter((keyword) => keyword.length > 0)
+    )
+  );
+  const summary = input.summary.trim();
+
+  if (summary.length === 0) {
+    throw new Error('summary cannot be empty.');
+  }
+
+  if (summary.length > EXPOSURE_LIMITS.summaryLength) {
+    throw new Error(
+      `summary is too long. Maximum length is ${EXPOSURE_LIMITS.summaryLength} characters.`
+    );
+  }
+
+  if (keywords.length === 0) {
+    throw new Error('keywords cannot be empty.');
+  }
+
+  if (keywords.length > EXPOSURE_LIMITS.keywordCount) {
+    throw new Error(
+      `keywords has too many items. Maximum item count is ${EXPOSURE_LIMITS.keywordCount}.`
+    );
+  }
+
+  for (const [index, keyword] of keywords.entries()) {
+    if (keyword.length > EXPOSURE_LIMITS.keywordLength) {
+      throw new Error(
+        `keywords[${index}] is too long. Maximum length is ${EXPOSURE_LIMITS.keywordLength} characters.`
+      );
+    }
+  }
+
+  return { keywords, summary };
+}
+
+export async function discoverMcpImport(
+  executor: McpExecutor,
+  options: McpImportPreviewOptions
+): Promise<McpImportPreview> {
+  const localId = await deriveUniqueLocalImportId(options.config);
+  const tools = await executor.listTools({
+    localId,
+    config: options.config,
+    headers: options.headers,
+  });
+  const name = await deriveImportName(executor, options.config, options.headers, localId);
+  return { localId, name, tools };
+}
+
+export async function importMcpServer(
+  executor: McpExecutor,
+  storage: SecureStorage,
+  options: McpImportOptions
+): Promise<McpImportedResult> {
+  const preview = await discoverMcpImport(executor, options);
+  const descriptor = buildImportedMcpDescriptor(
+    preview.name,
+    options.config,
+    normalizeExposureInput({ keywords: options.keywords, summary: options.summary })
+  );
+
+  const entry = await upsertMcpRegistryEntry(
+    {
+      localId: preview.localId,
+      protocol: 'mcp',
+      config: options.config,
+      exposureMode: options.exposureMode,
+    },
+    descriptor
+  );
+
+  if (options.headers && Object.keys(options.headers).length > 0) {
+    await storeImportedMcpHeaders(storage, preview.localId, options.headers);
+  }
+
+  return { entry, descriptor, tools: preview.tools };
+}
+
+export async function storeImportedMcpHeaders(
+  storage: SecureStorage,
+  localId: string,
+  headers: Record<string, string>
+): Promise<void> {
+  await storage.set(`${SECRET_PREFIX}${localId}`, JSON.stringify(headers));
+}
+
+export async function loadImportedMcpHeaders(
+  storage: SecureStorage,
+  localId: string
+): Promise<Record<string, string>> {
+  const raw = await storage.get(`${SECRET_PREFIX}${localId}`);
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw) as Record<string, string>;
+  } catch {
+    return {};
+  }
+}
+
+export async function discoverSkillImport(
+  options: SkillImportPreviewOptions
+): Promise<SkillImportPreview> {
+  const source = buildSkillImportSource(options);
+  const content = await readSkillSourceContent(source);
+  const localId = await deriveUniqueSkillLocalId(source, content);
+  const frontMatter = parseSkillFrontMatter(content);
+  return {
+    localId,
+    name: deriveSkillName(source, content),
+    description: frontMatter.description,
+    content,
+  };
+}
+
+export async function importSkill(
+  options: SkillImportOptions
+): Promise<{ localId: string; descriptor: AaiJson; managedPath: string }> {
+  const preview = await discoverSkillImport(options);
+  const source = buildSkillImportSource(options);
+  const finalAppDir = getManagedAppDir(preview.localId);
+  const finalManagedSkillDir = join(finalAppDir, 'skill');
+  await mkdir(finalAppDir, { recursive: true });
+
+  if (source.path) {
+    await copyDirectory(source.path, finalManagedSkillDir);
+  } else if (source.url) {
+    await writeRemoteSkill(preview.content, finalManagedSkillDir);
+  }
+
+  const descriptor: AaiJson = {
+    schemaVersion: '2.0',
+    version: '1.0.0',
+    app: {
+      name: {
+        default: preview.name,
+        en: preview.name,
+      },
+    },
+    access: {
+      protocol: 'skill',
+      config: {
+        path: finalManagedSkillDir,
+      },
+    },
+    exposure: normalizeExposureInput({
+      keywords: options.keywords,
+      summary: options.summary,
+    }),
+  };
+
+  await writeFile(join(finalAppDir, 'aai.json'), JSON.stringify(descriptor, null, 2), 'utf-8');
+  await upsertSkillRegistryEntry(
+    {
+      localId: preview.localId,
+      protocol: 'skill',
+      config: {
+        path: finalManagedSkillDir,
+      },
+      exposureMode: options.exposureMode,
+    },
+    descriptor
+  );
+
+  return { localId: preview.localId, descriptor, managedPath: finalManagedSkillDir };
+}
+
+export function parseSkillFrontMatter(content: string): SkillFrontMatter {
+  const match = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n?([\s\S]*)$/);
+  if (!match) {
+    return { body: content };
+  }
+
+  const [, rawFrontMatter, body] = match;
+  const fields = new Map<string, string>();
+  for (const line of rawFrontMatter.split('\n')) {
+    const fieldMatch = line.match(/^([A-Za-z0-9_-]+):\s*(.+)\s*$/);
+    if (!fieldMatch) {
+      continue;
+    }
+
+    const [, key, value] = fieldMatch;
+    fields.set(key.toLowerCase(), value.trim().replace(/^['"]|['"]$/g, ''));
+  }
+
+  return {
+    name: fields.get('name'),
+    description: fields.get('description'),
+    body,
+  };
+}
+
 async function deriveImportName(
   executor: McpExecutor,
-  options: McpImportOptions,
+  config: McpConfig,
+  headers: Record<string, string> | undefined,
   localId: string
 ): Promise<string> {
   const serverInfo = await executor.getServerInfo?.({
     localId,
-    config: options.config,
-    headers: options.headers,
+    config,
+    headers,
   });
   if (serverInfo?.name) {
     return serverInfo.name;
   }
 
-  if (options.config.transport === 'stdio') return basename(options.config.command);
-  return new URL(options.config.url).hostname;
+  return config.transport === 'stdio' ? basename(config.command) : new URL(config.url).hostname;
 }
 
-function deriveKeywords(name: string, tools: McpListedTool[]): string[] {
-  return Array.from(
-    new Set([
-      slugify(name),
-      ...tools.flatMap((tool) => tool.name.split(/[^a-zA-Z0-9]+/)).map((part) => part.toLowerCase()),
-    ])
-  )
-    .filter(Boolean)
-    .slice(0, 8);
+function buildImportedMcpDescriptor(name: string, config: McpConfig, exposure: ExposureDraft): AaiJson {
+  return {
+    schemaVersion: '2.0',
+    version: '1.0.0',
+    app: {
+      name: {
+        default: name,
+        en: name,
+      },
+    },
+    access: {
+      protocol: 'mcp',
+      config,
+    },
+    exposure,
+  };
 }
 
-export function buildMcpExposure(name: string, tools: McpListedTool[], mode: ExposureMode): ExposureDraft {
-  const keywords = deriveKeywords(name, tools);
-  const preview = tools.slice(0, 3).map((tool) => tool.name).join(', ');
-  const summary = mode === 'summary'
-    ? (tools.length > 0
-      ? `${name} provides ${tools.length} MCP tools. Use it when the request matches operations like ${preview}.`
-      : `${name} is an imported MCP server.`)
-    : `Use for ${keywords.slice(0, 6).join(', ')}.`;
-
-  return { keywords, summary };
-}
-
-function deriveLocalImportId(options: McpImportOptions): string {
-  const seed =
-    options.config.transport === 'stdio'
-      ? deriveStdioImportSlug(options.config.command, options.config.args)
-      : deriveRemoteImportSlug(options.config.url);
-  return slugify(seed) || 'mcp';
-}
-
-async function deriveUniqueLocalImportId(options: McpImportOptions): Promise<string> {
-  const preferred = deriveLocalImportId(options);
+async function deriveUniqueLocalImportId(config: McpConfig): Promise<string> {
+  const preferred = deriveLocalImportId(config);
   const existing = await getMcpRegistryEntry(preferred);
   if (!existing) {
     return preferred;
   }
 
-  if (JSON.stringify(existing.config) === JSON.stringify(options.config)) {
+  if (JSON.stringify(existing.config) === JSON.stringify(config)) {
     return preferred;
   }
 
   const seed =
-    options.config.transport === 'stdio'
-      ? `mcp:${options.config.command}:${(options.config.args ?? []).join(' ')}`
-      : `mcp:${options.config.transport}:${options.config.url}`;
+    config.transport === 'stdio'
+      ? `mcp:${config.command}:${(config.args ?? []).join(' ')}`
+      : `mcp:${config.transport}:${config.url}`;
   return deriveLocalId(seed, preferred);
+}
+
+function deriveLocalImportId(config: McpConfig): string {
+  const seed =
+    config.transport === 'stdio'
+      ? deriveStdioImportSlug(config.command, config.args)
+      : deriveRemoteImportSlug(config.url);
+  return slugify(seed) || 'mcp';
 }
 
 function deriveStdioImportSlug(command: string, args?: string[]): string {
@@ -190,253 +481,38 @@ function simplifyImportedName(value: string): string {
   return slugify(normalized) || 'mcp';
 }
 
-export function generateMcpDescriptor(options: McpImportOptions, tools: McpListedTool[]): AaiJson {
-  const derivedName =
-    options.config.transport === 'stdio' ? basename(options.config.command) : new URL(options.config.url).hostname;
-  const exposure = buildMcpExposure(derivedName, tools, options.exposureMode);
+function deriveSkillName(options: SkillImportSourceInput, content: string): string {
+  const frontMatter = parseSkillFrontMatter(content);
+  if (frontMatter.name) return frontMatter.name;
 
-  return {
-    schemaVersion: '2.0',
-    version: '1.0.0',
-    app: {
-      name: {
-        default: derivedName,
-        en: derivedName,
-      },
-    },
-    access: {
-      protocol: 'mcp',
-      config: options.config,
-    },
-    exposure,
-  };
-}
-
-export async function storeImportedMcpHeaders(
-  storage: SecureStorage,
-  localId: string,
-  headers: Record<string, string>
-): Promise<void> {
-  await storage.set(`${SECRET_PREFIX}${localId}`, JSON.stringify(headers));
-}
-
-export async function loadImportedMcpHeaders(
-  storage: SecureStorage,
-  localId: string
-): Promise<Record<string, string>> {
-  const raw = await storage.get(`${SECRET_PREFIX}${localId}`);
-  if (!raw) return {};
-  try {
-    return JSON.parse(raw) as Record<string, string>;
-  } catch {
-    return {};
-  }
-}
-
-export async function importMcpServer(
-  executor: McpExecutor,
-  storage: SecureStorage,
-  options: McpImportOptions
-): Promise<McpImportedResult> {
-  const localId = await deriveUniqueLocalImportId(options);
-  const tools = await executor.listTools({
-    localId,
-    config: options.config,
-    headers: options.headers,
-  });
-  const name = await deriveImportName(executor, options, localId);
-
-  const descriptor: AaiJson = {
-    schemaVersion: '2.0',
-    version: '1.0.0',
-    app: {
-      name: {
-        default: name,
-        en: name,
-      },
-    },
-    access: {
-      protocol: 'mcp',
-      config: options.config,
-    },
-    exposure: buildMcpExposure(name, tools, options.exposureMode),
-  };
-  const entry = await upsertMcpRegistryEntry(
-    {
-      localId,
-      protocol: 'mcp',
-      config: options.config,
-    },
-    descriptor
-  );
-
-  if (options.headers && Object.keys(options.headers).length > 0) {
-    await storeImportedMcpHeaders(storage, localId, options.headers);
-  }
-
-  return { entry, descriptor, tools };
-}
-
-export async function refreshImportedMcpServer(
-  executor: McpExecutor,
-  storage: SecureStorage,
-  entry: McpRegistryEntry,
-  exposureMode?: ExposureMode
-): Promise<McpImportedResult> {
-  const headers = await loadImportedMcpHeaders(storage, entry.localId);
-  const tools = await executor.listTools({
-    localId: entry.localId,
-    config: entry.config,
-    headers,
-  });
-
-  const currentDescriptor = parseAaiJson(JSON.parse(await readFile(entry.descriptorPath, 'utf-8')));
-  const descriptor: AaiJson = {
-    ...currentDescriptor,
-    access: {
-      protocol: 'mcp',
-      config: entry.config,
-    },
-    exposure: buildMcpExposure(
-      currentDescriptor.app.name.default,
-      tools,
-      exposureMode ?? 'summary'
-    ),
-  };
-
-  const nextEntry = await upsertMcpRegistryEntry(
-    {
-      localId: entry.localId,
-      protocol: 'mcp',
-      config: entry.config,
-    },
-    descriptor
-  );
-
-  return { entry: nextEntry, descriptor, tools };
-}
-
-export interface SkillImportOptions {
-  path?: string;
-  url?: string;
-  exposureMode: ExposureMode;
-}
-
-export interface SkillImportSourceInput {
-  path?: string;
-  url?: string;
-}
-
-export function buildSkillImportSource(input: SkillImportSourceInput): SkillImportSourceInput {
-  const path = input.path && input.path.length > 0 ? input.path : undefined;
-  const url = input.url && input.url.length > 0 ? input.url : undefined;
-
-  if (path && url) {
-    throw new Error('Skill import accepts either path or url, but not both');
-  }
-
-  if (!path && !url) {
-    throw new Error('Skill import requires either path or url');
-  }
-
-  return { path, url };
-}
-
-function deriveSkillName(options: SkillImportOptions, content: string): string {
-  const titleMatch = content.match(/^#\s+(.+)$/m);
+  const titleMatch = frontMatter.body.match(/^#\s+(.+)$/m);
   if (titleMatch?.[1]) return titleMatch[1].trim();
   if (options.path) return basename(options.path);
   if (options.url) return new URL(options.url).hostname;
   return 'Imported Skill';
 }
 
-function deriveSkillKeywords(name: string, content: string): string[] {
-  const headingWords = Array.from(content.matchAll(/^#+\s+(.+)$/gm))
-    .flatMap((match) => match[1].split(/[^a-zA-Z0-9]+/))
-    .map((part) => part.toLowerCase());
-
-  return Array.from(new Set([slugify(name), 'skill', ...headingWords]))
-    .filter(Boolean)
-    .slice(0, 8);
-}
-
-function deriveSkillSummary(name: string, content: string, mode: ExposureMode, keywords: string[]): string {
-  const paragraph = content
-    .split(/\n\s*\n/)
-    .map((block) => block.replace(/\s+/g, ' ').trim())
-    .find((block) => block && !block.startsWith('#'));
-
-  if (mode === 'keywords') {
-    return `Use for ${keywords.slice(0, 6).join(', ')}.`;
+async function deriveUniqueSkillLocalId(options: SkillImportSourceInput, content: string): Promise<string> {
+  const preferred = `skill-${simplifyImportedName(deriveSkillName(options, content))}`;
+  const existing = await getSkillRegistryEntry(preferred);
+  if (!existing) {
+    return preferred;
   }
 
-  if (paragraph) {
-    return paragraph.length <= 220 ? paragraph : `${paragraph.slice(0, 217)}...`;
-  }
-
-  return `${name} is an imported skill.`;
+  const seed = options.path ? `skill:${options.path}` : `skill:${options.url ?? 'imported-skill'}`;
+  return deriveLocalId(seed, preferred);
 }
 
-export function buildSkillExposure(name: string, content: string, mode: ExposureMode): ExposureDraft {
-  const keywords = deriveSkillKeywords(name, content);
-  return {
-    keywords,
-    summary: deriveSkillSummary(name, content, mode, keywords),
-  };
-}
-
-export async function importSkill(
-  options: SkillImportOptions
-): Promise<{ localId: string; descriptor: AaiJson; managedPath: string }> {
-  const localId = deriveLocalId(
-    options.path ? `skill:${options.path}` : `skill:${options.url ?? 'imported-skill'}`,
-    'skill'
-  );
-  const appDir = getManagedAppDir(localId);
-  const managedSkillDir = join(appDir, 'skill');
-  await mkdir(appDir, { recursive: true });
-
+async function readSkillSourceContent(options: SkillImportSourceInput): Promise<string> {
   if (options.path) {
-    await copyDirectory(options.path, managedSkillDir);
-  } else if (options.url) {
-    await downloadRemoteSkill(options.url, managedSkillDir);
-  } else {
-    throw new Error('Skill import requires either path or url');
+    return readFile(join(options.path, 'SKILL.md'), 'utf-8');
   }
 
-  const content = await readFile(join(managedSkillDir, 'SKILL.md'), 'utf-8');
-  const name = deriveSkillName(options, content);
+  if (options.url) {
+    return fetchRemoteSkill(options.url);
+  }
 
-  const descriptor: AaiJson = {
-    schemaVersion: '2.0',
-    version: '1.0.0',
-    app: {
-      name: {
-        default: name,
-        en: name,
-      },
-    },
-    access: {
-      protocol: 'skill',
-      config: {
-        path: managedSkillDir,
-      },
-    },
-    exposure: buildSkillExposure(name, content, options.exposureMode),
-  };
-
-  await writeFile(join(appDir, 'aai.json'), JSON.stringify(descriptor, null, 2), 'utf-8');
-  await upsertSkillRegistryEntry(
-    {
-      localId,
-      protocol: 'skill',
-      config: {
-        path: managedSkillDir,
-      },
-    },
-    descriptor
-  );
-  return { localId, descriptor, managedPath: managedSkillDir };
+  throw new Error('Skill import requires either path or url');
 }
 
 async function copyDirectory(sourceDir: string, targetDir: string): Promise<void> {
@@ -444,14 +520,83 @@ async function copyDirectory(sourceDir: string, targetDir: string): Promise<void
   await fs.cp(sourceDir, targetDir, { recursive: true });
 }
 
-async function downloadRemoteSkill(skillRootUrl: string, targetDir: string): Promise<void> {
-  await mkdir(targetDir, { recursive: true });
+async function fetchRemoteSkill(skillRootUrl: string): Promise<string> {
   const skillUrl = `${skillRootUrl.replace(/\/$/, '')}/SKILL.md`;
   const response = await fetch(skillUrl);
   if (!response.ok) {
     throw new Error(`Failed to download remote skill: ${skillUrl} (${response.status})`);
   }
 
-  const content = await response.text();
+  return response.text();
+}
+
+async function writeRemoteSkill(content: string, targetDir: string): Promise<void> {
+  await mkdir(targetDir, { recursive: true });
   await writeFile(join(targetDir, 'SKILL.md'), content, 'utf-8');
+}
+
+function validateOptionalStringLength(
+  value: string | undefined,
+  field: string,
+  maxLength: number
+): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (value.length > maxLength) {
+    throw new Error(`${field} is too long. Maximum length is ${maxLength} characters.`);
+  }
+}
+
+function validateStringArrayLength(
+  values: string[] | undefined,
+  field: string,
+  maxItems: number,
+  maxItemLength: number
+): void {
+  if (!values) {
+    return;
+  }
+
+  if (values.length > maxItems) {
+    throw new Error(`${field} has too many items. Maximum item count is ${maxItems}.`);
+  }
+
+  for (const [index, value] of values.entries()) {
+    if (value.length > maxItemLength) {
+      throw new Error(`${field}[${index}] is too long. Maximum length is ${maxItemLength} characters.`);
+    }
+  }
+}
+
+function validateStringRecordLength(
+  record: Record<string, string> | undefined,
+  field: string,
+  maxItems: number,
+  maxKeyLength: number,
+  maxValueLength: number
+): void {
+  if (!record) {
+    return;
+  }
+
+  const entries = Object.entries(record);
+  if (entries.length > maxItems) {
+    throw new Error(`${field} has too many entries. Maximum entry count is ${maxItems}.`);
+  }
+
+  for (const [key, value] of entries) {
+    if (key.length > maxKeyLength) {
+      throw new Error(
+        `${field} key '${key.slice(0, 32)}' is too long. Maximum key length is ${maxKeyLength} characters.`
+      );
+    }
+
+    if (value.length > maxValueLength) {
+      throw new Error(
+        `${field} value for '${key.slice(0, 32)}' is too long. Maximum value length is ${maxValueLength} characters.`
+      );
+    }
+  }
 }

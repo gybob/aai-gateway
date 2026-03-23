@@ -14,6 +14,7 @@ export interface McpRegistryEntry {
   localId: string;
   protocol: 'mcp';
   config: McpConfig;
+  exposureMode?: 'summary' | 'keywords';
   descriptorPath: string;
   importedAt: string;
   updatedAt: string;
@@ -36,6 +37,7 @@ export class McpRegistry {
         localId: entry.localId,
         protocol: entry.protocol,
         config: entry.config,
+        exposureMode: entry.exposureMode,
         descriptorPath: entry.descriptorPath,
         importedAt: entry.importedAt,
         updatedAt: entry.updatedAt,
@@ -114,10 +116,8 @@ export class McpRegistry {
   }
 }
 
-/**
- * Create a singleton MCP registry instance
- */
 let mcpRegistryInstance: McpRegistry | null = null;
+
 export function getMcpRegistry(): McpRegistry {
   if (!mcpRegistryInstance) {
     mcpRegistryInstance = new McpRegistry();

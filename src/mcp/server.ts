@@ -1,6 +1,3 @@
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
-
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { InMemoryTaskStore } from '@modelcontextprotocol/sdk/experimental/tasks/index.js';
@@ -33,7 +30,7 @@ import {
   type McpRegistryEntry,
   upsertMcpRegistryEntry,
 } from '../storage/mcp-registry.js';
-import { upsertSkillRegistryEntry } from '../storage/skill-registry.js';
+import { getSkillRegistryEntry, upsertSkillRegistryEntry } from '../storage/skill-registry.js';
 import type { AaiJson, DetailedCapability, McpConfig, RuntimeAppRecord } from '../types/aai-json.js';
 import {
   getLocalizedName,
@@ -41,7 +38,6 @@ import {
   isCliAccess,
   isMcpAccess,
   isSkillAccess,
-  isSkillPathConfig,
 } from '../types/aai-json.js';
 import type { CallerIdentity } from '../types/consent.js';
 import { deriveLocalId } from '../utils/ids.js';
@@ -54,13 +50,17 @@ import {
 } from '../guides/app-guide-generator.js';
 import {
   buildMcpImportConfig,
-  buildSkillExposure,
-  type ExposureMode,
   buildSkillImportSource,
+  discoverMcpImport,
+  discoverSkillImport,
+  EXPOSURE_LIMITS,
+  type ExposureMode,
+  IMPORT_LIMITS,
   importMcpServer,
   importSkill,
   loadImportedMcpHeaders,
-  refreshImportedMcpServer,
+  normalizeExposureInput,
+  validateImportHeaders,
 } from './importer.js';
 import { McpTaskRunner } from './task-runner.js';
 import type { ExecutionObserver } from '../executors/events.js';
@@ -87,7 +87,7 @@ export class AaiGatewayServer {
     this.options = options ?? {};
     const taskStore = new InMemoryTaskStore();
     this.server = new Server(
-      { name: 'aai-gateway', version: '0.4.0' },
+      { name: 'aai-gateway', version: '0.4.1' },
       {
         capabilities: {
           tools: {},
@@ -200,7 +200,7 @@ export class AaiGatewayServer {
       tools.push({
         name: 'aai:exec',
         description:
-          'Execute an operation for a discovered app. Parameters: app, tool, args, task, progressToken.',
+          'Execute an operation for a discovered app. Before calling this tool, always call app:<id> first and read its guide. Do not guess tool names or arguments. Parameters: app, tool, args.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -227,7 +227,7 @@ export class AaiGatewayServer {
       tools.push({
         name: 'mcp:import',
         description:
-          'Import an MCP server into AAI Gateway managed apps so it becomes available to app:<generated-id> and aai:exec. Match the CLI import shape: use command plus optional args/env/cwd for a local stdio server, or use url plus optional transport ("streamable-http" by default, or "sse") and headers for a remote server. Before calling this tool, ask the user whether they want exposure mode "summary" or "keywords"; do not choose it silently.',
+          'Import an MCP server into AAI Gateway managed apps. This tool works in two steps. First call it with only the MCP source config to inspect the server and return tool names plus descriptions. Then ask the user to confirm keywords, summary, and exposure, and call the same tool again with the same source config plus those three fields. Only the second call creates the import record.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -240,112 +240,119 @@ export class AaiGatewayServer {
             command: {
               type: 'string',
               description:
-                'Use this for a local stdio MCP import. The executable to launch, for example "npx" or "uvx". If command is present, the import is treated as stdio.',
+                `Use this for a local stdio MCP import. The executable to launch, for example "npx" or "uvx". If command is present, the import is treated as stdio. Maximum length: ${IMPORT_LIMITS.commandLength} characters.`,
             },
             args: {
               type: 'array',
               items: { type: 'string' },
               description:
-                'Optional for local stdio MCP imports. Command arguments, for example ["-y", "@modelcontextprotocol/server-filesystem", "/repo"].',
+                `Optional for local stdio MCP imports. Command arguments, for example ["-y", "@modelcontextprotocol/server-filesystem", "/repo"]. Maximum ${IMPORT_LIMITS.argCount} items, each at most ${IMPORT_LIMITS.argLength} characters.`,
             },
             env: {
               type: 'object',
               additionalProperties: { type: 'string' },
-              description: 'Optional for local stdio MCP imports. Environment variables passed to the MCP process.',
+              description: `Optional for local stdio MCP imports. Environment variables passed to the MCP process. Maximum ${IMPORT_LIMITS.envCount} entries, key length ${IMPORT_LIMITS.envKeyLength}, value length ${IMPORT_LIMITS.envValueLength}.`,
             },
             cwd: {
               type: 'string',
-              description: 'Optional for local stdio MCP imports. Working directory used when launching the MCP process.',
+              description: `Optional for local stdio MCP imports. Working directory used when launching the MCP process. Maximum length: ${IMPORT_LIMITS.cwdLength} characters.`,
             },
             url: {
               type: 'string',
               description:
-                'Use this for a remote MCP import. The remote MCP endpoint URL.',
+                `Use this for a remote MCP import. The remote MCP endpoint URL. Maximum length: ${IMPORT_LIMITS.urlLength} characters.`,
             },
             headers: {
               type: 'object',
               additionalProperties: { type: 'string' },
               description:
-                'Optional for remote transports. HTTP headers such as Authorization for the remote MCP endpoint.',
+                `Optional for remote transports. HTTP headers such as Authorization for the remote MCP endpoint. Maximum ${IMPORT_LIMITS.headerCount} entries, key length ${IMPORT_LIMITS.headerKeyLength}, value length ${IMPORT_LIMITS.headerValueLength}.`,
             },
             exposure: {
               type: 'string',
               enum: ['summary', 'keywords'],
               description:
-                'Required. Do not guess this value. Ask the user to choose before calling the tool. Use "summary" when the user wants the AI to understand when this MCP should be used without needing exact trigger words. Use "keywords" when the user wants to leave room for more tools, but is comfortable mentioning related keywords more explicitly to trigger this MCP.',
+                'Optional on the first call, required on the second call. Ask the user to choose before sending the final import. Use "summary" when the user wants the AI to understand when this MCP should be used more broadly. Use "keywords" for lighter context that can fit more tools, but usually needs more explicit keyword mentions to trigger.',
+            },
+            keywords: {
+              type: 'array',
+              items: { type: 'string' },
+              description:
+                `Optional on the first call, required on the second call. Up to ${EXPOSURE_LIMITS.keywordCount} keywords, each at most ${EXPOSURE_LIMITS.keywordLength} characters.`,
+            },
+            summary: {
+              type: 'string',
+              description:
+                `Optional on the first call, required on the second call. A short summary that explains when this MCP should be used. Maximum length: ${EXPOSURE_LIMITS.summaryLength} characters.`,
             },
           },
-          required: ['exposure'],
           examples: [
             {
               command: 'npx',
               args: ['-y', '@modelcontextprotocol/server-filesystem', '/repo'],
-              exposure: 'summary',
             },
             {
               url: 'https://example.com/mcp',
               headers: { Authorization: 'Bearer <token>' },
               exposure: 'keywords',
+              keywords: ['issues', 'linear', 'projects'],
+              summary: 'Use this MCP for Linear issue and project operations.',
+            },
+            {
+              command: 'npx',
+              args: ['-y', '@modelcontextprotocol/server-filesystem', '/repo'],
+              exposure: 'keywords',
+              keywords: ['files', 'read', 'write'],
+              summary: 'Use this MCP for local filesystem operations inside the imported directory.',
             },
           ],
         } as Record<string, unknown>,
       });
 
       tools.push({
-        name: 'mcp:refresh',
-        description:
-          'Refresh an imported MCP app and regenerate its exposure using either summary mode or keywords mode.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            localId: {
-              type: 'string',
-              description: 'Required. The localId of a previously imported MCP app.',
-            },
-            exposure: {
-              type: 'string',
-              enum: ['summary', 'keywords'],
-              description:
-                'Required. Regenerate the imported app exposure using summary mode or keywords mode.',
-            },
-          },
-          required: ['localId', 'exposure'],
-        } as Record<string, unknown>,
-      });
-
-      tools.push({
         name: 'skill:import',
         description:
-          'Import a local or remote skill into AAI Gateway managed apps so it becomes available to app:<generated-id> and aai:exec. Use either path for a local skill directory or url for a remote skill root that exposes SKILL.md. Before calling this tool, ask the user whether they want exposure mode "summary" or "keywords"; do not choose it silently.',
+          'Import a local or remote skill into AAI Gateway managed apps. This tool also works in two steps. First call it with only the skill source so the gateway can read SKILL.md and return the name and opening description. Then ask the user to confirm keywords, summary, and exposure, and call the same tool again with the same source plus those fields. Only the second call creates the import record.',
         inputSchema: {
           type: 'object',
           properties: {
             path: {
               type: 'string',
               description:
-                'Use this for a local skill import. Point to a directory containing SKILL.md and any companion files.',
+                `Use this for a local skill import. Point to a directory containing SKILL.md and any companion files. Maximum length: ${IMPORT_LIMITS.pathLength} characters.`,
             },
             url: {
               type: 'string',
               description:
-                'Use this for a remote skill import. The gateway will fetch <url>/SKILL.md and store it as a managed skill.',
+                `Use this for a remote skill import. The gateway will fetch <url>/SKILL.md and store it as a managed skill. Maximum length: ${IMPORT_LIMITS.urlLength} characters.`,
             },
             exposure: {
               type: 'string',
               enum: ['summary', 'keywords'],
               description:
-                'Required. Do not guess this value. Ask the user to choose before calling the tool. Use "summary" when the user wants the AI to understand when this skill should be used without needing exact trigger words. Use "keywords" when the user wants to leave room for more tools, but is comfortable mentioning related keywords more explicitly to trigger this skill.',
+                'Optional on the first call, required on the second call. Ask the user to choose before sending the final import. Use "summary" when the user wants the AI to understand when this skill should be used more broadly. Use "keywords" for lighter context that can fit more tools, but usually needs more explicit keyword mentions to trigger.',
+            },
+            keywords: {
+              type: 'array',
+              items: { type: 'string' },
+              description:
+                `Optional on the first call, required on the second call. Up to ${EXPOSURE_LIMITS.keywordCount} keywords, each at most ${EXPOSURE_LIMITS.keywordLength} characters.`,
+            },
+            summary: {
+              type: 'string',
+              description:
+                `Optional on the first call, required on the second call. A short summary that explains when this skill should be used. Maximum length: ${EXPOSURE_LIMITS.summaryLength} characters.`,
             },
           },
-          required: ['exposure'],
           examples: [
             {
               path: '/absolute/path/to/skill',
-              exposure: 'summary',
             },
             {
               url: 'https://example.com/skill',
               exposure: 'keywords',
+              keywords: ['random', 'dice', 'roll'],
+              summary: 'Use this skill when the user asks for a dice roll or random die result.',
             },
           ],
         } as Record<string, unknown>,
@@ -372,18 +379,18 @@ export class AaiGatewayServer {
               type: 'string',
               enum: ['summary', 'keywords'],
               description:
-                'Optional. Regenerate exposure using summary mode or keywords mode before applying any manual summary or keyword overrides. "keywords" leaves room for more tools, but usually needs more explicit keyword mentions to trigger.',
+                'Optional. Update the recorded exposure choice to summary or keywords.',
             },
             keywords: {
               type: 'array',
               items: { type: 'string' },
               description:
-                'Optional. Replace the generated keywords with these exact keywords. Use this when you want more precise trigger words.',
+                `Optional. Replace the current keywords with these exact values. Up to ${EXPOSURE_LIMITS.keywordCount} keywords, each at most ${EXPOSURE_LIMITS.keywordLength} characters.`,
             },
             summary: {
               type: 'string',
               description:
-                'Optional. Replace the generated summary with this exact summary. Use this when you want the AI to understand more clearly when the imported app should be used.',
+                `Optional. Replace the current summary with this exact summary. Maximum length: ${EXPOSURE_LIMITS.summaryLength} characters.`,
             },
           },
         } as Record<string, unknown>,
@@ -434,10 +441,6 @@ export class AaiGatewayServer {
         return this.handleSkillImport(args as Record<string, unknown> | undefined);
       }
 
-      if (name === 'mcp:refresh') {
-        return this.handleMcpRefresh(args as Record<string, unknown> | undefined);
-      }
-
       if (name === 'import:config') {
         return this.handleImportConfig(args as Record<string, unknown> | undefined);
       }
@@ -481,10 +484,42 @@ export class AaiGatewayServer {
   ): Promise<CallToolResult> {
     const options = parseMcpImportArguments(args);
 
+    if (!options.metadata) {
+      const preview = await discoverMcpImport(getMcpExecutor(), {
+        config: options.config,
+        headers: options.headers,
+      });
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: [
+              'MCP inspection completed. No import record has been created yet.',
+              `Suggested app id: ${preview.localId}`,
+              `Detected server name: ${preview.name}`,
+              '',
+              'Available tools:',
+              formatToolPreview(preview.tools),
+              '',
+              'Next step:',
+              '1. Ask the user to confirm keywords, summary, and exposure.',
+              '2. Call `mcp:import` again with the same source config plus `keywords`, `summary`, and `exposure`.',
+              `3. summary must be at most ${EXPOSURE_LIMITS.summaryLength} characters.`,
+              `4. keywords must contain at most ${EXPOSURE_LIMITS.keywordCount} items, each at most ${EXPOSURE_LIMITS.keywordLength} characters.`,
+              '5. exposure must be either `summary` or `keywords`.',
+            ].join('\n'),
+          },
+        ],
+      };
+    }
+
     const result = await importMcpServer(getMcpExecutor(), this.secureStorage, {
       config: options.config,
       headers: options.headers,
-      exposureMode: options.exposureMode,
+      exposureMode: options.metadata.exposureMode,
+      keywords: options.metadata.keywords,
+      summary: options.metadata.summary,
     });
 
     this.appRegistry.set(result.entry.localId, {
@@ -496,12 +531,7 @@ export class AaiGatewayServer {
 
     const detail: DetailedCapability = {
       title: 'MCP Tools',
-      body:
-        result.tools.length === 0
-          ? 'No MCP tools reported.'
-          : result.tools
-            .map((tool) => `- ${tool.name}: ${tool.description ?? ''}`.trimEnd())
-            .join('\n'),
+      body: formatToolPreview(result.tools),
     };
 
     return {
@@ -512,71 +542,12 @@ export class AaiGatewayServer {
             `Imported MCP app: ${result.entry.localId}`,
             `App tool name after restart: app:${result.entry.localId}`,
             `Descriptor: ${result.entry.descriptorPath}`,
-            `Exposure mode: ${options.exposureMode}`,
-            `Generated keywords: ${result.descriptor.exposure.keywords.join(', ')}`,
-            `Generated summary: ${result.descriptor.exposure.summary}`,
-            ...describeExposureBehavior(options.exposureMode, result.descriptor.exposure),
+            `Exposure mode: ${options.metadata.exposureMode}`,
+            `Keywords: ${result.descriptor.exposure.keywords.join(', ')}`,
+            `Summary: ${result.descriptor.exposure.summary}`,
+            ...describeExposureBehavior(options.metadata.exposureMode, result.descriptor.exposure),
             '请重启后，才能使用新导入的工具。',
             'If you want to change the exposure mode, summary, or keywords later, call `import:config` with this localId.',
-            '',
-            generateOperationGuide(result.entry.localId, result.descriptor, detail),
-          ].join('\n'),
-        },
-      ],
-    };
-  }
-
-  private async handleMcpRefresh(
-    args: Record<string, unknown> | undefined
-  ): Promise<CallToolResult> {
-    const localId = asOptionalString(args?.localId);
-    if (!localId) {
-      throw new AaiError('INVALID_REQUEST', "mcp:refresh requires 'localId'");
-    }
-
-    const entry = await this.resolveImportedMcpEntry(localId);
-    if (!entry) {
-      throw new AaiError('UNKNOWN_APP', `Imported MCP app not found: ${localId}`);
-    }
-
-    const exposureMode = parseExposureMode(args?.exposure);
-
-    const result = await refreshImportedMcpServer(
-      getMcpExecutor(),
-      this.secureStorage,
-      entry,
-      exposureMode
-    );
-
-    this.appRegistry.set(result.entry.localId, {
-      localId: result.entry.localId,
-      descriptor: result.descriptor,
-      source: 'mcp-import',
-      location: result.entry.descriptorPath,
-    });
-
-    const detail: DetailedCapability = {
-      title: 'MCP Tools',
-      body:
-        result.tools.length === 0
-          ? 'No MCP tools reported.'
-          : result.tools
-            .map((tool) => `- ${tool.name}: ${tool.description ?? ''}`.trimEnd())
-            .join('\n'),
-    };
-
-    return {
-      content: [
-        {
-          type: 'text',
-          text: [
-            `Refreshed MCP app: ${result.entry.localId}`,
-            `Descriptor: ${result.entry.descriptorPath}`,
-            `Exposure mode: ${exposureMode}`,
-            `Generated keywords: ${result.descriptor.exposure.keywords.join(', ')}`,
-            `Generated summary: ${result.descriptor.exposure.summary}`,
-            ...describeExposureBehavior(exposureMode, result.descriptor.exposure),
-            '请重启后，才能使用更新后的工具配置。',
             '',
             generateOperationGuide(result.entry.localId, result.descriptor, detail),
           ].join('\n'),
@@ -612,10 +583,40 @@ export class AaiGatewayServer {
   ): Promise<CallToolResult> {
     const options = parseSkillImportArguments(args);
 
+    if (!options.metadata) {
+      const preview = await discoverSkillImport({
+        path: options.path,
+        url: options.url,
+      });
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: [
+              'Skill inspection completed. No import record has been created yet.',
+              `Suggested app id: ${preview.localId}`,
+              `Detected skill name: ${preview.name}`,
+              `Opening description: ${preview.description ?? '(not found in front matter)'}`,
+              '',
+              'Next step:',
+              '1. Ask the user to confirm keywords, summary, and exposure.',
+              '2. Call `skill:import` again with the same source plus `keywords`, `summary`, and `exposure`.',
+              `3. summary must be at most ${EXPOSURE_LIMITS.summaryLength} characters.`,
+              `4. keywords must contain at most ${EXPOSURE_LIMITS.keywordCount} items, each at most ${EXPOSURE_LIMITS.keywordLength} characters.`,
+              '5. exposure must be either `summary` or `keywords`.',
+            ].join('\n'),
+          },
+        ],
+      };
+    }
+
     const result = await importSkill({
       path: options.path,
       url: options.url,
-      exposureMode: options.exposureMode,
+      exposureMode: options.metadata.exposureMode,
+      keywords: options.metadata.keywords,
+      summary: options.metadata.summary,
     });
 
     this.appRegistry.set(result.localId, {
@@ -634,10 +635,10 @@ export class AaiGatewayServer {
             `Imported skill: ${result.localId}`,
             `App tool name after restart: app:${result.localId}`,
             `Skill directory: ${result.managedPath}`,
-            `Exposure mode: ${options.exposureMode}`,
-            `Generated keywords: ${result.descriptor.exposure.keywords.join(', ')}`,
-            `Generated summary: ${result.descriptor.exposure.summary}`,
-            ...describeExposureBehavior(options.exposureMode, result.descriptor.exposure),
+            `Exposure mode: ${options.metadata.exposureMode}`,
+            `Keywords: ${result.descriptor.exposure.keywords.join(', ')}`,
+            `Summary: ${result.descriptor.exposure.summary}`,
+            ...describeExposureBehavior(options.metadata.exposureMode, result.descriptor.exposure),
             '请重启后，才能使用新导入的工具。',
             'If you want to change the exposure mode, summary, or keywords later, call `import:config` with this localId.',
             '',
@@ -657,61 +658,37 @@ export class AaiGatewayServer {
       throw new AaiError('UNKNOWN_APP', `Imported app not found: ${options.localId}`);
     }
 
-    let descriptor = app.descriptor;
-    let inferredExposureMode = options.exposureMode;
+    const nextDescriptor: AaiJson = {
+      ...app.descriptor,
+      exposure: normalizeExposureInput({
+        keywords: options.keywords ?? app.descriptor.exposure.keywords,
+        summary: options.summary ?? app.descriptor.exposure.summary,
+      }),
+    };
 
-    if (options.exposureMode && isMcpAccess(app.descriptor.access) && app.source === 'mcp-import') {
+    if (isMcpAccess(app.descriptor.access) && app.source === 'mcp-import') {
       const entry = await this.resolveImportedMcpEntry(options.localId);
       if (!entry) {
         throw new AaiError('UNKNOWN_APP', `Imported MCP app not found: ${options.localId}`);
       }
 
-      const refreshed = await refreshImportedMcpServer(
-        getMcpExecutor(),
-        this.secureStorage,
-        entry,
-        options.exposureMode
-      );
-      descriptor = refreshed.descriptor;
-    } else if (options.exposureMode && isSkillAccess(app.descriptor.access) && app.source === 'skill-import') {
-      if (!isSkillPathConfig(app.descriptor.access.config)) {
-        throw new AaiError('INVALID_REQUEST', 'Imported skill is missing a local skill path');
-      }
-
-      const skillContent = await readFile(join(app.descriptor.access.config.path, 'SKILL.md'), 'utf-8');
-      descriptor = {
-        ...app.descriptor,
-        exposure: buildSkillExposure(
-          app.descriptor.app.name.default,
-          skillContent,
-          options.exposureMode
-        ),
-      };
-    }
-
-    const nextDescriptor: AaiJson = {
-      ...descriptor,
-      exposure: {
-        keywords: options.keywords ?? descriptor.exposure.keywords,
-        summary: options.summary ?? descriptor.exposure.summary,
-      },
-    };
-
-    if (isMcpAccess(app.descriptor.access) && app.source === 'mcp-import') {
       await upsertMcpRegistryEntry(
         {
           localId: options.localId,
           protocol: 'mcp',
           config: app.descriptor.access.config,
+          exposureMode: options.exposureMode ?? entry.exposureMode,
         },
         nextDescriptor
       );
     } else if (isSkillAccess(app.descriptor.access) && app.source === 'skill-import') {
+      const entry = await getSkillRegistryEntry(options.localId);
       await upsertSkillRegistryEntry(
         {
           localId: options.localId,
           protocol: 'skill',
           config: app.descriptor.access.config,
+          exposureMode: options.exposureMode ?? entry?.exposureMode,
         },
         nextDescriptor
       );
@@ -722,9 +699,7 @@ export class AaiGatewayServer {
       descriptor: nextDescriptor,
     });
 
-    if (!inferredExposureMode) {
-      inferredExposureMode = inferExposureMode(nextDescriptor.exposure);
-    }
+    const inferredExposureMode = options.exposureMode ?? inferExposureMode(nextDescriptor.exposure);
 
     return {
       content: [
@@ -795,17 +770,6 @@ export class AaiGatewayServer {
     const isAcpPrompt =
       resolved.descriptor.access.protocol === 'acp-agent' &&
       (toolName === 'prompt' || toolName === 'session/prompt');
-
-    if (!isTask && isAcpPrompt) {
-      logger.warn(
-        {
-          requestId,
-          app: resolved.localId,
-          tool: toolName,
-        },
-        'Synchronous ACP prompt may be timed out by the MCP client; prefer task-augmented aai:exec'
-      );
-    }
 
     await this.consentManager.checkAndPrompt(
       resolved.localId,
@@ -1349,7 +1313,11 @@ function truncateLogPreview(value: string, maxChars = 160): string {
 function parseMcpImportArguments(args: Record<string, unknown> | undefined): {
   config: McpConfig;
   headers?: Record<string, string>;
-  exposureMode: ExposureMode;
+  metadata?: {
+    exposureMode: ExposureMode;
+    keywords: string[];
+    summary: string;
+  };
 } {
   try {
     return {
@@ -1364,18 +1332,31 @@ function parseMcpImportArguments(args: Record<string, unknown> | undefined): {
         env: isStringRecord(args?.env) ? args.env : undefined,
         cwd: asOptionalString(args?.cwd),
       }),
-      headers: isStringRecord(args?.headers) ? args.headers : undefined,
-      exposureMode: parseExposureMode(args?.exposure),
+      headers: validateAndReturnHeaders(args?.headers),
+      metadata: parseOptionalExposureMetadata(args),
     };
   } catch (err) {
     throw new AaiError('INVALID_REQUEST', err instanceof Error ? err.message : String(err));
   }
 }
 
+function validateAndReturnHeaders(value: unknown): Record<string, string> | undefined {
+  if (!isStringRecord(value)) {
+    return undefined;
+  }
+
+  validateImportHeaders(value);
+  return value;
+}
+
 function parseSkillImportArguments(args: Record<string, unknown> | undefined): {
   path?: string;
   url?: string;
-  exposureMode: ExposureMode;
+  metadata?: {
+    exposureMode: ExposureMode;
+    keywords: string[];
+    summary: string;
+  };
 } {
   try {
     const source = buildSkillImportSource({
@@ -1386,7 +1367,7 @@ function parseSkillImportArguments(args: Record<string, unknown> | undefined): {
     return {
       path: source.path,
       url: source.url,
-      exposureMode: parseExposureMode(args?.exposure),
+      metadata: parseOptionalExposureMetadata(args),
     };
   } catch (err) {
     throw new AaiError('INVALID_REQUEST', err instanceof Error ? err.message : String(err));
@@ -1417,6 +1398,44 @@ function parseImportConfigArguments(args: Record<string, unknown> | undefined): 
     exposureMode: exposure === undefined ? undefined : parseExposureMode(exposure),
     keywords,
     summary,
+  };
+}
+
+function parseOptionalExposureMetadata(
+  args: Record<string, unknown> | undefined
+):
+  | {
+      exposureMode: ExposureMode;
+      keywords: string[];
+      summary: string;
+    }
+  | undefined {
+  const hasExposure = args?.exposure !== undefined;
+  const hasKeywords = args?.keywords !== undefined;
+  const hasSummary = args?.summary !== undefined;
+  const providedCount = Number(hasExposure) + Number(hasKeywords) + Number(hasSummary);
+
+  if (providedCount === 0) {
+    return undefined;
+  }
+
+  if (providedCount !== 3) {
+    throw new Error(
+      "Import requires 'keywords', 'summary', and 'exposure' together. Omit all three for inspection, or provide all three for the final import."
+    );
+  }
+
+  const exposureMode = parseExposureMode(args?.exposure);
+  const keywords = asNonEmptyStringArray(args?.keywords);
+  const summary = asOptionalString(args?.summary);
+
+  if (!summary) {
+    throw new Error("Import received an empty 'summary'");
+  }
+
+  return {
+    exposureMode,
+    ...normalizeExposureInput({ keywords, summary }),
   };
 }
 
@@ -1480,7 +1499,7 @@ export async function createGatewayServer(options?: DiscoveryOptions): Promise<A
 }
 
 function inferExposureMode(exposure: AaiJson['exposure']): ExposureMode {
-  return exposure.summary.startsWith('Use for ') ? 'keywords' : 'summary';
+  return exposure.summary.length <= 80 ? 'keywords' : 'summary';
 }
 
 function describeExposureBehavior(
@@ -1500,6 +1519,14 @@ function describeExposureBehavior(
     `Trigger summary: ${exposure.summary}`,
     `Related keywords: ${keywordHint}`,
   ];
+}
+
+function formatToolPreview(tools: Array<{ name: string; description?: string }>): string {
+  if (tools.length === 0) {
+    return 'No MCP tools reported.';
+  }
+
+  return tools.map((tool) => `- ${tool.name}: ${tool.description ?? ''}`.trimEnd()).join('\n');
 }
 
 function createStaticDetail(descriptor: AaiJson, err: unknown): DetailedCapability {

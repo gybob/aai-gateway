@@ -28,9 +28,14 @@ export class ManagedRegistry {
    */
   async scan(): Promise<RuntimeAppRecord[]> {
     try {
-      const root = getManagedAppsRoot();
-      const entries = await readdir(root, { withFileTypes: true });
       const records: RuntimeAppRecord[] = [];
+      const root = getManagedAppsRoot();
+      let entries;
+      try {
+        entries = await readdir(root, { withFileTypes: true });
+      } catch {
+        return [];
+      }
 
       for (const entry of entries) {
         if (!entry.isDirectory()) {

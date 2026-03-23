@@ -217,7 +217,7 @@ export class AcpExecutor
         clientInfo: {
           name: 'aai-gateway',
           title: 'AAI Gateway',
-          version: '0.4.0',
+          version: '0.4.1',
         },
       },
       ACP_INITIALIZE_TIMEOUT_MS
