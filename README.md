@@ -14,7 +14,6 @@ Why this matters:
   **App-level exposure, not tool-level.** Tools are grouped into apps and only the app interface is visible initially. Users interact through `app:<id>` guides instead of seeing dozens of individual tools.
 
   **Two app interfaces, user chooses:**
-
   - `summary` — a natural language description; good for automatic triggering
   - `keywords` — a compact keyword set; further reduces context overhead when users reference tools explicitly
 
@@ -73,12 +72,55 @@ Once connected, your AI tool can use AAI Gateway tools such as:
 
 - `remote:discover`
 - `aai:exec`
+- `import:search`
 - `mcp:import`
 - `skill:import`
 - `mcp:refresh`
 - `import:config`
 
-### 2. Import An MCP Server
+`import:search` also has a compatibility alias: `ability_search`.
+
+### 2. Search For MCP Servers Or Skills
+
+If you do not already know which MCP server or skill to install, ask the AI tool to call `import:search` first.
+
+This tool does not perform the web search for you. Instead, it:
+
+- turns the user request into search keywords
+- recommends safer mainstream sources to search first
+- normalizes the agent's gathered results into a shortlist
+- gives each shortlist item a temporary id for user confirmation
+- routes confirmed items into existing `mcp:import` or `skill:import` flows
+
+Recommended source order:
+
+- Official catalogs first:
+  - `modelcontextprotocol/registry`
+  - `modelcontextprotocol/servers`
+  - `openai/skills`
+- Community-curated GitHub lists second:
+  - `punkpeye/awesome-mcp-servers`
+  - `ComposioHQ/awesome-claude-skills`
+- Higher-scrutiny sources:
+  - open marketplaces such as ClawHub
+
+Important:
+
+- The recommended list is a preferred starting point, not a hard allowlist.
+- Do not casually suggest tools from random small websites.
+- Outside the preferred list, inspect maintainer identity, repository activity, README quality, license visibility, and whether the source actually exposes an importable MCP config or real skill root.
+- Open marketplaces such as ClawHub should be treated with extra caution. They are not default-trust sources.
+
+If the AI tool does not already have a retrieval tool, it can first import a fetch MCP through AAI Gateway, for example:
+
+```json
+{
+  "command": "npx",
+  "args": ["-y", "mcp-fetch-server"]
+}
+```
+
+### 3. Import An MCP Server
 
 The main workflow is: copy a mainstream MCP config snippet into your AI tool and ask it to import that server through AAI Gateway.
 
@@ -137,7 +179,7 @@ Important:
 - After restart, the imported app will appear as `app:<id>`.
 - Use `aai:exec` to actually run the imported app’s operations.
 
-### 3. Import A Skill
+### 4. Import A Skill
 
 Skills are imported through the AI tool as well.
 
@@ -169,7 +211,7 @@ Just like MCP import, skill import returns:
 
 Then restart your AI tool before using the imported skill.
 
-### 4. Supported ACP Agents
+### 5. Supported ACP Agents
 
 AAI Gateway can also control app-like agents through ACP.
 

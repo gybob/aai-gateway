@@ -31,7 +31,12 @@ import {
   upsertMcpRegistryEntry,
 } from '../storage/mcp-registry.js';
 import { getSkillRegistryEntry, upsertSkillRegistryEntry } from '../storage/skill-registry.js';
-import type { AaiJson, DetailedCapability, McpConfig, RuntimeAppRecord } from '../types/aai-json.js';
+import type {
+  AaiJson,
+  DetailedCapability,
+  McpConfig,
+  RuntimeAppRecord,
+} from '../types/aai-json.js';
 import {
   getLocalizedName,
   isAcpAgentAccess,
@@ -63,6 +68,13 @@ import {
   normalizeExposureInput,
   validateImportHeaders,
 } from './importer.js';
+import {
+  buildImportSearchResponse,
+  IMPORT_SEARCH_TOOL_ALIASES,
+  IMPORT_SEARCH_TOOL_NAME,
+  importSearchInputSchema,
+  parseImportSearchArguments,
+} from './search-guidance.js';
 import { McpTaskRunner } from './task-runner.js';
 import type { ExecutionObserver } from '../executors/events.js';
 
@@ -240,14 +252,12 @@ export class AaiGatewayServer {
             },
             command: {
               type: 'string',
-              description:
-                `Use this for a local stdio MCP import. The executable to launch, for example "npx" or "uvx". If command is present, the import is treated as stdio. Maximum length: ${IMPORT_LIMITS.commandLength} characters.`,
+              description: `Use this for a local stdio MCP import. The executable to launch, for example "npx" or "uvx". If command is present, the import is treated as stdio. Maximum length: ${IMPORT_LIMITS.commandLength} characters.`,
             },
             args: {
               type: 'array',
               items: { type: 'string' },
-              description:
-                `Optional for local stdio MCP imports. Command arguments, for example ["-y", "@modelcontextprotocol/server-filesystem", "/repo"]. Maximum ${IMPORT_LIMITS.argCount} items, each at most ${IMPORT_LIMITS.argLength} characters.`,
+              description: `Optional for local stdio MCP imports. Command arguments, for example ["-y", "@modelcontextprotocol/server-filesystem", "/repo"]. Maximum ${IMPORT_LIMITS.argCount} items, each at most ${IMPORT_LIMITS.argLength} characters.`,
             },
             env: {
               type: 'object',
@@ -260,14 +270,12 @@ export class AaiGatewayServer {
             },
             url: {
               type: 'string',
-              description:
-                `Use this for a remote MCP import. The remote MCP endpoint URL. Maximum length: ${IMPORT_LIMITS.urlLength} characters.`,
+              description: `Use this for a remote MCP import. The remote MCP endpoint URL. Maximum length: ${IMPORT_LIMITS.urlLength} characters.`,
             },
             headers: {
               type: 'object',
               additionalProperties: { type: 'string' },
-              description:
-                `Optional for remote transports. HTTP headers such as Authorization for the remote MCP endpoint. Maximum ${IMPORT_LIMITS.headerCount} entries, key length ${IMPORT_LIMITS.headerKeyLength}, value length ${IMPORT_LIMITS.headerValueLength}.`,
+              description: `Optional for remote transports. HTTP headers such as Authorization for the remote MCP endpoint. Maximum ${IMPORT_LIMITS.headerCount} entries, key length ${IMPORT_LIMITS.headerKeyLength}, value length ${IMPORT_LIMITS.headerValueLength}.`,
             },
             exposure: {
               type: 'string',
@@ -278,13 +286,11 @@ export class AaiGatewayServer {
             keywords: {
               type: 'array',
               items: { type: 'string' },
-              description:
-                `Optional on the first call, required on the second call. Up to ${EXPOSURE_LIMITS.keywordCount} keywords, each at most ${EXPOSURE_LIMITS.keywordLength} characters.`,
+              description: `Optional on the first call, required on the second call. Up to ${EXPOSURE_LIMITS.keywordCount} keywords, each at most ${EXPOSURE_LIMITS.keywordLength} characters.`,
             },
             summary: {
               type: 'string',
-              description:
-                `Optional on the first call, required on the second call. A short summary that explains when this MCP should be used. Maximum length: ${EXPOSURE_LIMITS.summaryLength} characters.`,
+              description: `Optional on the first call, required on the second call. A short summary that explains when this MCP should be used. Maximum length: ${EXPOSURE_LIMITS.summaryLength} characters.`,
             },
           },
           examples: [
@@ -304,7 +310,8 @@ export class AaiGatewayServer {
               args: ['-y', '@modelcontextprotocol/server-filesystem', '/repo'],
               exposure: 'keywords',
               keywords: ['files', 'read', 'write'],
-              summary: 'Use this MCP for local filesystem operations inside the imported directory.',
+              summary:
+                'Use this MCP for local filesystem operations inside the imported directory.',
             },
           ],
         } as Record<string, unknown>,
@@ -319,13 +326,11 @@ export class AaiGatewayServer {
           properties: {
             path: {
               type: 'string',
-              description:
-                `Use this for a local skill import. Point to a directory containing SKILL.md and any companion files. Maximum length: ${IMPORT_LIMITS.pathLength} characters.`,
+              description: `Use this for a local skill import. Point to a directory containing SKILL.md and any companion files. Maximum length: ${IMPORT_LIMITS.pathLength} characters.`,
             },
             url: {
               type: 'string',
-              description:
-                `Use this for a remote skill import. The gateway will fetch <url>/SKILL.md and store it as a managed skill. Maximum length: ${IMPORT_LIMITS.urlLength} characters.`,
+              description: `Use this for a remote skill import. The gateway will fetch <url>/SKILL.md and store it as a managed skill. Maximum length: ${IMPORT_LIMITS.urlLength} characters.`,
             },
             exposure: {
               type: 'string',
@@ -336,13 +341,11 @@ export class AaiGatewayServer {
             keywords: {
               type: 'array',
               items: { type: 'string' },
-              description:
-                `Optional on the first call, required on the second call. Up to ${EXPOSURE_LIMITS.keywordCount} keywords, each at most ${EXPOSURE_LIMITS.keywordLength} characters.`,
+              description: `Optional on the first call, required on the second call. Up to ${EXPOSURE_LIMITS.keywordCount} keywords, each at most ${EXPOSURE_LIMITS.keywordLength} characters.`,
             },
             summary: {
               type: 'string',
-              description:
-                `Optional on the first call, required on the second call. A short summary that explains when this skill should be used. Maximum length: ${EXPOSURE_LIMITS.summaryLength} characters.`,
+              description: `Optional on the first call, required on the second call. A short summary that explains when this skill should be used. Maximum length: ${EXPOSURE_LIMITS.summaryLength} characters.`,
             },
           },
           examples: [
@@ -379,23 +382,35 @@ export class AaiGatewayServer {
             exposure: {
               type: 'string',
               enum: ['summary', 'keywords'],
-              description:
-                'Optional. Update the recorded exposure choice to summary or keywords.',
+              description: 'Optional. Update the recorded exposure choice to summary or keywords.',
             },
             keywords: {
               type: 'array',
               items: { type: 'string' },
-              description:
-                `Optional. Replace the current keywords with these exact values. Up to ${EXPOSURE_LIMITS.keywordCount} keywords, each at most ${EXPOSURE_LIMITS.keywordLength} characters.`,
+              description: `Optional. Replace the current keywords with these exact values. Up to ${EXPOSURE_LIMITS.keywordCount} keywords, each at most ${EXPOSURE_LIMITS.keywordLength} characters.`,
             },
             summary: {
               type: 'string',
-              description:
-                `Optional. Replace the current summary with this exact summary. Maximum length: ${EXPOSURE_LIMITS.summaryLength} characters.`,
+              description: `Optional. Replace the current summary with this exact summary. Maximum length: ${EXPOSURE_LIMITS.summaryLength} characters.`,
             },
           },
         } as Record<string, unknown>,
       });
+
+      tools.push({
+        name: IMPORT_SEARCH_TOOL_NAME,
+        description:
+          'Plan discovery for MCP servers and skills, normalize agent-gathered search results into a shortlist, and generate install handoff guidance that routes to existing import tools.',
+        inputSchema: importSearchInputSchema,
+      });
+
+      for (const alias of IMPORT_SEARCH_TOOL_ALIASES) {
+        tools.push({
+          name: alias,
+          description: `Alias for \`${IMPORT_SEARCH_TOOL_NAME}\`. Use it to get discovery guidance, shortlist candidates, and hand off confirmed items to existing import tools.`,
+          inputSchema: importSearchInputSchema,
+        });
+      }
 
       return { tools };
     });
@@ -446,9 +461,12 @@ export class AaiGatewayServer {
         return this.handleImportConfig(args as Record<string, unknown> | undefined);
       }
 
+      if (name === IMPORT_SEARCH_TOOL_NAME || IMPORT_SEARCH_TOOL_ALIASES.includes(name as any)) {
+        return this.handleImportSearch(args as Record<string, unknown> | undefined);
+      }
+
       throw new AaiError('UNKNOWN_TOOL', `Unknown tool: ${name}`);
     });
-
   }
 
   private async handleAppGuide(
@@ -564,7 +582,12 @@ export class AaiGatewayServer {
     }
 
     const app = this.appRegistry.get(localId);
-    if (!app || app.source !== 'mcp-import' || !isMcpAccess(app.descriptor.access) || !app.location) {
+    if (
+      !app ||
+      app.source !== 'mcp-import' ||
+      !isMcpAccess(app.descriptor.access) ||
+      !app.location
+    ) {
       return null;
     }
 
@@ -719,6 +742,24 @@ export class AaiGatewayServer {
     };
   }
 
+  private async handleImportSearch(
+    args: Record<string, unknown> | undefined
+  ): Promise<CallToolResult> {
+    try {
+      const options = parseImportSearchArguments(args);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: buildImportSearchResponse(options),
+          },
+        ],
+      };
+    } catch (err) {
+      throw new AaiError('INVALID_REQUEST', err instanceof Error ? err.message : String(err));
+    }
+  }
+
   private async loadGuideDetail(localId: string, descriptor: AaiJson): Promise<DetailedCapability> {
     try {
       return await this.loadLayer3Detail(localId, descriptor);
@@ -750,7 +791,7 @@ export class AaiGatewayServer {
     const isTask = Boolean(task);
     const progressToken =
       progressTokenFromPayload ??
-      ((typeof args.progressToken === 'string' || typeof args.progressToken === 'number')
+      (typeof args.progressToken === 'string' || typeof args.progressToken === 'number'
         ? args.progressToken
         : undefined) ??
       request.params._meta?.progressToken;
@@ -830,15 +871,16 @@ export class AaiGatewayServer {
       }
     }
 
-    const taskRequest = task && !request.params.task
-      ? {
-          ...request,
-          params: {
-            ...request.params,
-            task,
-          },
-        }
-      : request;
+    const taskRequest =
+      task && !request.params.task
+        ? {
+            ...request,
+            params: {
+              ...request.params,
+              task,
+            },
+          }
+        : request;
 
     const taskResult = await this.taskRunner.createTask(requestId, taskRequest);
     const taskId = taskResult.task.taskId;
@@ -1402,9 +1444,7 @@ function parseImportConfigArguments(args: Record<string, unknown> | undefined): 
   };
 }
 
-function parseOptionalExposureMetadata(
-  args: Record<string, unknown> | undefined
-):
+function parseOptionalExposureMetadata(args: Record<string, unknown> | undefined):
   | {
       exposureMode: ExposureMode;
       keywords: string[];
@@ -1467,7 +1507,9 @@ function asOptionalString(value: unknown): string | undefined {
 }
 
 function asStringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : [];
 }
 
 function asNonEmptyStringArray(value: unknown): string[] {

@@ -1,6 +1,6 @@
 {
   "name": "aai-gateway",
-  "version": "0.4.3",
+  "version": "0.5.0",
   "type": "module",
   "main": "dist/index.js",
   "files": [
@@ -19,9 +19,9 @@
     "lint:fix": "eslint src --ext .ts --fix",
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage",
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest --passWithNoTests",
+    "test:coverage": "vitest run --coverage --passWithNoTests",
     "test:single": "vitest run --testNamePattern",
     "clean": "rm -rf dist",
     "prepublishOnly": "npm run build"
