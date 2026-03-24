@@ -13,11 +13,13 @@ export interface CommandConfig {
 
 export interface McpStdioConfig extends CommandConfig {
   transport: 'stdio';
+  timeout?: number;
 }
 
 export interface McpRemoteConfig {
   transport: 'streamable-http' | 'sse';
   url: string;
+  timeout?: number;
 }
 
 export type McpConfig = McpStdioConfig | McpRemoteConfig;

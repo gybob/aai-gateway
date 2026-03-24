@@ -18,9 +18,11 @@ const SECRET_PREFIX = 'mcp-import-headers-';
 export type ExposureMode = 'summary' | 'keywords';
 
 export const IMPORT_LIMITS = {
+  nameLength: 128,
   commandLength: 256,
   urlLength: 2048,
   pathLength: 2048,
+  timeoutMsMax: 2_147_483_647,
   cwdLength: 2048,
   argCount: 64,
   argLength: 1024,
@@ -47,6 +49,7 @@ export interface McpImportConfigInput {
   transport?: 'streamable-http' | 'sse';
   url?: string;
   command?: string;
+  timeout?: number;
   args?: string[];
   env?: Record<string, string>;
   cwd?: string;
@@ -55,6 +58,7 @@ export interface McpImportConfigInput {
 export interface McpImportPreviewOptions {
   config: McpConfig;
   headers?: Record<string, string>;
+  name?: string;
 }
 
 export interface McpImportOptions extends McpImportPreviewOptions {
@@ -105,6 +109,7 @@ export function buildMcpImportConfig(input: McpImportConfigInput): McpConfig {
   validateOptionalStringLength(input.command, 'command', IMPORT_LIMITS.commandLength);
   validateOptionalStringLength(input.url, 'url', IMPORT_LIMITS.urlLength);
   validateOptionalStringLength(input.cwd, 'cwd', IMPORT_LIMITS.cwdLength);
+  validateOptionalTimeoutMs(input.timeout, 'timeout', IMPORT_LIMITS.timeoutMsMax);
   validateStringArrayLength(input.args, 'args', IMPORT_LIMITS.argCount, IMPORT_LIMITS.argLength);
   validateStringRecordLength(
     input.env,
@@ -129,6 +134,7 @@ export function buildMcpImportConfig(input: McpImportConfigInput): McpConfig {
     return {
       transport: 'stdio',
       command,
+      ...(input.timeout !== undefined ? { timeout: input.timeout } : {}),
       ...(input.args && input.args.length > 0 ? { args: input.args } : {}),
       ...(input.env && Object.keys(input.env).length > 0 ? { env: input.env } : {}),
       ...(input.cwd ? { cwd: input.cwd } : {}),
@@ -139,6 +145,7 @@ export function buildMcpImportConfig(input: McpImportConfigInput): McpConfig {
     return {
       transport: input.transport ?? 'streamable-http',
       url,
+      ...(input.timeout !== undefined ? { timeout: input.timeout } : {}),
     };
   }
 
@@ -221,13 +228,15 @@ export async function discoverMcpImport(
   executor: McpExecutor,
   options: McpImportPreviewOptions
 ): Promise<McpImportPreview> {
-  const localId = await deriveUniqueLocalImportId(options.config);
+  const requestedName = normalizeImportedAppName(options.name);
+  const localId = await deriveUniqueLocalImportId(options.config, requestedName);
   const tools = await executor.listTools({
     localId,
     config: options.config,
     headers: options.headers,
   });
-  const name = await deriveImportName(executor, options.config, options.headers, localId);
+  const name =
+    requestedName ?? (await deriveImportName(executor, options.config, options.headers, localId));
   return { localId, name, tools };
 }
 
@@ -409,8 +418,8 @@ function buildImportedMcpDescriptor(name: string, config: McpConfig, exposure: E
   };
 }
 
-async function deriveUniqueLocalImportId(config: McpConfig): Promise<string> {
-  const preferred = deriveLocalImportId(config);
+async function deriveUniqueLocalImportId(config: McpConfig, name?: string): Promise<string> {
+  const preferred = deriveLocalImportId(config, name);
   const existing = await getMcpRegistryEntry(preferred);
   if (!existing) {
     return preferred;
@@ -424,10 +433,14 @@ async function deriveUniqueLocalImportId(config: McpConfig): Promise<string> {
     config.transport === 'stdio'
       ? `mcp:${config.command}:${(config.args ?? []).join(' ')}`
       : `mcp:${config.transport}:${config.url}`;
-  return deriveLocalId(seed, preferred);
+  return deriveLocalId(name ? `${seed}:name:${name}` : seed, preferred);
 }
 
-function deriveLocalImportId(config: McpConfig): string {
+function deriveLocalImportId(config: McpConfig, name?: string): string {
+  if (name) {
+    return slugify(name) || 'mcp';
+  }
+
   const seed =
     config.transport === 'stdio'
       ? deriveStdioImportSlug(config.command, config.args)
@@ -479,6 +492,12 @@ function simplifyImportedName(value: string): string {
     .replace(/^mcp-/, '');
 
   return slugify(normalized) || 'mcp';
+}
+
+function normalizeImportedAppName(name: string | undefined): string | undefined {
+  validateOptionalStringLength(name, 'name', IMPORT_LIMITS.nameLength);
+  const normalized = name?.trim();
+  return normalized && normalized.length > 0 ? normalized : undefined;
 }
 
 function deriveSkillName(options: SkillImportSourceInput, content: string): string {
@@ -546,6 +565,24 @@ function validateOptionalStringLength(
 
   if (value.length > maxLength) {
     throw new Error(`${field} is too long. Maximum length is ${maxLength} characters.`);
+  }
+}
+
+function validateOptionalTimeoutMs(
+  value: number | undefined,
+  field: string,
+  maxValue: number
+): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`${field} must be a positive integer in milliseconds.`);
+  }
+
+  if (value > maxValue) {
+    throw new Error(`${field} is too large. Maximum value is ${maxValue}.`);
   }
 }
 

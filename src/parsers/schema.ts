@@ -17,14 +17,17 @@ const CommandConfigSchema = z.object({
 const McpConfigSchema = z.discriminatedUnion('transport', [
   CommandConfigSchema.extend({
     transport: z.literal('stdio'),
+    timeout: z.number().int().positive().optional(),
   }),
   z.object({
     transport: z.literal('streamable-http'),
     url: z.string().url(),
+    timeout: z.number().int().positive().optional(),
   }),
   z.object({
     transport: z.literal('sse'),
     url: z.string().url(),
+    timeout: z.number().int().positive().optional(),
   }),
 ]);
 

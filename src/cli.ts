@@ -45,9 +45,11 @@ interface ExposureOptions {
 
 interface McpImportOptions extends CommonOptions, ExposureOptions {
   command: 'mcp-import';
+  name?: string;
   transport?: 'streamable-http' | 'sse';
   url?: string;
   launchCommand?: string;
+  timeout?: number;
   launchArgs: string[];
   launchEnv: Record<string, string>;
   launchCwd?: string;
@@ -78,6 +80,14 @@ function parseKeyValue(value: string, flag: string): [string, string] {
   return [value.slice(0, index), value.slice(index + 1)];
 }
 
+function parsePositiveInteger(value: string, flag: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`${flag} expects a positive integer`);
+  }
+  return parsed;
+}
+
 function parseArgs(args: string[]): CliOptions {
   const dev = args.includes('--dev');
   if (args.includes('--scan')) {
@@ -86,9 +96,11 @@ function parseArgs(args: string[]): CliOptions {
 
   if (args[0] === 'mcp' && args[1] === 'import') {
     const exposure = parseRequiredExposureArgs(args.slice(2));
+    let name: string | undefined;
     let transport: 'streamable-http' | 'sse' | undefined;
     let url: string | undefined;
     let launchCommand: string | undefined;
+    let timeout: number | undefined;
     let launchCwd: string | undefined;
     const launchArgs: string[] = [];
     const launchEnv: Record<string, string> = {};
@@ -105,6 +117,10 @@ function parseArgs(args: string[]): CliOptions {
         case '--keyword':
           i += 1;
           break;
+        case '--name':
+          name = next;
+          i += 1;
+          break;
         case '--transport':
           if (next !== 'streamable-http' && next !== 'sse') {
             throw new Error('--transport must be streamable-http or sse');
@@ -118,6 +134,10 @@ function parseArgs(args: string[]): CliOptions {
           break;
         case '--command':
           launchCommand = next;
+          i += 1;
+          break;
+        case '--timeout':
+          timeout = parsePositiveInteger(next, '--timeout');
           i += 1;
           break;
         case '--arg':
@@ -148,9 +168,11 @@ function parseArgs(args: string[]): CliOptions {
               '--exposure',
               '--summary',
               '--keyword',
+              '--name',
               '--transport',
               '--url',
               '--command',
+              '--timeout',
               '--arg',
               '--env',
               '--cwd',
@@ -166,9 +188,11 @@ function parseArgs(args: string[]): CliOptions {
       command: 'mcp-import',
       dev,
       ...exposure,
+      ...(name ? { name } : {}),
       transport,
       url,
       launchCommand,
+      ...(timeout !== undefined ? { timeout } : {}),
       launchArgs,
       launchEnv,
       launchCwd,
@@ -211,7 +235,7 @@ function parseArgs(args: string[]): CliOptions {
   if (args[0] === 'app' && args[1] === 'config') {
     const localId = args[2];
     if (!localId) {
-      throw new Error('Usage: aai-gateway app config <local-id>');
+      throw new Error('Usage: aai-gateway app config <app-id>');
     }
 
     let exposure: ExposureMode | undefined;
@@ -314,7 +338,7 @@ Usage:
   aai-gateway [options]
   aai-gateway mcp import [options]
   aai-gateway skill import [options]
-  aai-gateway app config <local-id> [options]
+  aai-gateway app config <app-id> [options]
 
 Options:
   --scan        Scan for desktop descriptors and exit
@@ -328,7 +352,9 @@ Shared metadata options:
   --keyword VALUE        Required for import and repeatable, max ${EXPOSURE_LIMITS.keywordCount} items, each max ${EXPOSURE_LIMITS.keywordLength} characters
 
 MCP import options:
+  --name TEXT           Optional app name used for display and app id generation, max ${IMPORT_LIMITS.nameLength} chars
   --command CMD          Import a local stdio MCP server, max ${IMPORT_LIMITS.commandLength} chars
+  --timeout MS           Optional MCP downstream inactivity timeout in milliseconds, default 60000
   --arg VALUE            Repeatable stdio argument, max ${IMPORT_LIMITS.argCount} items, each max ${IMPORT_LIMITS.argLength} chars
   --env KEY=VALUE        Repeatable stdio environment variable, max ${IMPORT_LIMITS.envCount} entries
   --cwd DIR              Working directory for stdio launch, max ${IMPORT_LIMITS.cwdLength} chars
@@ -373,12 +399,14 @@ async function runMcpImport(options: McpImportOptions): Promise<void> {
     transport: options.transport,
     url: options.url,
     command: options.launchCommand,
+    timeout: options.timeout,
     args: options.launchArgs,
     env: options.launchEnv,
     cwd: options.launchCwd,
   });
 
   const result = await importMcpServer(executor, storage, {
+    name: options.name,
     exposureMode: options.exposure,
     keywords: options.keywords,
     summary: options.summary,
@@ -386,9 +414,11 @@ async function runMcpImport(options: McpImportOptions): Promise<void> {
     headers: options.headers,
   });
 
-  console.log(`Imported MCP app: ${result.entry.localId}`);
+  console.log(`Imported MCP app: ${result.descriptor.app.name.default}`);
+  console.log(`App ID: ${result.entry.localId}`);
   console.log(`Descriptor: ${result.entry.descriptorPath}`);
   console.log(`Managed directory: ${getManagedAppDir(result.entry.localId)}`);
+  console.log(`Tool name after restart: app:${result.entry.localId}`);
   console.log(`Keywords: ${result.descriptor.exposure.keywords.join(', ')}`);
   console.log(`Summary: ${result.descriptor.exposure.summary}`);
   console.log(`Exposure mode: ${options.exposure}`);
@@ -408,9 +438,11 @@ async function runSkillImport(options: SkillImportOptions): Promise<void> {
     url: source.url,
   });
 
-  console.log(`Imported skill: ${result.localId}`);
+  console.log(`Imported skill: ${result.descriptor.app.name.default}`);
+  console.log(`App ID: ${result.localId}`);
   console.log(`Descriptor: ${join(getManagedAppDir(result.localId), 'aai.json')}`);
   console.log(`Skill directory: ${result.managedPath}`);
+  console.log(`Tool name after restart: app:${result.localId}`);
   console.log(`Keywords: ${result.descriptor.exposure.keywords.join(', ')}`);
   console.log(`Summary: ${result.descriptor.exposure.summary}`);
   console.log(`Exposure mode: ${options.exposure}`);

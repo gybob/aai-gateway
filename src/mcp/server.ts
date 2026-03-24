@@ -83,6 +83,7 @@ import type { ExecutionObserver } from '../executors/events.js';
  * Must be well below the default MCP client request timeout (60 s).
  */
 const ACP_KEEPALIVE_INTERVAL_MS = 15_000;
+const MCP_DOWNSTREAM_INACTIVITY_TIMEOUT_MS = 60_000;
 const DOWNSTREAM_INACTIVITY_TIMEOUT_MS = 300_000;
 const ACP_DOWNSTREAM_INACTIVITY_TIMEOUT_MS = 180_000;
 
@@ -244,6 +245,10 @@ export class AaiGatewayServer {
         inputSchema: {
           type: 'object',
           properties: {
+            name: {
+              type: 'string',
+              description: `Optional. Display name for the imported app. When provided, AAI Gateway also uses it to derive the app id. Maximum length: ${IMPORT_LIMITS.nameLength} characters.`,
+            },
             transport: {
               type: 'string',
               enum: ['streamable-http', 'sse'],
@@ -267,6 +272,10 @@ export class AaiGatewayServer {
             cwd: {
               type: 'string',
               description: `Optional for local stdio MCP imports. Working directory used when launching the MCP process. Maximum length: ${IMPORT_LIMITS.cwdLength} characters.`,
+            },
+            timeout: {
+              type: 'integer',
+              description: `Optional for all MCP imports. Downstream inactivity timeout in milliseconds. If omitted, MCP calls time out after ${MCP_DOWNSTREAM_INACTIVITY_TIMEOUT_MS}ms without any downstream activity. Maximum value: ${IMPORT_LIMITS.timeoutMsMax}.`,
             },
             url: {
               type: 'string',
@@ -294,6 +303,11 @@ export class AaiGatewayServer {
             },
           },
           examples: [
+            {
+              name: 'Playwright',
+              command: 'npx',
+              args: ['@playwright/mcp@latest'],
+            },
             {
               command: 'npx',
               args: ['-y', '@modelcontextprotocol/server-filesystem', '/repo'],
@@ -369,15 +383,20 @@ export class AaiGatewayServer {
         inputSchema: {
           type: 'object',
           properties: {
+            appId: {
+              type: 'string',
+              description:
+                'Optional if app is provided. The imported app id, for example "playwright".',
+            },
             localId: {
               type: 'string',
               description:
-                'Optional if app is provided. The imported app id, for example "server-filesystem".',
+                'Deprecated alias for appId. Optional if app or appId is provided.',
             },
             app: {
               type: 'string',
               description:
-                'Optional if localId is provided. Accepts either "app:<id>" or the plain imported app id.',
+                'Optional if appId is provided. Accepts either "app:<id>" or the plain imported app id.',
             },
             exposure: {
               type: 'string',
@@ -505,6 +524,7 @@ export class AaiGatewayServer {
 
     if (!options.metadata) {
       const preview = await discoverMcpImport(getMcpExecutor(), {
+        name: options.name,
         config: options.config,
         headers: options.headers,
       });
@@ -515,8 +535,7 @@ export class AaiGatewayServer {
             type: 'text',
             text: [
               'MCP inspection completed. No import record has been created yet.',
-              `Suggested app id: ${preview.localId}`,
-              `Detected server name: ${preview.name}`,
+              `App name: ${preview.name}`,
               '',
               'Available tools:',
               formatToolPreview(preview.tools),
@@ -534,6 +553,7 @@ export class AaiGatewayServer {
     }
 
     const result = await importMcpServer(getMcpExecutor(), this.secureStorage, {
+      name: options.name,
       config: options.config,
       headers: options.headers,
       exposureMode: options.metadata.exposureMode,
@@ -550,7 +570,7 @@ export class AaiGatewayServer {
 
     const detail: DetailedCapability = {
       title: 'MCP Tools',
-      body: formatToolPreview(result.tools),
+      body: JSON.stringify(result.tools, null, 2),
     };
 
     return {
@@ -558,7 +578,8 @@ export class AaiGatewayServer {
         {
           type: 'text',
           text: [
-            `Imported MCP app: ${result.entry.localId}`,
+            `Imported MCP app: ${result.descriptor.app.name.default}`,
+            `App ID: ${result.entry.localId}`,
             `App tool name after restart: app:${result.entry.localId}`,
             `Descriptor: ${result.entry.descriptorPath}`,
             `Exposure mode: ${options.metadata.exposureMode}`,
@@ -566,7 +587,7 @@ export class AaiGatewayServer {
             `Summary: ${result.descriptor.exposure.summary}`,
             ...describeExposureBehavior(options.metadata.exposureMode, result.descriptor.exposure),
             '请重启后，才能使用新导入的工具。',
-            'If you want to change the exposure mode, summary, or keywords later, call `import:config` with this localId.',
+            'If you want to change the exposure mode, summary, or keywords later, call `import:config` with this app id.',
             '',
             generateOperationGuide(result.entry.localId, result.descriptor, detail),
           ].join('\n'),
@@ -619,8 +640,7 @@ export class AaiGatewayServer {
             type: 'text',
             text: [
               'Skill inspection completed. No import record has been created yet.',
-              `Suggested app id: ${preview.localId}`,
-              `Detected skill name: ${preview.name}`,
+              `App name: ${preview.name}`,
               `Opening description: ${preview.description ?? '(not found in front matter)'}`,
               '',
               'Next step:',
@@ -656,7 +676,8 @@ export class AaiGatewayServer {
         {
           type: 'text',
           text: [
-            `Imported skill: ${result.localId}`,
+            `Imported skill: ${result.descriptor.app.name.default}`,
+            `App ID: ${result.localId}`,
             `App tool name after restart: app:${result.localId}`,
             `Skill directory: ${result.managedPath}`,
             `Exposure mode: ${options.metadata.exposureMode}`,
@@ -664,7 +685,7 @@ export class AaiGatewayServer {
             `Summary: ${result.descriptor.exposure.summary}`,
             ...describeExposureBehavior(options.metadata.exposureMode, result.descriptor.exposure),
             '请重启后，才能使用新导入的工具。',
-            'If you want to change the exposure mode, summary, or keywords later, call `import:config` with this localId.',
+            'If you want to change the exposure mode, summary, or keywords later, call `import:config` with this app id.',
             '',
             generateOperationGuide(result.localId, result.descriptor, detail),
           ].join('\n'),
@@ -982,10 +1003,7 @@ export class AaiGatewayServer {
       });
       return {
         title: 'MCP Tools',
-        body:
-          tools.length === 0
-            ? 'No MCP tools reported.'
-            : tools.map((tool) => `- ${tool.name}: ${tool.description ?? ''}`.trimEnd()).join('\n'),
+        body: JSON.stringify(tools, null, 2),
       };
     }
 
@@ -1049,9 +1067,7 @@ export class AaiGatewayServer {
     args: Record<string, unknown>,
     observer?: ExecutionObserver
   ): Promise<unknown> {
-    const timeoutMs = isAcpAgentAccess(descriptor.access)
-      ? ACP_DOWNSTREAM_INACTIVITY_TIMEOUT_MS
-      : DOWNSTREAM_INACTIVITY_TIMEOUT_MS;
+    const timeoutMs = this.getDownstreamInactivityTimeoutMs(descriptor);
 
     return new Promise((resolve, reject) => {
       let completed = false;
@@ -1091,6 +1107,18 @@ export class AaiGatewayServer {
         (error) => finish(() => reject(error))
       );
     });
+  }
+
+  private getDownstreamInactivityTimeoutMs(descriptor: AaiJson): number {
+    if (isMcpAccess(descriptor.access)) {
+      return descriptor.access.config.timeout ?? MCP_DOWNSTREAM_INACTIVITY_TIMEOUT_MS;
+    }
+
+    if (isAcpAgentAccess(descriptor.access)) {
+      return ACP_DOWNSTREAM_INACTIVITY_TIMEOUT_MS;
+    }
+
+    return DOWNSTREAM_INACTIVITY_TIMEOUT_MS;
   }
 
   private wrapExecutionObserver(
@@ -1354,6 +1382,7 @@ function truncateLogPreview(value: string, maxChars = 160): string {
 }
 
 function parseMcpImportArguments(args: Record<string, unknown> | undefined): {
+  name?: string;
   config: McpConfig;
   headers?: Record<string, string>;
   metadata?: {
@@ -1364,6 +1393,7 @@ function parseMcpImportArguments(args: Record<string, unknown> | undefined): {
 } {
   try {
     return {
+      name: asOptionalString(args?.name),
       config: buildMcpImportConfig({
         transport:
           args?.transport === 'streamable-http' || args?.transport === 'sse'
@@ -1371,6 +1401,7 @@ function parseMcpImportArguments(args: Record<string, unknown> | undefined): {
             : undefined,
         url: asOptionalString(args?.url),
         command: asOptionalString(args?.command),
+        timeout: asOptionalPositiveInteger(args?.timeout, 'timeout'),
         args: asStringArray(args?.args),
         env: isStringRecord(args?.env) ? args.env : undefined,
         cwd: asOptionalString(args?.cwd),
@@ -1423,9 +1454,9 @@ function parseImportConfigArguments(args: Record<string, unknown> | undefined): 
   keywords?: string[];
   summary?: string;
 } {
-  const localId = normalizeImportedAppId(args?.localId, args?.app);
+  const localId = normalizeImportedAppId(args?.appId, args?.localId, args?.app);
   if (!localId) {
-    throw new AaiError('INVALID_REQUEST', "import:config requires 'localId' or 'app'");
+    throw new AaiError('INVALID_REQUEST', "import:config requires 'appId' or 'app'");
   }
 
   const exposure = args?.exposure;
@@ -1480,7 +1511,16 @@ function parseOptionalExposureMetadata(args: Record<string, unknown> | undefined
   };
 }
 
-function normalizeImportedAppId(localIdValue: unknown, appValue: unknown): string | undefined {
+function normalizeImportedAppId(
+  appIdValue: unknown,
+  localIdValue: unknown,
+  appValue: unknown
+): string | undefined {
+  const appId = asOptionalString(appIdValue);
+  if (appId) {
+    return appId;
+  }
+
   const localId = asOptionalString(localIdValue);
   if (localId) {
     return localId;
@@ -1504,6 +1544,18 @@ function parseExposureMode(value: unknown): ExposureMode {
 
 function asOptionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function asOptionalPositiveInteger(value: unknown, field: string): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
+    throw new Error(`${field} must be a positive integer in milliseconds`);
+  }
+
+  return value;
 }
 
 function asStringArray(value: unknown): string[] {
