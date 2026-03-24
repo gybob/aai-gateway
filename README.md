@@ -4,8 +4,6 @@
 
 AAI Gateway turns many apps, agents, skills, and MCP servers into one MCP server.
 
-You connect your AI tool once. AAI Gateway handles discovery, import, routing, and exposure control behind that single entrypoint.
-
 Why this matters:
 
 - One MCP connection instead of one MCP per app
@@ -67,20 +65,6 @@ Add this to your user config at `~/.config/opencode/opencode.json`:
   }
 }
 ```
-
-### What You Get After Connecting
-
-Once connected, your AI tool can use AAI Gateway tools such as:
-
-- `remote:discover`
-- `aai:exec`
-- `import:search`
-- `mcp:import`
-- `skill:import`
-- `mcp:refresh`
-- `import:config`
-
-`import:search` also has a compatibility alias: `ability_search`.
 
 ### 2. Search For MCP Servers Or Skills
 
