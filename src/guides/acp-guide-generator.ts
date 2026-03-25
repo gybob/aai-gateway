@@ -2,6 +2,8 @@ import type { AaiJson, DetailedCapability } from '../types/aai-json.js';
 import { getLocalizedName } from '../types/aai-json.js';
 import { getSystemLocale } from '../utils/locale.js';
 
+const ACP_POLL_WAIT_MS = 30_000;
+
 export function generateAcpOperationGuide(
   localId: string,
   descriptor: AaiJson,
@@ -21,24 +23,37 @@ export function generateAcpOperationGuide(
   lines.push(`Summary: ${descriptor.exposure.summary}`);
   lines.push('');
   lines.push('## ACP Tools');
-  lines.push(...formatAcpToolSection('prompt', getPromptToolDescription(), buildPromptSchema(false), {
-    app: localId,
-    tool: 'prompt',
-    args: {
-      text: 'Summarize the current repository structure in 5 bullet points.',
-    },
-  }));
+  lines.push(
+    ...formatAcpToolSection(
+      'prompt',
+      [
+        'Start a new ACP turn using the gateway convenience flow.',
+        `The gateway creates or reuses a session, sends \`session/prompt\` downstream, waits up to ${ACP_POLL_WAIT_MS}ms, and returns only the currently available increment.`,
+        'This tool does not stream upstream. If the turn is still running, the response tells you to call `session/poll` with the returned `sessionId`.',
+      ].join(' '),
+      buildPromptSchema(false),
+      buildPromptResultSchema(),
+      {
+        app: localId,
+        tool: 'prompt',
+        args: {
+          text: 'Read the repository and explain the main entrypoints.',
+        },
+      }
+    )
+  );
   lines.push('');
   lines.push(
     ...formatAcpToolSection(
       'session/new',
-      'Create a new ACP session explicitly and return a `sessionId` you can reuse in later `session/prompt` calls.',
+      'Create a new ACP session explicitly. Use this when you want to manage `sessionId` yourself before sending prompts.',
       buildSessionNewSchema(),
+      buildSessionNewResultSchema(),
       {
         app: localId,
         tool: 'session/new',
         args: {
-          title: 'Repository analysis',
+          title: 'Repository walkthrough',
           cwd: '/absolute/path/to/project',
           mcpServers: [],
         },
@@ -49,8 +64,13 @@ export function generateAcpOperationGuide(
   lines.push(
     ...formatAcpToolSection(
       'session/prompt',
-      getSessionPromptToolDescription(),
+      [
+        'Send a prompt to an ACP session explicitly.',
+        `Like \`prompt\`, this waits up to ${ACP_POLL_WAIT_MS}ms and returns a normalized polling result instead of streaming upstream.`,
+        'If `done` is `false`, keep polling with `session/poll` until `done` becomes `true`.',
+      ].join(' '),
       buildPromptSchema(true),
+      buildPromptResultSchema(),
       {
         app: localId,
         tool: 'session/prompt',
@@ -59,7 +79,7 @@ export function generateAcpOperationGuide(
           prompt: [
             {
               type: 'text',
-              text: 'Continue the previous task and include the unresolved risks.',
+              text: 'Continue the prior analysis and list the remaining risks.',
             },
           ],
         },
@@ -67,24 +87,35 @@ export function generateAcpOperationGuide(
     )
   );
   lines.push('');
-  lines.push('## Execution Notes');
-  lines.push('- `tool: "prompt"` is the convenience wrapper for one-off calls.');
   lines.push(
-    '- `tool: "session/new"` then `tool: "session/prompt"` is the explicit reusable-session flow.'
-  );
-  lines.push(
-    '- If `sessionId` is omitted on `prompt`, the gateway may create or reuse a session automatically.'
-  );
-  lines.push('- Treat `sessionId` as the ACP conversation handle.');
-  lines.push(
-    '- Final answer text may arrive through `session/update`; the gateway merges that text into the final tool response.'
-  );
-  lines.push(
-    '- During a synchronous `aai:exec` prompt, the gateway also forwards `session/update` text upstream as streaming `notifications/message` events.'
+    ...formatAcpToolSection(
+      'session/poll',
+      [
+        'Wait for the next increment from the active ACP turn for a given `sessionId`.',
+        `This long-poll waits up to ${ACP_POLL_WAIT_MS}ms and returns only the newly available text since the previous \`prompt\`, \`session/prompt\`, or \`session/poll\` response.`,
+        'If no new content arrives before the wait window ends and the turn is still running, the response keeps `done: false` and instructs you to poll again.',
+      ].join(' '),
+      buildSessionPollSchema(),
+      buildPromptResultSchema(),
+      {
+        app: localId,
+        tool: 'session/poll',
+        args: {
+          sessionId: '<session-id>',
+        },
+      }
+    )
   );
   lines.push('');
-  lines.push('## Case 1: One-Off Conversation');
-  lines.push('Use the simplified `prompt` tool when you want one request/response turn without managing a session id yourself.');
+  lines.push('## Polling Model');
+  lines.push(`- ` + `\`prompt\`, \`session/prompt\`, and \`session/poll\` each wait at most ${ACP_POLL_WAIT_MS}ms.`);
+  lines.push('- They never stream partial output upstream as MCP notifications.');
+  lines.push('- `deltaText` is the incremental text for this response only.');
+  lines.push('- Stop polling only when `done: true`.');
+  lines.push('- If `done: false`, use the returned `sessionId` with `tool: "session/poll"`.');
+  lines.push('');
+  lines.push('## Case 1: One-Off Prompt Then Poll');
+  lines.push('First request:');
   lines.push('');
   lines.push(formatJsonCodeBlock({
     app: localId,
@@ -94,8 +125,45 @@ export function generateAcpOperationGuide(
     },
   }));
   lines.push('');
-  lines.push('## Case 2: Reuse A Session');
-  lines.push('Step 1. Create a session and keep the returned `sessionId`.');
+  lines.push('Possible first response when the turn is still running:');
+  lines.push('');
+  lines.push(formatJsonCodeBlock({
+    sessionId: '<session-id>',
+    done: false,
+    status: 'working',
+    deltaText: 'I found the main entrypoint in src/index.ts ...',
+    outputText:
+      'I found the main entrypoint in src/index.ts ...\n\n[AAI Gateway] The downstream ACP agent is still running. Call aai:exec with { app: "' +
+      localId +
+      '", tool: "session/poll", args: { sessionId: "<session-id>" } } to fetch the next increment.',
+    pollTool: 'session/poll',
+    pollArgs: { sessionId: '<session-id>' },
+    nextAction:
+      `Call aai:exec with { app: "${localId}", tool: "session/poll", args: { sessionId: "<session-id>" } } to fetch the next increment.`,
+  }));
+  lines.push('');
+  lines.push('Follow-up poll request:');
+  lines.push('');
+  lines.push(formatJsonCodeBlock({
+    app: localId,
+    tool: 'session/poll',
+    args: {
+      sessionId: '<session-id>',
+    },
+  }));
+  lines.push('');
+  lines.push('Final response when the turn completes:');
+  lines.push('');
+  lines.push(formatJsonCodeBlock({
+    sessionId: '<session-id>',
+    done: true,
+    status: 'completed',
+    deltaText: 'The remaining important entrypoints are src/mcp/server.ts and src/cli.ts.',
+    outputText: 'The remaining important entrypoints are src/mcp/server.ts and src/cli.ts.',
+  }));
+  lines.push('');
+  lines.push('## Case 2: Explicit Session Reuse');
+  lines.push('Step 1. Create a session:');
   lines.push('');
   lines.push(formatJsonCodeBlock({
     app: localId,
@@ -107,19 +175,35 @@ export function generateAcpOperationGuide(
     },
   }));
   lines.push('');
-  lines.push('Step 2. Reuse that `sessionId` in `session/prompt` to continue the same conversation.');
+  lines.push('Expected response shape:');
+  lines.push('');
+  lines.push(formatJsonCodeBlock({
+    sessionId: '<session-id>',
+  }));
+  lines.push('');
+  lines.push('Step 2. Start a turn on that session:');
   lines.push('');
   lines.push(formatJsonCodeBlock({
     app: localId,
     tool: 'session/prompt',
     args: {
-      sessionId: '<session-id-from-session/new>',
+      sessionId: '<session-id>',
       prompt: [
         {
           type: 'text',
-          text: 'Continue from the prior session and propose the next code changes.',
+          text: 'Continue the prior discussion and identify the next code changes.',
         },
       ],
+    },
+  }));
+  lines.push('');
+  lines.push('Step 3. If the response returns `done: false`, keep calling:');
+  lines.push('');
+  lines.push(formatJsonCodeBlock({
+    app: localId,
+    tool: 'session/poll',
+    args: {
+      sessionId: '<session-id>',
     },
   }));
 
@@ -190,33 +274,23 @@ function asBoolean(value: unknown): boolean | null {
 function formatAcpToolSection(
   toolName: string,
   description: string,
-  schema: Record<string, unknown>,
+  inputSchema: Record<string, unknown>,
+  outputSchema: Record<string, unknown>,
   example: Record<string, unknown>
 ): string[] {
   return [
     `### ${toolName}`,
     description,
     '',
-    'Arguments:',
-    formatJsonCodeBlock(schema),
+    'Input schema:',
+    formatJsonCodeBlock(inputSchema),
+    '',
+    'Output schema:',
+    formatJsonCodeBlock(outputSchema),
     '',
     '`aai:exec` example:',
     formatJsonCodeBlock(example),
   ];
-}
-
-function getPromptToolDescription(): string {
-  return [
-    'Start a prompt without managing `sessionId` directly.',
-    'The gateway converts `args.text` or `args.message` into ACP prompt blocks, creates or reuses a session behind the scenes, and then sends `session/prompt` upstream.',
-  ].join(' ');
-}
-
-function getSessionPromptToolDescription(): string {
-  return [
-    'Send a prompt to an ACP session explicitly.',
-    'Use this when you already have a `sessionId` from `session/new` and want to continue the same conversation deterministically.',
-  ].join(' ');
 }
 
 function buildSessionNewSchema(): Record<string, unknown> {
@@ -241,6 +315,19 @@ function buildSessionNewSchema(): Record<string, unknown> {
   };
 }
 
+function buildSessionNewResultSchema(): Record<string, unknown> {
+  return {
+    type: 'object',
+    required: ['sessionId'],
+    properties: {
+      sessionId: {
+        type: 'string',
+        description: 'ACP session id. Reuse it with `session/prompt` or `session/poll`.',
+      },
+    },
+  };
+}
+
 function buildPromptSchema(includeSessionId: boolean): Record<string, unknown> {
   return {
     type: 'object',
@@ -250,14 +337,13 @@ function buildPromptSchema(includeSessionId: boolean): Record<string, unknown> {
         ? {
             sessionId: {
               type: 'string',
-              description:
-                'ACP session id. Recommended for explicit session reuse. If omitted, the gateway may create or reuse a local session.',
+              description: 'ACP session id. Required for explicit session control.',
             },
           }
         : {}),
       text: {
         type: 'string',
-        description: 'Simple text shortcut. The gateway converts it into `prompt` blocks.',
+        description: 'Simple text shortcut. The gateway converts it into ACP prompt blocks.',
       },
       message: {
         type: 'string',
@@ -297,6 +383,77 @@ function buildPromptSchema(includeSessionId: boolean): Record<string, unknown> {
       { required: ['message'] },
       { required: ['prompt'] },
     ],
+  };
+}
+
+function buildSessionPollSchema(): Record<string, unknown> {
+  return {
+    type: 'object',
+    required: ['sessionId'],
+    properties: {
+      sessionId: {
+        type: 'string',
+        description: 'ACP session id returned by `prompt`, `session/new`, or `session/prompt`.',
+      },
+    },
+  };
+}
+
+function buildPromptResultSchema(): Record<string, unknown> {
+  return {
+    type: 'object',
+    required: ['sessionId', 'done', 'status', 'deltaText', 'outputText'],
+    properties: {
+      sessionId: {
+        type: 'string',
+        description: 'ACP session id. Reuse it with `session/poll` when `done` is false.',
+      },
+      done: {
+        type: 'boolean',
+        description: 'Stop polling only when this becomes true.',
+      },
+      status: {
+        type: 'string',
+        enum: ['queued', 'working', 'completed', 'failed', 'cancelled'],
+        description: 'Latest downstream status currently known to AAI Gateway.',
+      },
+      statusMessage: {
+        type: 'string',
+        description: 'Optional latest downstream status message.',
+      },
+      deltaText: {
+        type: 'string',
+        description:
+          'Only the newly available text since the previous `prompt`, `session/prompt`, or `session/poll` response for this turn.',
+      },
+      outputText: {
+        type: 'string',
+        description:
+          'Primary human-readable text returned to the caller. When `done` is false, this field ends with the polling instruction.',
+      },
+      error: {
+        type: 'string',
+        description: 'Present when the turn failed or was cancelled.',
+      },
+      pollTool: {
+        type: 'string',
+        enum: ['session/poll'],
+        description: 'Present when `done` is false.',
+      },
+      pollArgs: {
+        type: 'object',
+        description: 'Arguments to reuse on the next poll when `done` is false.',
+        properties: {
+          sessionId: {
+            type: 'string',
+          },
+        },
+      },
+      nextAction: {
+        type: 'string',
+        description: 'Human-readable instruction for the next poll when `done` is false.',
+      },
+    },
   };
 }
 

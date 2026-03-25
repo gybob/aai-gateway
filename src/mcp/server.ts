@@ -78,11 +78,6 @@ import {
 import { McpTaskRunner } from './task-runner.js';
 import type { ExecutionObserver } from '../executors/events.js';
 
-/**
- * How often the keepalive heartbeat fires for long-running ACP prompts (ms).
- * Must be well below the default MCP client request timeout (60 s).
- */
-const ACP_KEEPALIVE_INTERVAL_MS = 15_000;
 const MCP_DOWNSTREAM_INACTIVITY_TIMEOUT_MS = 60_000;
 const DOWNSTREAM_INACTIVITY_TIMEOUT_MS = 300_000;
 const ACP_DOWNSTREAM_INACTIVITY_TIMEOUT_MS = 180_000;
@@ -830,10 +825,6 @@ export class AaiGatewayServer {
       'aai:exec received'
     );
 
-    const isAcpPrompt =
-      resolved.descriptor.access.protocol === 'acp-agent' &&
-      (toolName === 'prompt' || toolName === 'session/prompt');
-
     await this.consentManager.checkAndPrompt(
       resolved.localId,
       appName,
@@ -846,12 +837,6 @@ export class AaiGatewayServer {
     );
 
     if (!isTask) {
-      // For long-running ACP prompts, start a keepalive heartbeat that sends
-      // periodic progress notifications so MCP clients can reset their request
-      // timeout. Also sends server-level log notifications for clients that
-      // use transport-level keepalives.
-      const keepalive = isAcpPrompt ? this.startKeepalive(progressToken) : undefined;
-
       try {
         const upstreamObserver = this.createUpstreamObserver(progressToken);
         const result = await this.executeAppWithInactivityTimeout(
@@ -887,8 +872,6 @@ export class AaiGatewayServer {
           'aai:exec failed'
         );
         throw err;
-      } finally {
-        keepalive?.stop();
       }
     }
 
@@ -1165,45 +1148,6 @@ export class AaiGatewayServer {
     taskId: string
   ): string {
     return `Started background task ${taskId} for ${localId} (${protocol}:${toolName}). Poll tasks/get or tasks/result for the final output.`;
-  }
-
-  /**
-   * Starts a periodic keepalive that sends progress notifications (if a
-   * progressToken is available) and a lightweight log-level notification
-   * every ACP_KEEPALIVE_INTERVAL_MS.  This prevents MCP clients from timing
-   * out during long-running ACP prompt execution.
-   */
-  private startKeepalive(progressToken?: string | number): { stop: () => void } {
-    let progress = 0;
-    const timer = setInterval(() => {
-      progress += 1;
-
-      if (progressToken !== undefined) {
-        void this.server.notification({
-          method: 'notifications/progress',
-          params: {
-            progressToken,
-            progress,
-            message: 'ACP agent is working…',
-          },
-        });
-      }
-
-      // Also send a log notification so that the transport stays active
-      // even for clients that don't handle progress-based timeout reset.
-      void this.server.notification({
-        method: 'notifications/message',
-        params: {
-          level: 'debug',
-          logger: 'aai-gateway',
-          data: 'ACP agent keepalive',
-        },
-      });
-    }, ACP_KEEPALIVE_INTERVAL_MS);
-
-    return {
-      stop: () => clearInterval(timer),
-    };
   }
 
   private createUpstreamObserver(progressToken?: string | number): ExecutionObserver {
@@ -1633,8 +1577,9 @@ function createStaticDetail(descriptor: AaiJson, err: unknown): DetailedCapabili
           'Live ACP inspection is currently unavailable.',
           `App summary: ${descriptor.exposure.summary}`,
           'Use `aai:exec` with:',
-          '- `tool: "prompt"` for a simplified prompt flow',
-          '- or `tool: "session/new"` then `tool: "session/prompt"` for explicit session control',
+          '- `tool: "prompt"` to start a turn and wait up to 30 seconds for the first increment',
+          '- `tool: "session/new"` then `tool: "session/prompt"` for explicit session control',
+          '- `tool: "session/poll"` with `args.sessionId` to fetch the next increment until `done: true`',
           `Inspection error: ${err instanceof Error ? err.message : String(err)}`,
         ].join('\n'),
       };

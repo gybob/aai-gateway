@@ -60,7 +60,7 @@ describe('generateOperationGuide', () => {
     expect(guide).not.toContain('`aai:exec` example:');
   });
 
-  it('renders ACP tools and both prompt flow cases', () => {
+  it('renders ACP tools, polling output schemas, and both prompt flow cases', () => {
     const descriptor: AaiJson = {
       schemaVersion: '2.0',
       version: '1.0.0',
@@ -104,10 +104,15 @@ describe('generateOperationGuide', () => {
     expect(guide).toContain('### prompt');
     expect(guide).toContain('### session/new');
     expect(guide).toContain('### session/prompt');
-    expect(guide).toContain('## Case 1: One-Off Conversation');
+    expect(guide).toContain('### session/poll');
+    expect(guide).toContain('Output schema:');
+    expect(guide).toContain('"done"');
+    expect(guide).toContain('## Polling Model');
+    expect(guide).toContain('## Case 1: One-Off Prompt Then Poll');
     expect(guide).toContain('"tool": "prompt"');
-    expect(guide).toContain('## Case 2: Reuse A Session');
+    expect(guide).toContain('"pollTool": "session/poll"');
+    expect(guide).toContain('## Case 2: Explicit Session Reuse');
     expect(guide).toContain('"tool": "session/new"');
-    expect(guide).toContain('"sessionId": "<session-id-from-session/new>"');
+    expect(guide).toContain('"tool": "session/poll"');
   });
 });
