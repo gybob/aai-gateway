@@ -10,8 +10,8 @@ const fixturePath = join(
 );
 
 describe('AcpExecutor polling flow', () => {
-  it('returns the first increment from prompt and completes through session/poll', async () => {
-    const executor = new AcpExecutor(30);
+  it('returns turn-scoped increments and completes through turn/poll', async () => {
+    const executor = new AcpExecutor(15);
     const localId = 'acp-polling-normal';
     const config = {
       command: 'node',
@@ -28,17 +28,24 @@ describe('AcpExecutor polling flow', () => {
         done: false,
         status: 'working',
         deltaText: 'Chunk 1.',
-        pollTool: 'session/poll',
+        pollTool: 'turn/poll',
       });
 
-      const sessionId = (first.data as { sessionId: string }).sessionId;
-      const second = await executor.execute(localId, config, 'session/poll', {
-        sessionId,
+      const { sessionId, turnId, cursor } = first.data as {
+        sessionId: string;
+        turnId: string;
+        cursor: number;
+      };
+      const second = await executor.execute(localId, config, 'turn/poll', {
+        turnId,
+        cursor,
       });
 
       expect(second.success).toBe(true);
       expect(second.data).toMatchObject({
+        turnId,
         sessionId,
+        cursor: 2,
         done: true,
         status: 'completed',
         deltaText: 'Chunk 2.',
@@ -49,7 +56,7 @@ describe('AcpExecutor polling flow', () => {
     }
   });
 
-  it('keeps returning polling instructions until a later poll sees completion', async () => {
+  it('waits a full polling window while unfinished and completes on a later turn/poll', async () => {
     const executor = new AcpExecutor(30);
     const localId = 'acp-polling-timeout';
     const config = {
@@ -67,29 +74,38 @@ describe('AcpExecutor polling flow', () => {
         done: false,
         status: 'working',
         deltaText: '',
-        pollTool: 'session/poll',
+        pollTool: 'turn/poll',
       });
 
-      const sessionId = (first.data as { sessionId: string }).sessionId;
+      const { sessionId, turnId, cursor } = first.data as {
+        sessionId: string;
+        turnId: string;
+        cursor: number;
+      };
 
-      const second = await executor.execute(localId, config, 'session/poll', {
-        sessionId,
+      const second = await executor.execute(localId, config, 'turn/poll', {
+        turnId,
+        cursor,
       });
 
       expect(second.success).toBe(true);
       expect(second.data).toMatchObject({
+        turnId,
         sessionId,
+        cursor,
         done: false,
         deltaText: '',
-        pollTool: 'session/poll',
+        pollTool: 'turn/poll',
       });
 
-      const third = await executor.execute(localId, config, 'session/poll', {
-        sessionId,
+      const third = await executor.execute(localId, config, 'turn/poll', {
+        turnId,
+        cursor,
       });
 
       expect(third.success).toBe(true);
       expect(third.data).toMatchObject({
+        turnId,
         sessionId,
         done: true,
         status: 'completed',

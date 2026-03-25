@@ -60,7 +60,7 @@ describe('generateOperationGuide', () => {
     expect(guide).not.toContain('`aai:exec` example:');
   });
 
-  it('renders ACP tools, polling output schemas, and both prompt flow cases', () => {
+  it('renders ACP turn polling tools, schemas, and both prompt flow cases', () => {
     const descriptor: AaiJson = {
       schemaVersion: '2.0',
       version: '1.0.0',
@@ -104,15 +104,20 @@ describe('generateOperationGuide', () => {
     expect(guide).toContain('### prompt');
     expect(guide).toContain('### session/new');
     expect(guide).toContain('### session/prompt');
-    expect(guide).toContain('### session/poll');
+    expect(guide).toContain('### turn/poll');
+    expect(guide).toContain('### turn/cancel');
     expect(guide).toContain('Output schema:');
     expect(guide).toContain('"done"');
+    expect(guide).toContain('"turnId"');
+    expect(guide).toContain('"cursor"');
     expect(guide).toContain('## Polling Model');
+    expect(guide).toContain('give the user a brief progress summary based on the newly received increment, then issue the next `turn/poll`');
+    expect(guide).toContain('short user-facing progress summary');
     expect(guide).toContain('## Case 1: One-Off Prompt Then Poll');
     expect(guide).toContain('"tool": "prompt"');
-    expect(guide).toContain('"pollTool": "session/poll"');
+    expect(guide).toContain('"pollTool": "turn/poll"');
     expect(guide).toContain('## Case 2: Explicit Session Reuse');
     expect(guide).toContain('"tool": "session/new"');
-    expect(guide).toContain('"tool": "session/poll"');
+    expect(guide).toContain('"tool": "turn/poll"');
   });
 });

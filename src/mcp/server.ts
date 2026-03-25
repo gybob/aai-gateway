@@ -385,8 +385,7 @@ export class AaiGatewayServer {
             },
             localId: {
               type: 'string',
-              description:
-                'Deprecated alias for appId. Optional if app or appId is provided.',
+              description: 'Deprecated alias for appId. Optional if app or appId is provided.',
             },
             app: {
               type: 'string',
@@ -1304,6 +1303,14 @@ function summarizeExecArgs(args: Record<string, unknown>): Record<string, unknow
     summary.sessionId = args.sessionId;
   }
 
+  if (typeof args.turnId === 'string') {
+    summary.turnId = args.turnId;
+  }
+
+  if (typeof args.cursor === 'number') {
+    summary.cursor = args.cursor;
+  }
+
   if (typeof args.text === 'string') {
     summary.textLength = args.text.length;
     summary.textPreview = truncateLogPreview(args.text);
@@ -1579,7 +1586,8 @@ function createStaticDetail(descriptor: AaiJson, err: unknown): DetailedCapabili
           'Use `aai:exec` with:',
           '- `tool: "prompt"` to start a turn and wait up to 30 seconds for the first increment',
           '- `tool: "session/new"` then `tool: "session/prompt"` for explicit session control',
-          '- `tool: "session/poll"` with `args.sessionId` to fetch the next increment until `done: true`',
+          '- `tool: "turn/poll"` with `args.turnId` and the returned `cursor` to fetch the next increment until `done: true`',
+          '- `tool: "turn/cancel"` with `args.turnId` to cancel a queued or running turn',
           `Inspection error: ${err instanceof Error ? err.message : String(err)}`,
         ].join('\n'),
       };

@@ -28,8 +28,8 @@ export function generateAcpOperationGuide(
       'prompt',
       [
         'Start a new ACP turn using the gateway convenience flow.',
-        `The gateway creates or reuses a session, sends \`session/prompt\` downstream, waits up to ${ACP_POLL_WAIT_MS}ms, and returns only the currently available increment.`,
-        'This tool does not stream upstream. If the turn is still running, the response tells you to call `session/poll` with the returned `sessionId`.',
+        `The gateway creates or reuses a session, sends \`session/prompt\` downstream, waits up to ${ACP_POLL_WAIT_MS}ms, and returns a turn-scoped polling envelope.`,
+        'This tool does not stream upstream. If the turn is still running, the response tells you to call `turn/poll` with the returned `turnId` and `cursor`.',
       ].join(' '),
       buildPromptSchema(false),
       buildPromptResultSchema(),
@@ -66,8 +66,9 @@ export function generateAcpOperationGuide(
       'session/prompt',
       [
         'Send a prompt to an ACP session explicitly.',
-        `Like \`prompt\`, this waits up to ${ACP_POLL_WAIT_MS}ms and returns a normalized polling result instead of streaming upstream.`,
-        'If `done` is `false`, keep polling with `session/poll` until `done` becomes `true`.',
+        `Like \`prompt\`, this waits up to ${ACP_POLL_WAIT_MS}ms and returns a normalized turn result instead of streaming upstream.`,
+        'If another turn on the same session is still active, the new turn is queued instead of failing.',
+        'If `done` is `false`, keep polling with `turn/poll` until `done` becomes `true`.',
       ].join(' '),
       buildPromptSchema(true),
       buildPromptResultSchema(),
@@ -89,123 +90,177 @@ export function generateAcpOperationGuide(
   lines.push('');
   lines.push(
     ...formatAcpToolSection(
-      'session/poll',
+      'turn/poll',
       [
-        'Wait for the next increment from the active ACP turn for a given `sessionId`.',
-        `This long-poll waits up to ${ACP_POLL_WAIT_MS}ms and returns only the newly available text since the previous \`prompt\`, \`session/prompt\`, or \`session/poll\` response.`,
-        'If no new content arrives before the wait window ends and the turn is still running, the response keeps `done: false` and instructs you to poll again.',
+        'Wait for the next increment from a specific ACP turn using `turnId`.',
+        `If the turn is still running when the request arrives, this long-poll waits the full ${ACP_POLL_WAIT_MS}ms window unless the turn finishes earlier.`,
+        'The response returns a new `cursor`; pass it back on the next `turn/poll` call to receive only later increments.',
+        'For long-running work, after each poll returns, give the user a brief progress summary based on the newly received increment, then issue the next `turn/poll` if more work remains.',
       ].join(' '),
-      buildSessionPollSchema(),
+      buildTurnPollSchema(),
       buildPromptResultSchema(),
       {
         app: localId,
-        tool: 'session/poll',
+        tool: 'turn/poll',
         args: {
-          sessionId: '<session-id>',
+          turnId: '<turn-id>',
+          cursor: 1,
+        },
+      }
+    )
+  );
+  lines.push('');
+  lines.push(
+    ...formatAcpToolSection(
+      'turn/cancel',
+      'Cancel a queued or running gateway turn. Queued turns are cancelled locally. Running turns forward `session/cancel` downstream.',
+      buildTurnCancelSchema(),
+      buildTurnCancelResultSchema(),
+      {
+        app: localId,
+        tool: 'turn/cancel',
+        args: {
+          turnId: '<turn-id>',
         },
       }
     )
   );
   lines.push('');
   lines.push('## Polling Model');
-  lines.push(`- ` + `\`prompt\`, \`session/prompt\`, and \`session/poll\` each wait at most ${ACP_POLL_WAIT_MS}ms.`);
+  lines.push(
+    `- ` +
+      `\`prompt\`, \`session/prompt\`, and \`turn/poll\` each wait at most ${ACP_POLL_WAIT_MS}ms.`
+  );
+  lines.push(
+    `- ` +
+      `If a turn is still running, each wait lasts the full ${ACP_POLL_WAIT_MS}ms window unless the turn finishes earlier.`
+  );
   lines.push('- They never stream partial output upstream as MCP notifications.');
-  lines.push('- `deltaText` is the incremental text for this response only.');
+  lines.push(
+    '- `turnId` identifies one gateway turn. `sessionId` remains the reusable ACP conversation id.'
+  );
+  lines.push('- `cursor` identifies the last increment you have already consumed for that turn.');
   lines.push('- Stop polling only when `done: true`.');
-  lines.push('- If `done: false`, use the returned `sessionId` with `tool: "session/poll"`.');
+  lines.push(
+    '- If `done: false`, use the returned `turnId` and `cursor` with `tool: "turn/poll"`.'
+  );
+  lines.push(
+    '- For long-running turns, turn each poll response into a short user-facing progress summary, then start the next poll if the turn is not done yet.'
+  );
   lines.push('');
   lines.push('## Case 1: One-Off Prompt Then Poll');
   lines.push('First request:');
   lines.push('');
-  lines.push(formatJsonCodeBlock({
-    app: localId,
-    tool: 'prompt',
-    args: {
-      text: 'Read the project and explain the main entrypoints.',
-    },
-  }));
+  lines.push(
+    formatJsonCodeBlock({
+      app: localId,
+      tool: 'prompt',
+      args: {
+        text: 'Read the project and explain the main entrypoints.',
+      },
+    })
+  );
   lines.push('');
   lines.push('Possible first response when the turn is still running:');
   lines.push('');
-  lines.push(formatJsonCodeBlock({
-    sessionId: '<session-id>',
-    done: false,
-    status: 'working',
-    deltaText: 'I found the main entrypoint in src/index.ts ...',
-    outputText:
-      'I found the main entrypoint in src/index.ts ...\n\n[AAI Gateway] The downstream ACP agent is still running. Call aai:exec with { app: "' +
-      localId +
-      '", tool: "session/poll", args: { sessionId: "<session-id>" } } to fetch the next increment.',
-    pollTool: 'session/poll',
-    pollArgs: { sessionId: '<session-id>' },
-    nextAction:
-      `Call aai:exec with { app: "${localId}", tool: "session/poll", args: { sessionId: "<session-id>" } } to fetch the next increment.`,
-  }));
+  lines.push(
+    formatJsonCodeBlock({
+      turnId: '<turn-id>',
+      sessionId: '<session-id>',
+      cursor: 1,
+      done: false,
+      status: 'working',
+      deltaText: 'I found the main entrypoint in src/index.ts ...',
+      outputText:
+        'I found the main entrypoint in src/index.ts ...\n\n[AAI Gateway] The downstream ACP agent is still running after waiting 30000ms. Call aai:exec with { app: "' +
+        localId +
+        '", tool: "turn/poll", args: { turnId: "<turn-id>", cursor: 1 } } to fetch the next increment.',
+      pollTool: 'turn/poll',
+      pollArgs: { turnId: '<turn-id>', cursor: 1 },
+      nextAction: `Call aai:exec with { app: "${localId}", tool: "turn/poll", args: { turnId: "<turn-id>", cursor: 1 } } to fetch the next increment after waiting up to ${ACP_POLL_WAIT_MS}ms.`,
+    })
+  );
   lines.push('');
   lines.push('Follow-up poll request:');
   lines.push('');
-  lines.push(formatJsonCodeBlock({
-    app: localId,
-    tool: 'session/poll',
-    args: {
-      sessionId: '<session-id>',
-    },
-  }));
+  lines.push(
+    formatJsonCodeBlock({
+      app: localId,
+      tool: 'turn/poll',
+      args: {
+        turnId: '<turn-id>',
+        cursor: 1,
+      },
+    })
+  );
   lines.push('');
   lines.push('Final response when the turn completes:');
   lines.push('');
-  lines.push(formatJsonCodeBlock({
-    sessionId: '<session-id>',
-    done: true,
-    status: 'completed',
-    deltaText: 'The remaining important entrypoints are src/mcp/server.ts and src/cli.ts.',
-    outputText: 'The remaining important entrypoints are src/mcp/server.ts and src/cli.ts.',
-  }));
+  lines.push(
+    formatJsonCodeBlock({
+      turnId: '<turn-id>',
+      sessionId: '<session-id>',
+      cursor: 2,
+      done: true,
+      status: 'completed',
+      deltaText: 'The remaining important entrypoints are src/mcp/server.ts and src/cli.ts.',
+      outputText: 'The remaining important entrypoints are src/mcp/server.ts and src/cli.ts.',
+    })
+  );
   lines.push('');
   lines.push('## Case 2: Explicit Session Reuse');
   lines.push('Step 1. Create a session:');
   lines.push('');
-  lines.push(formatJsonCodeBlock({
-    app: localId,
-    tool: 'session/new',
-    args: {
-      title: 'Repository walkthrough',
-      cwd: '/absolute/path/to/project',
-      mcpServers: [],
-    },
-  }));
+  lines.push(
+    formatJsonCodeBlock({
+      app: localId,
+      tool: 'session/new',
+      args: {
+        title: 'Repository walkthrough',
+        cwd: '/absolute/path/to/project',
+        mcpServers: [],
+      },
+    })
+  );
   lines.push('');
   lines.push('Expected response shape:');
   lines.push('');
-  lines.push(formatJsonCodeBlock({
-    sessionId: '<session-id>',
-  }));
+  lines.push(
+    formatJsonCodeBlock({
+      sessionId: '<session-id>',
+    })
+  );
   lines.push('');
   lines.push('Step 2. Start a turn on that session:');
   lines.push('');
-  lines.push(formatJsonCodeBlock({
-    app: localId,
-    tool: 'session/prompt',
-    args: {
-      sessionId: '<session-id>',
-      prompt: [
-        {
-          type: 'text',
-          text: 'Continue the prior discussion and identify the next code changes.',
-        },
-      ],
-    },
-  }));
+  lines.push(
+    formatJsonCodeBlock({
+      app: localId,
+      tool: 'session/prompt',
+      args: {
+        sessionId: '<session-id>',
+        prompt: [
+          {
+            type: 'text',
+            text: 'Continue the prior discussion and identify the next code changes.',
+          },
+        ],
+      },
+    })
+  );
   lines.push('');
   lines.push('Step 3. If the response returns `done: false`, keep calling:');
   lines.push('');
-  lines.push(formatJsonCodeBlock({
-    app: localId,
-    tool: 'session/poll',
-    args: {
-      sessionId: '<session-id>',
-    },
-  }));
+  lines.push(
+    formatJsonCodeBlock({
+      app: localId,
+      tool: 'turn/poll',
+      args: {
+        turnId: '<turn-id>',
+        cursor: 1,
+      },
+    })
+  );
 
   const capabilityLines = summarizeAcpRuntimeCapabilities(runtime);
   if (capabilityLines.length > 0) {
@@ -322,7 +377,7 @@ function buildSessionNewResultSchema(): Record<string, unknown> {
     properties: {
       sessionId: {
         type: 'string',
-        description: 'ACP session id. Reuse it with `session/prompt` or `session/poll`.',
+        description: 'ACP session id. Reuse it with `session/prompt` for conversation continuity.',
       },
     },
   };
@@ -378,22 +433,67 @@ function buildPromptSchema(includeSessionId: boolean): Record<string, unknown> {
         items: {},
       },
     },
-    anyOf: [
-      { required: ['text'] },
-      { required: ['message'] },
-      { required: ['prompt'] },
-    ],
+    anyOf: [{ required: ['text'] }, { required: ['message'] }, { required: ['prompt'] }],
   };
 }
 
-function buildSessionPollSchema(): Record<string, unknown> {
+function buildTurnPollSchema(): Record<string, unknown> {
   return {
     type: 'object',
-    required: ['sessionId'],
+    required: ['turnId'],
     properties: {
+      turnId: {
+        type: 'string',
+        description: 'Gateway turn id returned by `prompt` or `session/prompt`.',
+      },
+      cursor: {
+        type: 'integer',
+        minimum: 0,
+        description: 'Last consumed turn cursor. Omit or use 0 on the first poll.',
+      },
+    },
+  };
+}
+
+function buildTurnCancelSchema(): Record<string, unknown> {
+  return {
+    type: 'object',
+    required: ['turnId'],
+    properties: {
+      turnId: {
+        type: 'string',
+        description: 'Gateway turn id returned by `prompt` or `session/prompt`.',
+      },
+    },
+  };
+}
+
+function buildTurnCancelResultSchema(): Record<string, unknown> {
+  return {
+    type: 'object',
+    required: ['turnId', 'sessionId', 'cancelled', 'done', 'status'],
+    properties: {
+      turnId: {
+        type: 'string',
+      },
       sessionId: {
         type: 'string',
-        description: 'ACP session id returned by `prompt`, `session/new`, or `session/prompt`.',
+      },
+      cancelled: {
+        type: 'boolean',
+      },
+      done: {
+        type: 'boolean',
+      },
+      status: {
+        type: 'string',
+        enum: ['queued', 'working', 'completed', 'failed', 'cancelled'],
+      },
+      statusMessage: {
+        type: 'string',
+      },
+      error: {
+        type: 'string',
       },
     },
   };
@@ -402,11 +502,21 @@ function buildSessionPollSchema(): Record<string, unknown> {
 function buildPromptResultSchema(): Record<string, unknown> {
   return {
     type: 'object',
-    required: ['sessionId', 'done', 'status', 'deltaText', 'outputText'],
+    required: ['turnId', 'sessionId', 'cursor', 'done', 'status', 'deltaText', 'outputText'],
     properties: {
+      turnId: {
+        type: 'string',
+        description: 'Gateway turn id. Use it with `turn/poll` or `turn/cancel`.',
+      },
       sessionId: {
         type: 'string',
-        description: 'ACP session id. Reuse it with `session/poll` when `done` is false.',
+        description:
+          'ACP session id. Reuse it with `session/prompt` when you want another turn in the same conversation.',
+      },
+      cursor: {
+        type: 'integer',
+        minimum: 0,
+        description: 'Latest increment cursor included in this response.',
       },
       done: {
         type: 'boolean',
@@ -423,8 +533,7 @@ function buildPromptResultSchema(): Record<string, unknown> {
       },
       deltaText: {
         type: 'string',
-        description:
-          'Only the newly available text since the previous `prompt`, `session/prompt`, or `session/poll` response for this turn.',
+        description: 'Only the newly available text after the cursor you supplied for this turn.',
       },
       outputText: {
         type: 'string',
@@ -437,15 +546,19 @@ function buildPromptResultSchema(): Record<string, unknown> {
       },
       pollTool: {
         type: 'string',
-        enum: ['session/poll'],
+        enum: ['turn/poll'],
         description: 'Present when `done` is false.',
       },
       pollArgs: {
         type: 'object',
         description: 'Arguments to reuse on the next poll when `done` is false.',
         properties: {
-          sessionId: {
+          turnId: {
             type: 'string',
+          },
+          cursor: {
+            type: 'integer',
+            minimum: 0,
           },
         },
       },
