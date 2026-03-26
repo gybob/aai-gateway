@@ -64,7 +64,7 @@ interface SkillImportOptions extends CommonOptions, ExposureOptions {
 
 interface AppConfigOptions extends CommonOptions {
   command: 'app-config';
-  localId: string;
+  appId: string;
   exposure?: ExposureMode;
   keywords?: string[];
   summary?: string;
@@ -233,8 +233,8 @@ function parseArgs(args: string[]): CliOptions {
   }
 
   if (args[0] === 'app' && args[1] === 'config') {
-    const localId = args[2];
-    if (!localId) {
+    const appId = args[2];
+    if (!appId) {
       throw new Error('Usage: aai-gateway app config <app-id>');
     }
 
@@ -273,7 +273,7 @@ function parseArgs(args: string[]): CliOptions {
     return {
       command: 'app-config',
       dev,
-      localId,
+      appId,
       ...(exposure ? { exposure } : {}),
       ...(summary ? { summary } : {}),
       ...(keywords.length > 0 ? { keywords } : {}),
@@ -383,7 +383,7 @@ async function runScan(dev: boolean): Promise<void> {
   }
 
   for (const app of apps) {
-    console.log(`${app.localId}`);
+    console.log(`${app.appId}`);
     console.log(`  Name: ${app.descriptor.app.name.default}`);
     console.log(`  Location: ${app.location ?? '(unknown)'}`);
     console.log(`  Protocol: ${app.descriptor.access.protocol}`);
@@ -415,10 +415,10 @@ async function runMcpImport(options: McpImportOptions): Promise<void> {
   });
 
   console.log(`Imported MCP app: ${result.descriptor.app.name.default}`);
-  console.log(`App ID: ${result.entry.localId}`);
+  console.log(`App ID: ${result.entry.appId}`);
   console.log(`Descriptor: ${result.entry.descriptorPath}`);
-  console.log(`Managed directory: ${getManagedAppDir(result.entry.localId)}`);
-  console.log(`Tool name after restart: app:${result.entry.localId}`);
+  console.log(`Managed directory: ${getManagedAppDir(result.entry.appId)}`);
+  console.log(`Tool name after restart: app:${result.entry.appId}`);
   console.log(`Keywords: ${result.descriptor.exposure.keywords.join(', ')}`);
   console.log(`Summary: ${result.descriptor.exposure.summary}`);
   console.log(`Exposure mode: ${options.exposure}`);
@@ -439,17 +439,17 @@ async function runSkillImport(options: SkillImportOptions): Promise<void> {
   });
 
   console.log(`Imported skill: ${result.descriptor.app.name.default}`);
-  console.log(`App ID: ${result.localId}`);
-  console.log(`Descriptor: ${join(getManagedAppDir(result.localId), 'aai.json')}`);
+  console.log(`App ID: ${result.appId}`);
+  console.log(`Descriptor: ${join(getManagedAppDir(result.appId), 'aai.json')}`);
   console.log(`Skill directory: ${result.managedPath}`);
-  console.log(`Tool name after restart: app:${result.localId}`);
+  console.log(`Tool name after restart: app:${result.appId}`);
   console.log(`Keywords: ${result.descriptor.exposure.keywords.join(', ')}`);
   console.log(`Summary: ${result.descriptor.exposure.summary}`);
   console.log(`Exposure mode: ${options.exposure}`);
 }
 
 async function runAppConfig(options: AppConfigOptions): Promise<void> {
-  const descriptorPath = resolveManagedDescriptorPath(options.localId);
+  const descriptorPath = resolveManagedDescriptorPath(options.appId);
   const descriptor = JSON.parse(readFileSync(descriptorPath, 'utf-8')) as AaiJson;
 
   const nextExposure = normalizeAppConfigExposure(options, descriptor.exposure);
@@ -461,7 +461,7 @@ async function runAppConfig(options: AppConfigOptions): Promise<void> {
   if (isMcpAccess(nextDescriptor.access)) {
     await upsertMcpRegistryEntry(
       {
-        localId: options.localId,
+        appId: options.appId,
         protocol: 'mcp',
         config: nextDescriptor.access.config,
       },
@@ -470,17 +470,17 @@ async function runAppConfig(options: AppConfigOptions): Promise<void> {
   } else if (isSkillAccess(nextDescriptor.access)) {
     await upsertSkillRegistryEntry(
       {
-        localId: options.localId,
+        appId: options.appId,
         protocol: 'skill',
         config: nextDescriptor.access.config,
       },
       nextDescriptor
     );
   } else {
-    throw new Error(`App '${options.localId}' is not an imported MCP app or imported skill`);
+    throw new Error(`App '${options.appId}' is not an imported MCP app or imported skill`);
   }
 
-  console.log(`Updated app: ${options.localId}`);
+  console.log(`Updated app: ${options.appId}`);
   if (options.exposure) {
     console.log(`Exposure mode: ${options.exposure}`);
   }
@@ -497,8 +497,8 @@ function normalizeAppConfigExposure(
   return normalizeExposureInput({ keywords, summary });
 }
 
-function resolveManagedDescriptorPath(localId: string): string {
-  const descriptorPath = join(getManagedAppDir(localId), 'aai.json');
+function resolveManagedDescriptorPath(appId: string): string {
+  const descriptorPath = join(getManagedAppDir(appId), 'aai.json');
   if (existsSync(descriptorPath)) {
     return descriptorPath;
   }

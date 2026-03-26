@@ -1,8 +1,5 @@
-import type {
-  ExecutionResult,
-  ExecutorConfig,
-  ExecutorDetail,
-} from '../types/index.js';
+import type { ExecutionResult } from '../types/index.js';
+import type { AppCapabilities, ToolSchema } from '../types/capabilities.js';
 
 /**
  * Unified Executor Interface
@@ -10,53 +7,62 @@ import type {
  * All executor implementations must implement this interface.
  * It provides a consistent way to manage connections, discover capabilities,
  * and execute operations across different protocol families.
- *
- * @template TConfig - Configuration type for this executor
- * @template TDetail - Detail/capability type for this executor
  */
-export interface Executor<TConfig = ExecutorConfig, TDetail = ExecutorDetail> {
+export interface Executor {
   /** Protocol identifier (e.g., 'mcp', 'skill', 'acp-agent', 'cli') */
   readonly protocol: string;
 
   /**
    * Connect to the target system
-   * @param localId - Unique identifier for this connection
+   * @param appId - Unique identifier for this connection
    * @param config - Executor-specific configuration
    */
-  connect(localId: string, config: TConfig): Promise<void>;
+  connect(appId: string, config: unknown): Promise<void>;
 
   /**
    * Disconnect from the target system
-   * @param localId - Unique identifier for the connection to close
+   * @param appId - Unique identifier for the connection to close
    */
-  disconnect(localId: string): Promise<void>;
+  disconnect(appId: string): Promise<void>;
 
   /**
-   * Load detailed capability information from the target
+   * Load app-level capabilities (tool list without parameter definitions)
+   * This guides agents to use schema endpoint for parameter details
+   * @param appId - Unique identifier for this app
    * @param config - Executor-specific configuration
-   * @returns Detailed capabilities/capabilities metadata
+   * @returns App capabilities with tool summaries
    */
-  loadDetail(config: TConfig): Promise<TDetail>;
+  loadAppCapabilities(appId: string, config: unknown): Promise<AppCapabilities>;
+
+  /**
+   * Load schema for a specific tool (includes parameter definitions)
+   * Used for validation and schema endpoint
+   * @param appId - Unique identifier for this app
+   * @param config - Executor-specific configuration
+   * @param toolName - Name of the tool
+   * @returns Tool schema or null if not found
+   */
+  loadToolSchema(appId: string, config: unknown, toolName: string): Promise<ToolSchema | null>;
 
   /**
    * Execute an operation on the target system
-   * @param localId - Unique identifier for the connection
+   * @param appId - Unique identifier for the connection
    * @param config - Executor-specific configuration
    * @param operation - Operation name (e.g., tool name, command name)
    * @param args - Operation arguments
    * @returns Execution result
    */
   execute(
-    localId: string,
-    config: TConfig,
+    appId: string,
+    config: unknown,
     operation: string,
     args: Record<string, unknown>
   ): Promise<ExecutionResult>;
 
   /**
    * Check if the executor connection is healthy
-   * @param localId - Unique identifier for the connection
+   * @param appId - Unique identifier for the connection
    * @returns true if healthy, false otherwise
    */
-  health(localId: string): Promise<boolean>;
+  health(appId: string): Promise<boolean>;
 }

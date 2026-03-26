@@ -9,7 +9,7 @@ import { getManagedAppsRoot } from './paths.js';
 
 export interface ManagedEntry {
   id: string;
-  localId: string;
+  appId: string;
   protocol: 'mcp' | 'skill' | 'cli' | 'acp-agent';
   descriptorPath: string;
   createdAt: string;
@@ -70,7 +70,7 @@ export class ManagedRegistry {
           }
 
           records.push({
-            localId: entry.name,
+            appId: entry.name,
             descriptor,
             source,
             location: availability.location ?? descriptorPath,
@@ -87,18 +87,18 @@ export class ManagedRegistry {
   }
 
   /**
-   * Get a specific managed app by localId
+   * Get a specific managed app by appId
    */
-  async get(localId: string): Promise<RuntimeAppRecord | null> {
+  async get(appId: string): Promise<RuntimeAppRecord | null> {
     const records = await this.scan();
-    return records.find((r) => r.localId === localId) ?? null;
+    return records.find((r) => r.appId === appId) ?? null;
   }
 
   /**
-   * Delete a managed app by localId
+   * Delete a managed app by appId
    * @deprecated This method is not implemented yet. Use the specific registries (McpRegistry, SkillRegistry) for deletion.
    */
-  async delete(_localId: string): Promise<boolean> {
+  async delete(_appId: string): Promise<boolean> {
     // This would need to interact with the specific registries
     // For now, we'll return false to indicate it's not implemented
     return false;
@@ -107,8 +107,8 @@ export class ManagedRegistry {
   /**
    * Check if a managed app exists
    */
-  async has(localId: string): Promise<boolean> {
-    const app = await this.get(localId);
+  async has(appId: string): Promise<boolean> {
+    const app = await this.get(appId);
     return app !== null;
   }
 }

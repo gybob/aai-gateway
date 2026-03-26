@@ -12,11 +12,11 @@ export interface ExecutionObserver {
   ): void | Promise<void>;
 }
 
-export interface TaskCapableExecutor<TConfig = unknown, TDetail = unknown>
-  extends Executor<TConfig, TDetail> {
+export interface TaskCapableExecutor
+  extends Executor {
   executeWithObserver?(
-    localId: string,
-    config: TConfig,
+    appId: string,
+    config: unknown,
     operation: string,
     args: Record<string, unknown>,
     observer: ExecutionObserver

@@ -6,10 +6,12 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { AaiError } from '../errors/errors.js';
 import type {
   McpConfig,
-  McpExecutorDetail,
   ExecutionResult,
 } from '../types/index.js';
+import type { AppCapabilities, ToolSchema } from '../types/capabilities.js';
+import { logger } from '../utils/logger.js';
 import { AAI_GATEWAY_NAME, AAI_GATEWAY_VERSION } from '../version.js';
+import { validateArgs, formatValidationErrors } from '../utils/schema-validator.js';
 
 import type { ExecutionObserver } from './events.js';
 import type { Executor } from './interface.js';
@@ -26,14 +28,9 @@ export interface McpListedTool {
 }
 
 export interface McpConnectionTarget {
-  localId: string;
+  appId: string;
   config: McpConfig;
   headers?: Record<string, string>;
-}
-
-export interface McpServerInfo {
-  name: string;
-  version: string;
 }
 
 interface ClientState {
@@ -44,8 +41,10 @@ interface ClientState {
   activityListeners: Set<(message: unknown) => void>;
 }
 
-function serializeTarget(target: McpConnectionTarget): string {
-  return JSON.stringify({ config: target.config, headers: target.headers ?? {} });
+interface McpServerInfo {
+  name?: string;
+  version?: string;
+  [key: string]: unknown;
 }
 
 const MCP_MAX_REQUEST_TIMEOUT_MS = 2_147_483_647;
@@ -55,19 +54,29 @@ const MCP_MAX_REQUEST_TIMEOUT_MS = 2_147_483_647;
  *
  * Implements the unified Executor interface for MCP servers.
  */
-export class McpExecutor implements Executor<McpConfig  , McpExecutorDetail> {
+export class McpExecutor implements Executor {
   readonly protocol = 'mcp';
   private clients = new Map<string, ClientState>();
 
-  async connect(localId: string, config: McpConfig  ): Promise<void> {
+  // Cache: appId → MCP tools (原始数据，含 inputSchema)
+  private toolsCache = new Map<string, McpListedTool[]>();
+
+  // Secure storage for MCP headers
+  secureStorage?: SecureStorage;
+
+  constructor(secureStorage?: SecureStorage) {
+    this.secureStorage = secureStorage;
+  }
+
+  async connect(appId: string, config: McpConfig): Promise<void> {
     const targetKey = JSON.stringify(config);
-    const existing = this.clients.get(localId);
+    const existing = this.clients.get(appId);
     if (existing && existing.targetKey === targetKey) {
       return;
     }
 
     if (existing) {
-      await this.disconnect(localId);
+      await this.disconnect(appId);
     }
 
     const client = new Client(
@@ -84,46 +93,108 @@ export class McpExecutor implements Executor<McpConfig  , McpExecutorDetail> {
 
     try {
       await client.connect(transport);
-      this.clients.set(localId, { client, targetKey, config, activityListeners });
+      this.clients.set(appId, { client, targetKey, config, activityListeners });
+      logger.info({ appId, config: summarizeMcpConfig(config) }, 'MCP connection established');
     } catch (err) {
+      logger.error({ appId, config: summarizeMcpConfig(config), err }, 'MCP connection failed');
       throw new AaiError(
         'SERVICE_UNAVAILABLE',
-        `Failed to connect MCP app '${localId}': ${String(err)}`
+        `Failed to connect MCP app '${appId}': ${String(err)}`
       );
     }
   }
 
-  async disconnect(localId: string): Promise<void> {
-    const existing = this.clients.get(localId);
+  async disconnect(appId: string): Promise<void> {
+    const existing = this.clients.get(appId);
     if (!existing) return;
-    this.clients.delete(localId);
+    this.clients.delete(appId);
     try {
       await existing.client.close();
     } catch {
       // ignore
     }
+    // Clear tools cache for this appId
+    this.toolsCache.delete(appId);
   }
 
-  async loadDetail(config: McpConfig  ): Promise<McpExecutorDetail> {
-    // Use a temporary connection to load tools
-    const tempId = `temp-${Date.now()}`;
-    await this.connect(tempId, config);
-    try {
-      const tools = await this.listTools({ localId: tempId, config });
-      return { tools };
-    } finally {
-      await this.disconnect(tempId);
+
+  /**
+   * Load app-level capabilities (tool list without parameter definitions)
+   * This guides agents to use schema endpoint for parameter details
+   */
+  async loadAppCapabilities(appId: string, config: McpConfig): Promise<AppCapabilities> {
+    const headers = await loadImportedMcpHeaders(this.secureStorage, appId);
+    const result = await this.listTools({ appId, config, headers });
+
+    // Cache the full tools data (含 inputSchema)
+    this.toolsCache.set(appId, result);
+
+    // Return only tool summaries (不含 schema)
+    const tools = result.map((t) => ({
+      name: t.name,
+      description: t.description ?? '',
+    }));
+
+    return { title: 'MCP Tools', tools };
+  }
+
+  /**
+   * Load schema for a specific tool
+   * Looks up from cache, returns null if not found
+   */
+  async loadToolSchema(
+    appId: string,
+    config: McpConfig,
+    toolName: string
+  ): Promise<ToolSchema | null> {
+    // Try cache first
+    let tools = this.toolsCache.get(appId);
+
+    // Cache miss - reload from MCP
+    if (!tools) {
+      await this.loadAppCapabilities(appId, config);
+      tools = this.toolsCache.get(appId);
+      if (!tools) return null;
     }
+
+    const tool = tools.find((t) => t.name === toolName);
+    if (!tool) return null;
+
+    return {
+      name: tool.name,
+      inputSchema: tool.inputSchema ?? { type: 'object', properties: {} },
+    };
   }
 
   async execute(
-    localId: string,
-    config: McpConfig  ,
+    appId: string,
+    config: McpConfig,
     operation: string,
     args: Record<string, unknown>
   ): Promise<ExecutionResult> {
+    // Get schema for validation
+    const schema = await this.loadToolSchema(appId, config, operation);
+
+    // Validate if schema is available
+    if (schema) {
+      const result = validateArgs(args, schema.inputSchema);
+      if (!result.valid) {
+        const errorMessage = `参数校验失败 for '${operation}'\n${formatValidationErrors(result)}`;
+        return {
+          success: false,
+          error: errorMessage,
+          schema: schema.inputSchema,
+          suggestion: `请参考 schema 重试:\n${JSON.stringify(schema.inputSchema, null, 2)}`,
+        };
+      }
+    }
+
     try {
-      const data = await this.callTool({ localId, config }, operation, args);
+      const data = await this.callTool(
+        { appId, config },
+        operation,
+        args
+      );
       return { success: true, data };
     } catch (err) {
       return {
@@ -133,51 +204,27 @@ export class McpExecutor implements Executor<McpConfig  , McpExecutorDetail> {
     }
   }
 
-  async health(localId: string): Promise<boolean> {
-    const existing = this.clients.get(localId);
-    return !!existing;
-  }
-
-  // Legacy methods for backward compatibility
-
-  async connectLegacy(target: McpConnectionTarget): Promise<Client> {
-    const targetKey = serializeTarget(target);
-    const existing = this.clients.get(target.localId);
-    if (existing && existing.targetKey === targetKey) {
-      return existing.client;
-    }
-
-    if (existing) {
-      await this.close(target.localId);
-    }
-
-    await this.connect(target.localId, target.config);
-
-    const client = this.clients.get(target.localId)?.client;
-    if (!client) {
-      throw new Error('Failed to get client after connection');
-    }
-
-    // Store headers for future use
-    if (this.clients.has(target.localId)) {
-      const state = this.clients.get(target.localId)!;
-      state.headers = target.headers;
-      state.targetKey = targetKey;
-    }
-
-    return client;
+  async health(appId: string): Promise<boolean> {
+    return this.clients.has(appId);
   }
 
   async listTools(target: McpConnectionTarget): Promise<McpListedTool[]> {
-    const client = await this.connectLegacy(target);
     try {
+      const client = await this.connectLegacy(target);
       const result = await client.listTools();
+      logger.info(
+        { appId: target.appId, config: summarizeMcpConfig(target.config), toolCount: result.tools.length },
+        'MCP tools listed'
+      );
       return result.tools as McpListedTool[];
     } catch (err) {
-      await this.close(target.localId);
+      logger.error(
+        { appId: target.appId, config: summarizeMcpConfig(target.config), err },
+        'Failed to list MCP tools'
+      );
       throw new AaiError(
         'EXECUTION_ERROR',
-        `Failed to list tools for '${target.localId}': ${String(err)}`
+        `Failed to list tools for '${target.appId}': ${String(err)}`
       );
     }
   }
@@ -195,9 +242,9 @@ export class McpExecutor implements Executor<McpConfig  , McpExecutorDetail> {
   ): Promise<unknown> {
     const execute = async (): Promise<unknown> => {
       const client = await this.connectLegacy(target);
-      const state = this.clients.get(target.localId);
+      const state = this.clients.get(target.appId);
       if (!state) {
-        throw new AaiError('SERVICE_UNAVAILABLE', `MCP app '${target.localId}' is not connected`);
+        throw new AaiError('SERVICE_UNAVAILABLE', `MCP app '${target.appId}' is not connected`);
       }
 
       const activityListener = (message: unknown) => {
@@ -225,43 +272,62 @@ export class McpExecutor implements Executor<McpConfig  , McpExecutorDetail> {
               });
             },
           }
-        )) as {
-        structuredContent?: unknown;
-        content?: Array<{ type?: string; text?: string }>;
-        };
+        )) as { content?: unknown };
 
-        if (result.structuredContent) {
-          return result.structuredContent;
-        }
-        if (result.content?.length === 1 && result.content[0]?.type === 'text') {
-          return result.content[0].text;
-        }
-        return result.content ?? null;
-      } finally {
         state.activityListeners.delete(activityListener);
+        logger.info(
+          {
+            appId: target.appId,
+            tool: toolName,
+            config: summarizeMcpConfig(target.config),
+          },
+          'MCP tool call completed'
+        );
+        return result;
+      } catch (err) {
+        state.activityListeners.delete(activityListener);
+        logger.error(
+          {
+            appId: target.appId,
+            tool: toolName,
+            config: summarizeMcpConfig(target.config),
+            err,
+          },
+          'MCP tool call failed'
+        );
+        throw err;
       }
     };
 
     try {
       return await execute();
     } catch (err) {
-      await this.close(target.localId);
+      await this.close(target.appId);
       try {
         return await execute();
       } catch (retryErr) {
+        logger.error(
+          {
+            appId: target.appId,
+            tool: toolName,
+            config: summarizeMcpConfig(target.config),
+            err: retryErr ?? err,
+          },
+          'MCP tool call failed after retry'
+        );
         throw new AaiError(
           'EXECUTION_ERROR',
-          `MCP tool '${toolName}' failed for '${target.localId}': ${String(retryErr ?? err)}`
+          `MCP tool '${toolName}' failed for '${target.appId}': ${String(retryErr ?? err)}`
         );
       }
     }
   }
 
-  async close(localId: string): Promise<void> {
-    return this.disconnect(localId);
+  async close(appId: string): Promise<void> {
+    return this.disconnect(appId);
   }
 
-  private createTransport(config: McpConfig  ) {
+  private createTransport(config: McpConfig) {
     switch (config.transport) {
       case 'stdio':
         return new StdioClientTransport({
@@ -276,6 +342,15 @@ export class McpExecutor implements Executor<McpConfig  , McpExecutorDetail> {
       case 'sse':
         return new SSEClientTransport(new URL(config.url));
     }
+  }
+
+  private async connectLegacy(target: McpConnectionTarget): Promise<Client> {
+    await this.connect(target.appId, target.config);
+    const state = this.clients.get(target.appId);
+    if (!state) {
+      throw new AaiError('SERVICE_UNAVAILABLE', `MCP app '${target.appId}' is not connected`);
+    }
+    return state.client;
   }
 }
 
@@ -307,11 +382,51 @@ function extractNotificationMessage(message: unknown): string | null {
   return null;
 }
 
+function summarizeMcpConfig(config: McpConfig): Record<string, unknown> {
+  switch (config.transport) {
+    case 'stdio':
+      return {
+        transport: config.transport,
+        command: config.command,
+        argvLength: config.args?.length ?? 0,
+        ...(config.cwd ? { cwd: config.cwd } : {}),
+        ...(config.env ? { envKeys: Object.keys(config.env) } : {}),
+        ...(config.timeout ? { timeout: config.timeout } : {}),
+      };
+    case 'streamable-http':
+    case 'sse':
+      return {
+        transport: config.transport,
+        url: config.url,
+        ...(config.timeout ? { timeout: config.timeout } : {}),
+      };
+  }
+}
+
+// Helper to load headers for imported MCP apps
+async function loadImportedMcpHeaders(
+  _secureStorage: SecureStorage | undefined,
+  _appId: string
+): Promise<Record<string, string> | undefined> {
+  // TODO: Implement header loading from secure storage if needed
+  return undefined;
+}
+
+// Placeholder for SecureStorage type
+type SecureStorage = {
+  get: (key: string) => Promise<string | null>;
+  set: (key: string, value: string) => Promise<void>;
+  delete: (key: string) => Promise<void>;
+};
+
 let singleton: McpExecutor | undefined;
 
-export function getMcpExecutor(): McpExecutor {
+export function getMcpExecutor(secureStorage?: SecureStorage): McpExecutor {
   if (!singleton) {
-    singleton = new McpExecutor();
+    singleton = new McpExecutor(secureStorage);
+  } else if (secureStorage) {
+    // Allow updating secureStorage after creation
+    singleton.secureStorage = secureStorage;
   }
   return singleton;
 }

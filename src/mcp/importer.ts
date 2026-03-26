@@ -11,7 +11,8 @@ import {
 import { getManagedAppDir } from '../storage/paths.js';
 import { getSkillRegistryEntry, upsertSkillRegistryEntry } from '../storage/skill-registry.js';
 import type { AaiJson, McpConfig } from '../types/aai-json.js';
-import { deriveLocalId, slugify } from '../utils/ids.js';
+import { deriveAppId, slugify } from '../utils/ids.js';
+import { loadDotenv, substituteConfigEnvVars } from '../utils/dotenv.js';
 
 const SECRET_PREFIX = 'mcp-import-headers-';
 
@@ -68,7 +69,7 @@ export interface McpImportOptions extends McpImportPreviewOptions {
 }
 
 export interface McpImportPreview {
-  localId: string;
+  appId: string;
   name: string;
   tools: McpListedTool[];
 }
@@ -93,7 +94,7 @@ export interface SkillImportOptions extends SkillImportSourceInput {
 }
 
 export interface SkillImportPreview {
-  localId: string;
+  appId: string;
   name: string;
   description?: string;
   content: string;
@@ -229,15 +230,15 @@ export async function discoverMcpImport(
   options: McpImportPreviewOptions
 ): Promise<McpImportPreview> {
   const requestedName = normalizeImportedAppName(options.name);
-  const localId = await deriveUniqueLocalImportId(options.config, requestedName);
+  const appId = await deriveUniqueMcpAppId(options.config, requestedName);
   const tools = await executor.listTools({
-    localId,
+    appId,
     config: options.config,
     headers: options.headers,
   });
   const name =
-    requestedName ?? (await deriveImportName(executor, options.config, options.headers, localId));
-  return { localId, name, tools };
+    requestedName ?? (await deriveImportName(executor, options.config, options.headers, appId));
+  return { appId, name, tools };
 }
 
 export async function importMcpServer(
@@ -245,25 +246,52 @@ export async function importMcpServer(
   storage: SecureStorage,
   options: McpImportOptions
 ): Promise<McpImportedResult> {
-  const preview = await discoverMcpImport(executor, options);
+  // Load environment variables from ~/.aai/.env
+  const { env: dotenv, missing: missingInEnv } = await loadDotenv();
+
+  // Substitute ${VAR_NAME} placeholders in config with values from .env
+  let finalConfig = options.config;
+  let missingVars: string[] = [...missingInEnv];
+
+  if (Object.keys(dotenv).length > 0) {
+    // Convert McpConfig to plain object for env substitution
+    const configAsRecord: Record<string, unknown> = JSON.parse(JSON.stringify(options.config));
+    const { result: substitutedConfig, missing } = substituteConfigEnvVars(
+      configAsRecord,
+      dotenv
+    );
+    finalConfig = substitutedConfig as unknown as McpConfig;
+    missingVars = [...missingVars, ...missing];
+  }
+
+  if (missingVars.length > 0) {
+    const uniqueMissing = [...new Set(missingVars)];
+    throw new Error(
+      `Missing environment variables in ~/.aai/.env: ${uniqueMissing
+        .map((v) => `$\{${v}}`)
+        .join(', ')}. Please add these variables to your .env file.`
+    );
+  }
+
+  const preview = await discoverMcpImport(executor, { ...options, config: finalConfig });
   const descriptor = buildImportedMcpDescriptor(
     preview.name,
-    options.config,
+    finalConfig,
     normalizeExposureInput({ keywords: options.keywords, summary: options.summary })
   );
 
   const entry = await upsertMcpRegistryEntry(
     {
-      localId: preview.localId,
+      appId: preview.appId,
       protocol: 'mcp',
-      config: options.config,
+      config: finalConfig,
       exposureMode: options.exposureMode,
     },
     descriptor
   );
 
   if (options.headers && Object.keys(options.headers).length > 0) {
-    await storeImportedMcpHeaders(storage, preview.localId, options.headers);
+    await storeImportedMcpHeaders(storage, preview.appId, options.headers);
   }
 
   return { entry, descriptor, tools: preview.tools };
@@ -271,17 +299,17 @@ export async function importMcpServer(
 
 export async function storeImportedMcpHeaders(
   storage: SecureStorage,
-  localId: string,
+  appId: string,
   headers: Record<string, string>
 ): Promise<void> {
-  await storage.set(`${SECRET_PREFIX}${localId}`, JSON.stringify(headers));
+  await storage.set(`${SECRET_PREFIX}${appId}`, JSON.stringify(headers));
 }
 
 export async function loadImportedMcpHeaders(
   storage: SecureStorage,
-  localId: string
+  appId: string
 ): Promise<Record<string, string>> {
-  const raw = await storage.get(`${SECRET_PREFIX}${localId}`);
+  const raw = await storage.get(`${SECRET_PREFIX}${appId}`);
   if (!raw) return {};
   try {
     return JSON.parse(raw) as Record<string, string>;
@@ -295,10 +323,10 @@ export async function discoverSkillImport(
 ): Promise<SkillImportPreview> {
   const source = buildSkillImportSource(options);
   const content = await readSkillSourceContent(source);
-  const localId = await deriveUniqueSkillLocalId(source, content);
+  const appId = await deriveUniqueSkillAppId(source, content);
   const frontMatter = parseSkillFrontMatter(content);
   return {
-    localId,
+    appId,
     name: deriveSkillName(source, content),
     description: frontMatter.description,
     content,
@@ -307,10 +335,44 @@ export async function discoverSkillImport(
 
 export async function importSkill(
   options: SkillImportOptions
-): Promise<{ localId: string; descriptor: AaiJson; managedPath: string }> {
-  const preview = await discoverSkillImport(options);
-  const source = buildSkillImportSource(options);
-  const finalAppDir = getManagedAppDir(preview.localId);
+): Promise<{ appId: string; descriptor: AaiJson; managedPath: string }> {
+  // Load environment variables from ~/.aai/.env
+  const { env: dotenv, missing: missingInEnv } = await loadDotenv();
+
+  // Substitute ${VAR_NAME} placeholders in path/url with values from .env
+  let finalOptions = options;
+  let missingVars: string[] = [...missingInEnv];
+
+  if (Object.keys(dotenv).length > 0) {
+    const pathOrUrl = options.path ?? options.url;
+    if (pathOrUrl) {
+      const { result: substituted, missing } = substituteConfigEnvVars(
+        { source: pathOrUrl } as Record<string, unknown>,
+        dotenv
+      );
+      const substitutedSource = substituted.source as string;
+      missingVars = [...missingVars, ...missing];
+
+      if (options.path) {
+        finalOptions = { ...options, path: substitutedSource };
+      } else {
+        finalOptions = { ...options, url: substitutedSource };
+      }
+    }
+  }
+
+  if (missingVars.length > 0) {
+    const uniqueMissing = [...new Set(missingVars)];
+    throw new Error(
+      `Missing environment variables in ~/.aai/.env: ${uniqueMissing
+        .map((v) => `$\{${v}}`)
+        .join(', ')}. Please add these variables to your .env file.`
+    );
+  }
+
+  const preview = await discoverSkillImport(finalOptions);
+  const source = buildSkillImportSource(finalOptions);
+  const finalAppDir = getManagedAppDir(preview.appId);
   const finalManagedSkillDir = join(finalAppDir, 'skill');
   await mkdir(finalAppDir, { recursive: true });
 
@@ -344,7 +406,7 @@ export async function importSkill(
   await writeFile(join(finalAppDir, 'aai.json'), JSON.stringify(descriptor, null, 2), 'utf-8');
   await upsertSkillRegistryEntry(
     {
-      localId: preview.localId,
+      appId: preview.appId,
       protocol: 'skill',
       config: {
         path: finalManagedSkillDir,
@@ -354,7 +416,7 @@ export async function importSkill(
     descriptor
   );
 
-  return { localId: preview.localId, descriptor, managedPath: finalManagedSkillDir };
+  return { appId: preview.appId, descriptor, managedPath: finalManagedSkillDir };
 }
 
 export function parseSkillFrontMatter(content: string): SkillFrontMatter {
@@ -386,10 +448,10 @@ async function deriveImportName(
   executor: McpExecutor,
   config: McpConfig,
   headers: Record<string, string> | undefined,
-  localId: string
+  appId: string
 ): Promise<string> {
   const serverInfo = await executor.getServerInfo?.({
-    localId,
+    appId,
     config,
     headers,
   });
@@ -418,7 +480,7 @@ function buildImportedMcpDescriptor(name: string, config: McpConfig, exposure: E
   };
 }
 
-async function deriveUniqueLocalImportId(config: McpConfig, name?: string): Promise<string> {
+async function deriveUniqueMcpAppId(config: McpConfig, name?: string): Promise<string> {
   const preferred = deriveLocalImportId(config, name);
   const existing = await getMcpRegistryEntry(preferred);
   if (!existing) {
@@ -433,7 +495,7 @@ async function deriveUniqueLocalImportId(config: McpConfig, name?: string): Prom
     config.transport === 'stdio'
       ? `mcp:${config.command}:${(config.args ?? []).join(' ')}`
       : `mcp:${config.transport}:${config.url}`;
-  return deriveLocalId(name ? `${seed}:name:${name}` : seed, preferred);
+  return deriveAppId(name ? `${seed}:name:${name}` : seed, preferred);
 }
 
 function deriveLocalImportId(config: McpConfig, name?: string): string {
@@ -511,7 +573,7 @@ function deriveSkillName(options: SkillImportSourceInput, content: string): stri
   return 'Imported Skill';
 }
 
-async function deriveUniqueSkillLocalId(options: SkillImportSourceInput, content: string): Promise<string> {
+async function deriveUniqueSkillAppId(options: SkillImportSourceInput, content: string): Promise<string> {
   const preferred = `skill-${simplifyImportedName(deriveSkillName(options, content))}`;
   const existing = await getSkillRegistryEntry(preferred);
   if (!existing) {
@@ -519,7 +581,7 @@ async function deriveUniqueSkillLocalId(options: SkillImportSourceInput, content
   }
 
   const seed = options.path ? `skill:${options.path}` : `skill:${options.url ?? 'imported-skill'}`;
-  return deriveLocalId(seed, preferred);
+  return deriveAppId(seed, preferred);
 }
 
 async function readSkillSourceContent(options: SkillImportSourceInput): Promise<string> {

@@ -14,6 +14,6 @@ export function getManagedAppsRoot(): string {
   return join(homedir(), '.local', 'share', 'aai-gateway', 'apps');
 }
 
-export function getManagedAppDir(localId: string): string {
-  return join(getManagedAppsRoot(), localId);
+export function getManagedAppDir(appId: string): string {
+  return join(getManagedAppsRoot(), appId);
 }

@@ -5,12 +5,14 @@ import { AaiError } from '../errors/errors.js';
 import type {
   AcpAgentConfig,
   AcpExecutorConfig,
-  AcpExecutorDetail,
   DetailedCapability,
   ExecutionResult,
 } from '../types/index.js';
+import type { AppCapabilities, ToolSchema } from '../types/capabilities.js';
 import { logger } from '../utils/logger.js';
 import { AAI_GATEWAY_NAME, AAI_GATEWAY_VERSION } from '../version.js';
+import { ACP_TOOL_SCHEMAS } from './acp-tool-schemas.js';
+import { validateArgs, formatValidationErrors } from '../utils/schema-validator.js';
 
 import type { ExecutionObserver, ExecutionTaskStatus, TaskCapableExecutor } from './events.js';
 
@@ -23,18 +25,14 @@ interface PendingRequest {
   sessionId?: string;
 }
 
-interface PromptTurnChunk {
-  cursor: number;
-  text: string;
-}
+type AcpContentBlock = Record<string, unknown> & { type: string };
 
 interface PromptTurnState {
-  localId: string;
+  appId: string;
   turnId: string;
   sessionId: string;
   outputText: string;
-  chunks: PromptTurnChunk[];
-  nextCursor: number;
+  content: AcpContentBlock[];
   done: boolean;
   status: ExecutionTaskStatus;
   statusMessage?: string;
@@ -72,18 +70,47 @@ const ACP_SESSION_TIMEOUT_MS = 30000;
 const ACP_POLL_WAIT_MS = 30000;
 const ACP_TURN_TTL_MS = 5 * 60_000;
 const ACP_MAX_OUTPUT_CHARS = 200_000;
+const ACP_EMPTY_CONTENT_MESSAGE = '处理中，请继续等待';
 const ACP_NON_INTERACTIVE_GUIDANCE =
   'AAI Gateway instruction: operate in non-interactive mode. Do not ask for human confirmation, approval, or additional input. If confirmation would normally be required, choose the safest non-interactive path available or explain the limitation in your final response instead of waiting.';
+
+function toToolSchemaReference(schema: ToolSchema): Record<string, unknown> {
+  return {
+    name: schema.name,
+    inputSchema: schema.inputSchema,
+  };
+}
+
+/**
+ * Validate arguments against ACP tool schema
+ */
+function validateAcpArgs(tool: string, args: Record<string, unknown>): void {
+  const schema = ACP_TOOL_SCHEMAS.find((s) => s.name === tool);
+  if (!schema) {
+    return; // No schema defined for this tool
+  }
+
+  const result = validateArgs(args, schema.inputSchema);
+  if (!result.valid) {
+    const errorMessage = `参数校验失败 for '${tool}'\n${formatValidationErrors(result)}`;
+    throw new AaiError(
+      'INVALID_PARAMS',
+      errorMessage,
+      {
+        schema: toToolSchemaReference(schema),
+        validationErrors: result.errors,
+        suggestion: `请参考 schema 重试:\n${JSON.stringify(schema.inputSchema, null, 2)}`,
+      }
+    );
+  }
+}
 
 /**
  * ACP Executor implementation
  *
  * Implements unified Executor interface for ACP agents.
  */
-export class AcpExecutor implements TaskCapableExecutor<
-  AcpAgentConfig & AcpExecutorConfig,
-  AcpExecutorDetail
-> {
+export class AcpExecutor implements TaskCapableExecutor {
   readonly protocol = 'acp-agent';
   private states = new Map<string, ProcessState>();
   private pendingRequests = new Map<string, PendingRequest>();
@@ -92,89 +119,141 @@ export class AcpExecutor implements TaskCapableExecutor<
   private queuedTurnIdsBySession = new Map<string, string[]>();
   private sessionOwners = new Map<string, string>();
   private requestId = 0;
-  private sessionIds = new Map<string, string>();
 
   constructor(private readonly pollWaitMs = ACP_POLL_WAIT_MS) {}
 
-  async connect(localId: string, config: AcpAgentConfig & AcpExecutorConfig): Promise<void> {
-    await this.ensureInitialized(localId, config);
+  async connect(appId: string, config: AcpAgentConfig & AcpExecutorConfig): Promise<void> {
+    await this.ensureInitialized(appId, config);
   }
 
-  async disconnect(localId: string): Promise<void> {
-    this.stop(localId);
+  async disconnect(appId: string): Promise<void> {
+    this.stop(appId);
   }
 
-  async loadDetail(config: AcpAgentConfig & AcpExecutorConfig): Promise<AcpExecutorDetail> {
-    const tempId = `temp-${Date.now()}`;
-    const initialize = (await this.ensureInitialized(tempId, config)) as Record<string, unknown>;
-    await this.disconnect(tempId);
+
+  /**
+   * Load app-level capabilities (tool list without parameter definitions)
+   * ACP tools are hardcoded
+   */
+  async loadAppCapabilities(
+    _appId: string,
+    _config: AcpAgentConfig & AcpExecutorConfig
+  ): Promise<AppCapabilities> {
+    const tools = ACP_TOOL_SCHEMAS.map((schema) => ({
+      name: schema.name,
+      description: schema.description ?? '',
+    }));
+
+    return { title: 'ACP Agent', tools };
+  }
+
+  /**
+   * Load schema for a specific tool
+   * Returns null if tool not found
+   */
+  async loadToolSchema(
+    _appId: string,
+    _config: AcpAgentConfig & AcpExecutorConfig,
+    toolName: string
+  ): Promise<ToolSchema | null> {
+    const schema = ACP_TOOL_SCHEMAS.find((s) => s.name === toolName);
+    if (!schema) return null;
 
     return {
-      sessionId: undefined,
-      capabilities: initialize,
+      name: schema.name,
+      description: schema.description,
+      inputSchema: schema.inputSchema ?? { type: 'object', properties: {} },
+      outputSchema: schema.outputSchema,
     };
   }
 
   async execute(
-    localId: string,
+    appId: string,
     config: AcpAgentConfig & AcpExecutorConfig,
     operation: string,
     args: Record<string, unknown>
   ): Promise<ExecutionResult> {
-    return this.executeInternal(localId, config, operation, args);
+    return this.executeInternal(appId, config, operation, args);
   }
 
   async executeWithObserver(
-    localId: string,
+    appId: string,
     config: AcpAgentConfig & AcpExecutorConfig,
     operation: string,
     args: Record<string, unknown>,
     _observer: ExecutionObserver
   ): Promise<ExecutionResult> {
-    return this.executeInternal(localId, config, operation, args);
+    return this.executeInternal(appId, config, operation, args);
   }
 
   private async executeInternal(
-    localId: string,
+    appId: string,
     config: AcpAgentConfig & AcpExecutorConfig,
     operation: string,
     args: Record<string, unknown>
   ): Promise<ExecutionResult> {
     try {
-      await this.ensureInitialized(localId, config);
+      // Validate arguments against schema if available
+      const schema = await this.loadToolSchema(appId, config, operation);
+      if (schema) {
+        const result = validateArgs(args, schema.inputSchema);
+        if (!result.valid) {
+          const errorMessage = `参数校验失败 for '${operation}'\n${formatValidationErrors(result)}`;
+          return {
+            success: false,
+            error: errorMessage,
+            schema: toToolSchemaReference(schema),
+            suggestion: `请参考 schema 重试:\n${JSON.stringify(schema.inputSchema, null, 2)}`,
+          };
+        }
+      }
+
+      await this.ensureInitialized(appId, config);
 
       if (operation === 'prompt') {
-        return { success: true, data: await this.handlePromptRequest(localId, args) };
+        throw new AaiError(
+          'INVALID_PARAMS',
+          'ACP tool "prompt" has been removed. Call "session/new" first, then call "session/prompt" with the returned sessionId.'
+        );
+      }
+
+      if (operation === 'session/new') {
+        return { success: true, data: await this.handleSessionNewRequest(appId, args) };
       }
 
       if (operation === 'session/prompt') {
-        return { success: true, data: await this.handleSessionPromptRequest(localId, args) };
+        return { success: true, data: await this.handleSessionPromptRequest(appId, args) };
       }
 
       if (operation === 'turn/poll') {
-        return { success: true, data: await this.handleTurnPollRequest(localId, args) };
+        return { success: true, data: await this.handleTurnPollRequest(appId, args) };
       }
 
       if (operation === 'turn/cancel') {
-        return { success: true, data: await this.handleTurnCancelRequest(localId, args) };
+        return { success: true, data: await this.handleTurnCancelRequest(appId, args) };
       }
 
       if (operation === 'session/poll') {
-        return { success: true, data: await this.handleSessionPollRequest(localId, args) };
+        return { success: true, data: await this.handleSessionPollRequest(appId, args) };
       }
 
-      const normalized = await this.normalizeOperation(localId, operation, args);
+      const normalized = await this.normalizeOperation(appId, operation, args);
       const data = await this.sendRequest(
-        localId,
+        appId,
         normalized.method,
         normalized.params,
         normalized.timeoutMs
       );
-      if (normalized.method === 'session/new') {
-        this.captureSessionId(localId, data);
-      }
       return { success: true, data };
     } catch (err) {
+      if (err instanceof AaiError) {
+        return {
+          success: false,
+          error: err.message,
+          ...(err.data ?? {}),
+        };
+      }
+
       return {
         success: false,
         error: err instanceof Error ? err.message : String(err),
@@ -182,18 +261,18 @@ export class AcpExecutor implements TaskCapableExecutor<
     }
   }
 
-  async health(localId: string): Promise<boolean> {
-    const state = this.states.get(localId);
+  async health(appId: string): Promise<boolean> {
+    const state = this.states.get(appId);
     return !!state?.initialized;
   }
 
   // Legacy methods for backward compatibility
 
   async inspect(
-    localId: string,
+    appId: string,
     config: AcpAgentConfig & AcpExecutorConfig
   ): Promise<DetailedCapability> {
-    const initialize = (await this.ensureInitialized(localId, config)) as Record<string, unknown>;
+    const initialize = (await this.ensureInitialized(appId, config)) as Record<string, unknown>;
     return {
       title: 'ACP Agent Details',
       body: JSON.stringify(initialize, null, 2),
@@ -201,39 +280,38 @@ export class AcpExecutor implements TaskCapableExecutor<
   }
 
   async executeLegacy(
-    localId: string,
+    appId: string,
     config: AcpAgentConfig & AcpExecutorConfig,
     method: string,
     params: Record<string, unknown>
   ): Promise<unknown> {
-    await this.ensureInitialized(localId, config);
-    return this.sendRequest(localId, method, params, 0);
+    await this.ensureInitialized(appId, config);
+    return this.sendRequest(appId, method, params, 0);
   }
 
-  stop(localId: string): void {
-    const state = this.states.get(localId);
+  stop(appId: string): void {
+    const state = this.states.get(appId);
     if (!state) return;
     state.proc.kill();
-    this.states.delete(localId);
-    this.sessionIds.delete(localId);
-    this.clearPromptTurnsForLocal(localId);
+    this.states.delete(appId);
+    this.clearPromptTurnsForLocal(appId);
   }
 
   private async ensureInitialized(
-    localId: string,
+    appId: string,
     config: AcpAgentConfig & AcpExecutorConfig
   ): Promise<unknown> {
-    const state = this.states.get(localId);
+    const state = this.states.get(appId);
     if (state?.initialized && state.initializeResult) {
       return state.initializeResult;
     }
 
     if (state) {
       state.proc.kill();
-      this.states.delete(localId);
+      this.states.delete(appId);
     }
 
-    logger.info({ localId, command: config.command, args: config.args }, 'ACP initialize started');
+    logger.info({ appId, command: config.command, args: config.args }, 'ACP initialize started');
 
     const proc = spawn(config.command, config.args ?? [], {
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -246,24 +324,23 @@ export class AcpExecutor implements TaskCapableExecutor<
       buffer: '',
       initialized: false,
     };
-    this.states.set(localId, nextState);
+    this.states.set(appId, nextState);
 
     proc.stdout?.on('data', (data: Buffer) => {
-      this.handleMessage(localId, data.toString());
+      this.handleMessage(appId, data.toString());
     });
 
     proc.stderr?.on('data', (data: Buffer) => {
-      logger.debug({ localId, stderr: data.toString().trim() }, 'ACP agent stderr');
+      logger.debug({ appId, stderr: data.toString().trim() }, 'ACP agent stderr');
     });
 
     proc.on('exit', () => {
-      this.states.delete(localId);
-      this.sessionIds.delete(localId);
-      this.clearPromptTurnsForLocal(localId);
+      this.states.delete(appId);
+      this.clearPromptTurnsForLocal(appId);
     });
 
     const initializeResult = await this.sendRequest(
-      localId,
+      appId,
       'initialize',
       {
         protocolVersion: 1,
@@ -282,23 +359,15 @@ export class AcpExecutor implements TaskCapableExecutor<
 
     nextState.initialized = true;
     nextState.initializeResult = initializeResult as Record<string, unknown>;
-    logger.info({ localId }, 'ACP initialize completed');
+    logger.info({ appId }, 'ACP initialize completed');
     return initializeResult;
   }
 
   private async normalizeOperation(
-    _localId: string,
+    _appId: string,
     operation: string,
     args: Record<string, unknown>
   ): Promise<{ method: string; params: Record<string, unknown>; timeoutMs: number }> {
-    if (operation === 'session/new') {
-      return {
-        method: operation,
-        params: normalizeSessionNewArgs(args),
-        timeoutMs: ACP_SESSION_TIMEOUT_MS,
-      };
-    }
-
     return {
       method: operation,
       params: args,
@@ -306,18 +375,17 @@ export class AcpExecutor implements TaskCapableExecutor<
     };
   }
 
-  private async ensureSession(localId: string, args: Record<string, unknown>): Promise<string> {
-    const existing = this.sessionIds.get(localId);
-    if (existing) {
-      logger.debug({ localId, sessionId: existing }, 'ACP session reused');
-      return existing;
-    }
+  private async handleSessionNewRequest(
+    appId: string,
+    args: Record<string, unknown>
+  ): Promise<unknown> {
+    validateAcpArgs('session/new', args);
+    const normalizedArgs = normalizeSessionNewArgs(args);
 
-    logger.info({ localId }, 'ACP session/new started');
     const created = (await this.sendRequest(
-      localId,
+      appId,
       'session/new',
-      normalizeSessionNewArgs(args),
+      normalizedArgs,
       ACP_SESSION_TIMEOUT_MS
     )) as { sessionId?: unknown };
 
@@ -330,53 +398,47 @@ export class AcpExecutor implements TaskCapableExecutor<
       throw new AaiError('INTERNAL_ERROR', 'ACP session/new did not return a sessionId');
     }
 
-    this.sessionIds.set(localId, sessionId);
-    this.sessionOwners.set(sessionId, localId);
-    logger.info({ localId, sessionId }, 'ACP session/new completed');
-    return sessionId;
-  }
+    this.sessionOwners.set(sessionId, appId);
 
-  private async handlePromptRequest(
-    localId: string,
-    args: Record<string, unknown>
-  ): Promise<unknown> {
-    assertPromptInput(args);
-    const sessionId = await this.ensureSession(localId, args);
-    return this.startPromptTurn(localId, sessionId, normalizePromptArgs(args, sessionId));
+    return {
+      sessionId,
+      promptCapabilities: extractPromptCapabilities(
+        this.states.get(appId)?.initializeResult ?? null
+      ),
+    };
   }
 
   private async handleSessionPromptRequest(
-    localId: string,
+    appId: string,
     args: Record<string, unknown>
   ): Promise<unknown> {
+    validateAcpArgs('session/prompt', args);
     assertPromptInput(args);
-    const sessionId =
-      typeof args.sessionId === 'string' && args.sessionId.length > 0
-        ? args.sessionId
-        : await this.ensureSession(localId, args);
-    this.sessionIds.set(localId, sessionId);
-    this.sessionOwners.set(sessionId, localId);
-    return this.startPromptTurn(localId, sessionId, normalizePromptArgs(args, sessionId));
+    const sessionId = requireSessionId(args, 'ACP session/prompt requires args.sessionId. Call session/new first, then pass the returned sessionId to session/prompt.');
+    this.sessionOwners.set(sessionId, appId);
+    return this.startPromptTurn(appId, sessionId, normalizePromptArgs(args, sessionId));
   }
 
   private async handleSessionPollRequest(
-    localId: string,
+    appId: string,
     args: Record<string, unknown>
   ): Promise<unknown> {
+    validateAcpArgs('session/poll', args);
     const sessionId = requireSessionId(args);
     const turnId = this.resolveTurnIdForSessionPoll(sessionId);
-    return this.waitForPromptTurn(localId, turnId, extractTurnCursor(args));
+    return this.waitForPromptTurn(appId, turnId);
   }
 
   private async handleTurnPollRequest(
-    localId: string,
+    appId: string,
     args: Record<string, unknown>
   ): Promise<unknown> {
-    return this.waitForPromptTurn(localId, requireTurnId(args), extractTurnCursor(args));
+    validateAcpArgs('turn/poll', args);
+    return this.waitForPromptTurn(appId, requireTurnId(args));
   }
 
   private async handleTurnCancelRequest(
-    localId: string,
+    appId: string,
     args: Record<string, unknown>
   ): Promise<unknown> {
     const turnId = requireTurnId(args);
@@ -393,7 +455,7 @@ export class AcpExecutor implements TaskCapableExecutor<
     }
 
     await this.sendRequest(
-      localId,
+      appId,
       'session/cancel',
       { sessionId: turn.sessionId },
       ACP_SESSION_TIMEOUT_MS
@@ -403,18 +465,17 @@ export class AcpExecutor implements TaskCapableExecutor<
   }
 
   private async startPromptTurn(
-    localId: string,
+    appId: string,
     sessionId: string,
     params: Record<string, unknown>
   ): Promise<unknown> {
     const turnId = randomUUID();
     const turn: PromptTurnState = {
-      localId,
+      appId,
       turnId,
       sessionId,
       outputText: '',
-      chunks: [],
-      nextCursor: 1,
+      content: [],
       done: false,
       status: 'queued',
       waiters: new Set(),
@@ -423,7 +484,7 @@ export class AcpExecutor implements TaskCapableExecutor<
       statusMessage: 'Waiting to start.',
     };
     this.promptTurns.set(turnId, turn);
-    this.sessionOwners.set(sessionId, localId);
+    this.sessionOwners.set(sessionId, appId);
 
     const activeTurnId = this.activeTurnIdsBySession.get(sessionId);
     if (activeTurnId) {
@@ -435,7 +496,7 @@ export class AcpExecutor implements TaskCapableExecutor<
       this.launchPromptTurn(turn);
     }
 
-    return this.waitForPromptTurn(localId, turnId);
+    return this.waitForPromptTurn(appId, turnId);
   }
 
   private launchPromptTurn(turn: PromptTurnState): void {
@@ -445,7 +506,7 @@ export class AcpExecutor implements TaskCapableExecutor<
     this.activeTurnIdsBySession.set(turn.sessionId, turn.turnId);
 
     try {
-      const request = this.sendRequest(turn.localId, 'session/prompt', turn.params, 0);
+      const request = this.sendRequest(turn.appId, 'session/prompt', turn.params, 0);
       void request.then(
         (result) => this.completePromptTurn(turn.turnId, result),
         (error) => this.failPromptTurn(turn.turnId, error)
@@ -455,11 +516,11 @@ export class AcpExecutor implements TaskCapableExecutor<
     }
   }
 
-  private waitForPromptTurn(localId: string, turnId: string, cursor = 0): Promise<unknown> {
+  private waitForPromptTurn(_appId: string, turnId: string): Promise<unknown> {
     const turn = this.getPromptTurn(turnId);
     turn.lastTouchedAt = Date.now();
     if (turn.done) {
-      return Promise.resolve(this.buildPromptTurnResult(localId, turn, cursor, false));
+      return Promise.resolve(this.buildPromptTurnResult(turn));
     }
 
     return new Promise((resolve) => {
@@ -468,59 +529,27 @@ export class AcpExecutor implements TaskCapableExecutor<
         turn.waiters.delete(wake);
         const nextTurn = this.getPromptTurn(turnId);
         nextTurn.lastTouchedAt = Date.now();
-        resolve(this.buildPromptTurnResult(localId, nextTurn, cursor, false));
+        resolve(this.buildPromptTurnResult(nextTurn));
       };
 
       const timer = setTimeout(() => {
         turn.waiters.delete(wake);
         const nextTurn = this.getPromptTurn(turnId);
         nextTurn.lastTouchedAt = Date.now();
-        resolve(this.buildPromptTurnResult(localId, nextTurn, cursor, true));
+        resolve(this.buildPromptTurnResult(nextTurn));
       }, this.pollWaitMs);
 
       turn.waiters.add(wake);
     });
   }
 
-  private buildPromptTurnResult(
-    localId: string,
-    turn: PromptTurnState,
-    cursor: number,
-    timedOut: boolean
-  ): Record<string, unknown> {
-    const { deltaText, cursor: nextCursor } = this.collectTurnDelta(turn, cursor);
-
-    const nextAction = turn.done
-      ? undefined
-      : `Call aai:exec with { app: "${localId}", tool: "turn/poll", args: { turnId: "${turn.turnId}", cursor: ${nextCursor} } } to fetch the next increment after waiting up to ${this.pollWaitMs}ms.`;
-
+  private buildPromptTurnResult(turn: PromptTurnState): Record<string, unknown> {
+    const content = this.collectTurnContent(turn);
     return {
       turnId: turn.turnId,
       sessionId: turn.sessionId,
-      cursor: nextCursor,
       done: turn.done,
-      status: turn.status,
-      ...(turn.statusMessage ? { statusMessage: turn.statusMessage } : {}),
-      deltaText,
-      outputText: buildPromptOutputText(
-        localId,
-        turn.turnId,
-        deltaText,
-        turn.status,
-        turn.done,
-        timedOut,
-        turn.error,
-        nextCursor,
-        this.pollWaitMs
-      ),
-      ...(turn.error ? { error: turn.error } : {}),
-      ...(nextAction
-        ? {
-            pollTool: 'turn/poll',
-            pollArgs: { turnId: turn.turnId, cursor: nextCursor },
-            nextAction,
-          }
-        : {}),
+      content: content.length > 0 ? content : [{ type: 'text', text: ACP_EMPTY_CONTENT_MESSAGE }],
     };
   }
 
@@ -545,9 +574,9 @@ export class AcpExecutor implements TaskCapableExecutor<
       return;
     }
 
-    const finalText = extractResultText(result);
-    if (finalText) {
-      this.appendPromptTurnText(turn, finalText);
+    const finalContent = extractResultContent(result);
+    if (finalContent.length > 0) {
+      this.appendPromptTurnContent(turn, finalContent);
     }
     this.finishPromptTurn(turn, 'completed');
   }
@@ -580,9 +609,9 @@ export class AcpExecutor implements TaskCapableExecutor<
     return turn;
   }
 
-  private clearPromptTurnsForLocal(localId: string): void {
+  private clearPromptTurnsForLocal(appId: string): void {
     for (const turn of Array.from(this.promptTurns.values())) {
-      if (turn.localId !== localId) {
+      if (turn.appId !== appId) {
         continue;
       }
 
@@ -590,7 +619,7 @@ export class AcpExecutor implements TaskCapableExecutor<
         this.finishPromptTurn(
           turn,
           'cancelled',
-          `ACP agent '${localId}' stopped before the turn completed.`,
+          `ACP agent '${appId}' stopped before the turn completed.`,
           false
         );
       }
@@ -599,33 +628,21 @@ export class AcpExecutor implements TaskCapableExecutor<
     }
 
     for (const [sessionId, owner] of Array.from(this.sessionOwners.entries())) {
-      if (owner === localId) {
+      if (owner === appId) {
         this.sessionOwners.delete(sessionId);
       }
     }
   }
 
-  private captureSessionId(localId: string, data: unknown): void {
-    if (!data || typeof data !== 'object') {
-      return;
-    }
-
-    const sessionId = (data as { sessionId?: unknown }).sessionId;
-    if (typeof sessionId === 'string' && sessionId.length > 0) {
-      this.sessionIds.set(localId, sessionId);
-      this.sessionOwners.set(sessionId, localId);
-    }
-  }
-
   private sendRequest(
-    localId: string,
+    appId: string,
     method: string,
     params: Record<string, unknown>,
     timeoutMs: number
   ): Promise<unknown> {
-    const state = this.states.get(localId);
+    const state = this.states.get(appId);
     if (!state?.proc.stdin) {
-      throw new AaiError('SERVICE_UNAVAILABLE', `ACP agent '${localId}' is not running`);
+      throw new AaiError('SERVICE_UNAVAILABLE', `ACP agent '${appId}' is not running`);
     }
 
     const id = ++this.requestId;
@@ -638,7 +655,7 @@ export class AcpExecutor implements TaskCapableExecutor<
 
     logger.info(
       {
-        localId,
+        appId,
         method,
         sessionId: typeof params.sessionId === 'string' ? params.sessionId : undefined,
         timeoutMs: timeoutMs > 0 ? timeoutMs : undefined,
@@ -651,17 +668,17 @@ export class AcpExecutor implements TaskCapableExecutor<
         timeoutMs > 0
           ? setTimeout(() => {
               this.pendingRequests.delete(String(id));
-              logger.error({ localId, method, timeoutMs }, 'ACP request timed out');
+              logger.error({ appId, method, timeoutMs }, 'ACP request timed out');
               reject(new AaiError('TIMEOUT', `${method} timed out after ${timeoutMs}ms`));
             }, timeoutMs)
           : undefined;
       this.pendingRequests.set(String(id), {
         resolve: (value) => {
-          logger.info({ localId, method }, 'ACP request completed');
+          logger.info({ appId, method }, 'ACP request completed');
           resolve(value);
         },
         reject: (error) => {
-          logger.error({ localId, method, error }, 'ACP request failed');
+          logger.error({ appId, method, error }, 'ACP request failed');
           reject(error);
         },
         timer,
@@ -673,8 +690,8 @@ export class AcpExecutor implements TaskCapableExecutor<
     });
   }
 
-  private handleMessage(localId: string, data: string): void {
-    const state = this.states.get(localId);
+  private handleMessage(appId: string, data: string): void {
+    const state = this.states.get(appId);
     if (!state) return;
 
     const combined = state.buffer + data;
@@ -689,7 +706,7 @@ export class AcpExecutor implements TaskCapableExecutor<
         const message = JSON.parse(trimmed) as JsonRpcMessage;
         this.dispatchMessage(message);
       } catch (err) {
-        logger.warn({ localId, line: trimmed, err }, 'Failed to parse ACP message');
+        logger.warn({ appId, line: trimmed, err }, 'Failed to parse ACP message');
       }
     }
   }
@@ -725,9 +742,9 @@ export class AcpExecutor implements TaskCapableExecutor<
   }
 
   private capturePromptUpdate(sessionId: string, params: unknown): void {
-    const text = extractUpdateText(params);
+    const content = extractUpdateContent(params);
     const taskStatus = extractTaskStatus(params);
-    if (!text) {
+    if (content.length === 0) {
       if (!taskStatus) {
         return;
       }
@@ -736,9 +753,8 @@ export class AcpExecutor implements TaskCapableExecutor<
     logger.debug(
       {
         sessionId,
-        hasText: Boolean(text),
-        textLength: text?.length,
-        textPreview: text ? truncateLogPreview(text) : undefined,
+        contentBlocks: content.length,
+        textPreview: previewContentBlocks(content),
         taskStatus: taskStatus?.status,
       },
       'ACP session/update received'
@@ -755,8 +771,8 @@ export class AcpExecutor implements TaskCapableExecutor<
     }
 
     let changed = false;
-    if (text) {
-      changed = this.appendPromptTurnText(turn, text) || changed;
+    if (content.length > 0) {
+      changed = this.appendPromptTurnContent(turn, content) || changed;
     }
 
     if (taskStatus) {
@@ -771,15 +787,29 @@ export class AcpExecutor implements TaskCapableExecutor<
     }
   }
 
-  private appendPromptTurnText(turn: PromptTurnState, incoming: string): boolean {
-    const merged = mergePromptText(turn.outputText, incoming);
-    if (merged.mergedText === turn.outputText || merged.deltaText.length === 0) {
+  private appendPromptTurnContent(turn: PromptTurnState, incoming: AcpContentBlock[]): boolean {
+    let changed = false;
+
+    for (const block of incoming) {
+      if (block.type === 'text' && typeof block.text === 'string') {
+        const merged = mergePromptText(turn.outputText, block.text);
+        if (merged.deltaText.length === 0) {
+          continue;
+        }
+
+        turn.outputText = merged.mergedText;
+        appendAccumulatedContentBlock(turn.content, { ...block, text: merged.deltaText });
+        changed = true;
+        continue;
+      }
+
+      changed = appendAccumulatedContentBlock(turn.content, block) || changed;
+    }
+
+    if (!changed) {
       return false;
     }
 
-    turn.outputText = merged.mergedText;
-    turn.chunks.push({ cursor: turn.nextCursor, text: merged.deltaText });
-    turn.nextCursor += 1;
     turn.lastTouchedAt = Date.now();
     return true;
   }
@@ -882,16 +912,8 @@ export class AcpExecutor implements TaskCapableExecutor<
     this.promptTurns.delete(turnId);
   }
 
-  private collectTurnDelta(
-    turn: PromptTurnState,
-    cursor: number
-  ): { deltaText: string; cursor: number } {
-    const nextChunks = turn.chunks.filter((chunk) => chunk.cursor > cursor);
-    const nextCursor = nextChunks.length > 0 ? nextChunks[nextChunks.length - 1].cursor : cursor;
-    return {
-      deltaText: nextChunks.map((chunk) => chunk.text).join(''),
-      cursor: nextCursor,
-    };
+  private collectTurnContent(turn: PromptTurnState): AcpContentBlock[] {
+    return turn.content.map((block) => ({ ...block }));
   }
 
   private resolveTurnIdForSessionPoll(sessionId: string): string {
@@ -909,7 +931,7 @@ export class AcpExecutor implements TaskCapableExecutor<
 
     throw new AaiError(
       'INVALID_PARAMS',
-      `ACP session '${sessionId}' no longer maps cleanly to a single turn. Use turn/poll with the turnId returned by prompt or session/prompt.`
+      `ACP session '${sessionId}' no longer maps cleanly to a single turn. Use turn/poll with the turnId returned by session/prompt.`
     );
   }
 }
@@ -927,14 +949,14 @@ function extractSessionId(params: unknown): string | null {
   return typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : null;
 }
 
-function extractUpdateText(params: unknown): string | null {
+function extractUpdateContent(params: unknown): AcpContentBlock[] {
   if (!params || typeof params !== 'object') {
-    return null;
+    return [];
   }
 
   const update = (params as { update?: unknown }).update;
   if (!update || typeof update !== 'object') {
-    return null;
+    return [];
   }
 
   const sessionUpdate = (update as { sessionUpdate?: unknown }).sessionUpdate;
@@ -943,7 +965,7 @@ function extractUpdateText(params: unknown): string | null {
     sessionUpdate === 'usage_update' ||
     sessionUpdate === 'session_title_update'
   ) {
-    return null;
+    return [];
   }
 
   const candidates = [
@@ -954,10 +976,7 @@ function extractUpdateText(params: unknown): string | null {
     (update as { response?: unknown }).response,
   ];
 
-  const fragments = Array.from(
-    new Set(candidates.flatMap((candidate) => collectTextFragments(candidate)))
-  );
-  return fragments.length > 0 ? fragments.join('') : null;
+  return normalizeContentBlocks(candidates);
 }
 
 function extractTaskStatus(
@@ -1042,10 +1061,19 @@ function extractStringField(obj: object, key: 'message' | 'title' | 'detail'): s
 }
 
 function normalizeSessionNewArgs(args: Record<string, unknown>): Record<string, unknown> {
+  if (typeof args.cwd !== 'string' || args.cwd.length === 0) {
+    throw new AaiError(
+      'INVALID_PARAMS',
+      'ACP session/new requires args.cwd (absolute working directory string)'
+    );
+  }
+
+  // mcpServers is required by codex-acp but we default to empty array if not provided
+  const mcpServers = Array.isArray(args.mcpServers) ? args.mcpServers : [];
+
   return {
-    cwd: typeof args.cwd === 'string' && args.cwd.length > 0 ? args.cwd : process.cwd(),
-    mcpServers: Array.isArray(args.mcpServers) ? args.mcpServers : [],
-    ...(typeof args.title === 'string' ? { title: args.title } : {}),
+    cwd: args.cwd,
+    mcpServers,
   };
 }
 
@@ -1054,19 +1082,7 @@ function normalizePromptArgs(
   sessionId: string
 ): Record<string, unknown> {
   const rawPrompt = args.prompt;
-  const text =
-    typeof args.text === 'string'
-      ? args.text
-      : typeof args.message === 'string'
-        ? args.message
-        : undefined;
-
-  const prompt =
-    Array.isArray(rawPrompt) && rawPrompt.length > 0
-      ? rawPrompt
-      : text
-        ? [{ type: 'text', text }]
-        : undefined;
+  const prompt = Array.isArray(rawPrompt) && rawPrompt.length > 0 ? rawPrompt : undefined;
 
   if (!prompt) {
     throw createMissingPromptError();
@@ -1084,10 +1100,7 @@ function normalizePromptArgs(
 
 function assertPromptInput(args: Record<string, unknown>): void {
   const hasPromptBlocks = Array.isArray(args.prompt) && args.prompt.length > 0;
-  const hasText = typeof args.text === 'string' && args.text.length > 0;
-  const hasMessage = typeof args.message === 'string' && args.message.length > 0;
-
-  if (!hasPromptBlocks && !hasText && !hasMessage) {
+  if (!hasPromptBlocks) {
     throw createMissingPromptError();
   }
 }
@@ -1095,17 +1108,20 @@ function assertPromptInput(args: Record<string, unknown>): void {
 function createMissingPromptError(): AaiError {
   return new AaiError(
     'INVALID_PARAMS',
-    'ACP prompt requires args.prompt (content blocks) or args.text / args.message'
+    'ACP session/prompt requires args.prompt (ACP content blocks array)'
   );
 }
 
-function requireSessionId(args: Record<string, unknown>): string {
+function requireSessionId(
+  args: Record<string, unknown>,
+  errorMessage = 'ACP polling requires args.sessionId'
+): string {
   const sessionId = args.sessionId;
   if (typeof sessionId === 'string' && sessionId.length > 0) {
     return sessionId;
   }
 
-  throw new AaiError('INVALID_PARAMS', 'ACP polling requires args.sessionId');
+  throw new AaiError('INVALID_PARAMS', errorMessage);
 }
 
 function requireTurnId(args: Record<string, unknown>): string {
@@ -1115,61 +1131,6 @@ function requireTurnId(args: Record<string, unknown>): string {
   }
 
   throw new AaiError('INVALID_PARAMS', 'ACP turn polling requires args.turnId');
-}
-
-function extractTurnCursor(args: Record<string, unknown>): number {
-  const cursor = args.cursor;
-  if (cursor === undefined) {
-    return 0;
-  }
-
-  if (typeof cursor === 'number' && Number.isInteger(cursor) && cursor >= 0) {
-    return cursor;
-  }
-
-  throw new AaiError(
-    'INVALID_PARAMS',
-    'ACP turn polling requires args.cursor to be a non-negative integer when provided'
-  );
-}
-
-function extractResultText(result: unknown): string | null {
-  const fragments = Array.from(new Set(collectTextFragments(result)));
-  return fragments.length > 0 ? fragments.join('') : null;
-}
-
-function buildPromptOutputText(
-  localId: string,
-  turnId: string,
-  deltaText: string,
-  status: ExecutionTaskStatus,
-  done: boolean,
-  timedOut: boolean,
-  error: string | undefined,
-  cursor: number,
-  pollWaitMs: number
-): string {
-  if (error) {
-    return deltaText.length > 0
-      ? `${deltaText}\n\n[AAI Gateway] ACP turn failed: ${error}`
-      : `[AAI Gateway] ACP turn failed: ${error}`;
-  }
-
-  if (done) {
-    return deltaText.length > 0 ? deltaText : 'ACP turn completed. No additional text.';
-  }
-
-  const pollInstruction = `Call aai:exec with { app: "${localId}", tool: "turn/poll", args: { turnId: "${turnId}", cursor: ${cursor} } } to fetch the next increment.`;
-  const statusText =
-    status === 'queued'
-      ? `The downstream ACP turn is still queued. Wait up to ${pollWaitMs}ms before polling again.`
-      : timedOut
-        ? `The downstream ACP agent is still running after waiting ${pollWaitMs}ms.`
-        : 'The downstream ACP agent has more output pending.';
-
-  return deltaText.length > 0
-    ? `${deltaText}\n\n[AAI Gateway] ${statusText} ${pollInstruction}`
-    : `[AAI Gateway] ${statusText} ${pollInstruction}`;
 }
 
 function applyNonInteractivePromptGuidance(prompt: unknown[]): unknown[] {
@@ -1230,6 +1191,37 @@ function mergePromptText(
   };
 }
 
+function appendAccumulatedContentBlock(
+  target: AcpContentBlock[],
+  block: AcpContentBlock
+): boolean {
+  const last = target[target.length - 1];
+
+  if (block.type === 'text' && typeof block.text === 'string' && block.text.length === 0) {
+    return false;
+  }
+
+  if (
+    last &&
+    last.type === 'text' &&
+    block.type === 'text' &&
+    typeof last.text === 'string' &&
+    typeof block.text === 'string'
+  ) {
+    last.text += block.text;
+    return true;
+  }
+
+  const lastSerialized = last ? JSON.stringify(last) : null;
+  const nextSerialized = JSON.stringify(block);
+  if (lastSerialized === nextSerialized) {
+    return false;
+  }
+
+  target.push({ ...block });
+  return true;
+}
+
 function truncatePromptText(text: string): string {
   if (text.length <= ACP_MAX_OUTPUT_CHARS) {
     return text;
@@ -1240,6 +1232,110 @@ function truncatePromptText(text: string): string {
 
 function truncateLogPreview(text: string, maxChars = 160): string {
   return text.length <= maxChars ? text : `${text.slice(0, maxChars)}...`;
+}
+
+function extractResultContent(result: unknown): AcpContentBlock[] {
+  return normalizeContentBlocks([result]);
+}
+
+function normalizeContentBlocks(candidates: unknown[]): AcpContentBlock[] {
+  const blocks = candidates.flatMap((candidate) => collectContentBlocks(candidate));
+  if (blocks.length > 0) {
+    return blocks;
+  }
+
+  const fragments = Array.from(new Set(candidates.flatMap((candidate) => collectTextFragments(candidate))));
+  return fragments.map((text) => ({ type: 'text', text }));
+}
+
+function collectContentBlocks(value: unknown): AcpContentBlock[] {
+  if (!value) {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectContentBlocks(item));
+  }
+
+  if (typeof value !== 'object') {
+    return [];
+  }
+
+  const record = value as Record<string, unknown>;
+
+  if (isContentBlock(record)) {
+    return [record as AcpContentBlock];
+  }
+
+  if (record.type === 'content' && record.content) {
+    return collectContentBlocks(record.content);
+  }
+
+  const nested = [
+    record.content,
+    record.contents,
+    record.output,
+    record.outputs,
+    record.delta,
+    record.response,
+    record.responses,
+    record.chunk,
+    record.chunks,
+    record.item,
+    record.items,
+    record.result,
+    record.results,
+  ];
+
+  return nested.flatMap((item) => collectContentBlocks(item));
+}
+
+function isContentBlock(value: Record<string, unknown>): boolean {
+  if (typeof value.type !== 'string') {
+    return false;
+  }
+
+  switch (value.type) {
+    case 'text':
+      return typeof value.text === 'string';
+    case 'image':
+      return true;
+    case 'audio':
+      return true;
+    case 'resource':
+      return true;
+    case 'resource_link':
+      return true;
+    default:
+      return false;
+  }
+}
+
+function previewContentBlocks(blocks: AcpContentBlock[]): string | undefined {
+  const texts = blocks
+    .filter((block): block is AcpContentBlock & { type: 'text'; text: string } => typeof block.text === 'string')
+    .map((block) => block.text)
+    .join('');
+
+  return texts.length > 0 ? truncateLogPreview(texts) : undefined;
+}
+
+function extractPromptCapabilities(
+  initializeResult: Record<string, unknown> | null
+): Record<string, unknown> {
+  if (!initializeResult) {
+    return {};
+  }
+
+  const agentCapabilities = initializeResult.agentCapabilities;
+  if (!agentCapabilities || typeof agentCapabilities !== 'object') {
+    return {};
+  }
+
+  const promptCapabilities = (agentCapabilities as Record<string, unknown>).promptCapabilities;
+  return promptCapabilities && typeof promptCapabilities === 'object'
+    ? (promptCapabilities as Record<string, unknown>)
+    : {};
 }
 
 function collectTextFragments(value: unknown): string[] {

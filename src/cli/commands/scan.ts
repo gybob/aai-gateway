@@ -29,7 +29,7 @@ export class ScanCommand extends BaseCommand {
     }
 
     for (const app of apps) {
-      console.log(`${app.localId}`);
+      console.log(`${app.appId}`);
       console.log(`  Name: ${app.descriptor.app.name.default}`);
       console.log(`  Location: ${app.location ?? '(unknown)'}`);
       console.log(`  Protocol: ${app.descriptor.access.protocol}`);

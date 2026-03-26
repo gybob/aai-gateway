@@ -11,7 +11,7 @@ const REGISTRY_FILE = 'skill-registry.json';
 
 export interface SkillRegistryEntry {
   id: string;
-  localId: string;
+  appId: string;
   protocol: 'skill';
   config: SkillConfig;
   exposureMode?: 'summary' | 'keywords';
@@ -34,7 +34,7 @@ export class SkillRegistry {
       registryPath,
       (entry) => ({
         id: entry.id,
-        localId: entry.localId,
+        appId: entry.appId,
         protocol: entry.protocol,
         config: entry.config,
         exposureMode: entry.exposureMode,
@@ -67,16 +67,16 @@ export class SkillRegistry {
     entry: Omit<SkillRegistryEntry, 'id' | 'descriptorPath' | 'importedAt' | 'updatedAt'>,
     descriptor: AaiJson
   ): Promise<SkillRegistryEntry> {
-    const existing = await this.get(entry.localId);
+    const existing = await this.get(entry.appId);
     const now = new Date().toISOString();
-    const appDir = getManagedAppDir(entry.localId);
+    const appDir = getManagedAppDir(entry.appId);
     const descriptorPath = join(appDir, 'aai.json');
 
     await mkdir(appDir, { recursive: true });
     await writeFile(descriptorPath, JSON.stringify(descriptor, null, 2), 'utf-8');
 
     const nextEntry: SkillRegistryEntry = {
-      id: entry.localId,
+      id: entry.appId,
       ...entry,
       descriptorPath,
       importedAt: existing?.importedAt ?? now,
@@ -130,8 +130,8 @@ export async function listSkillRegistryEntries(): Promise<SkillRegistryEntry[]> 
   return getSkillRegistry().list();
 }
 
-export async function getSkillRegistryEntry(localId: string): Promise<SkillRegistryEntry | null> {
-  return getSkillRegistry().get(localId);
+export async function getSkillRegistryEntry(appId: string): Promise<SkillRegistryEntry | null> {
+  return getSkillRegistry().get(appId);
 }
 
 export async function upsertSkillRegistryEntry(

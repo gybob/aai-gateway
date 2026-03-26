@@ -1,6 +1,8 @@
 import type { AaiJson } from '../../types/aai-json.js';
 
-export const opencodeDescriptor: AaiJson = {
+export const appId = 'acp-opencode';
+
+export const descriptor: AaiJson = {
   schemaVersion: '2.0',
   version: '1.0.0',
   app: {

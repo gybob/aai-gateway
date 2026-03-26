@@ -4,10 +4,10 @@ import { AaiError } from '../errors/errors.js';
 import type {
   CliConfig,
   CliExecutorConfig,
-  CliExecutorDetail,
   DetailedCapability,
   ExecutionResult,
 } from '../types/index.js';
+import type { AppCapabilities, ToolSchema } from '../types/capabilities.js';
 
 import type { Executor } from './interface.js';
 
@@ -16,26 +16,58 @@ import type { Executor } from './interface.js';
  *
  * Implements unified Executor interface for CLI-based apps.
  */
-export class CliExecutor implements Executor<CliConfig & CliExecutorConfig, CliExecutorDetail> {
+export class CliExecutor implements Executor {
   readonly protocol = 'cli';
 
-  async connect(_localId: string, _config: CliConfig & CliExecutorConfig): Promise<void> {
+  async connect(_appId: string, _config: CliConfig & CliExecutorConfig): Promise<void> {
     // CLI apps don't maintain persistent connections
   }
 
-  async disconnect(_localId: string): Promise<void> {
+  async disconnect(_appId: string): Promise<void> {
     // CLI apps don't maintain persistent connections
   }
 
-  async loadDetail(config: CliConfig & CliExecutorConfig): Promise<CliExecutorDetail> {
-    const result = await runCli(config, ['--help'], undefined, 15000);
-    const helpText = [result.stdout, result.stderr].filter(Boolean).join('\n').trim();
-    const availableCommands = this.parseAvailableCommands(helpText);
-    return { availableCommands };
+  /**
+   * Load app-level capabilities for CLI apps
+   * Returns available commands from --help output
+   */
+  async loadAppCapabilities(
+    _appId: string,
+    config: CliConfig & CliExecutorConfig
+  ): Promise<AppCapabilities> {
+    try {
+      const result = await runCli(config, ['--help'], undefined, 15000);
+      const helpText = [result.stdout, result.stderr].filter(Boolean).join('\n').trim();
+      const commands = this.parseAvailableCommands(helpText);
+
+      return {
+        title: 'CLI Commands',
+        tools: commands.map((cmd) => ({
+          name: cmd,
+          description: 'CLI command',
+        })),
+      };
+    } catch {
+      return { title: 'CLI', tools: [] };
+    }
   }
+
+  /**
+   * Load schema for a specific CLI command
+   * CLI apps don't have structured schemas, return null
+   */
+  async loadToolSchema(
+    _appId: string,
+    _config: CliConfig & CliExecutorConfig,
+    _toolName: string
+  ): Promise<ToolSchema | null> {
+    // CLI apps don't have structured schemas
+    return null;
+  }
+
 
   async execute(
-    _localId: string,
+    _appId: string,
     config: CliConfig & CliExecutorConfig,
     operation: string,
     args: Record<string, unknown>
@@ -51,7 +83,7 @@ export class CliExecutor implements Executor<CliConfig & CliExecutorConfig, CliE
     }
   }
 
-  async health(_localId: string): Promise<boolean> {
+  async health(_appId: string): Promise<boolean> {
     // CLI apps are always "healthy" as they don't maintain connections
     return true;
   }

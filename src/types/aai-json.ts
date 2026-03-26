@@ -104,10 +104,11 @@ export interface AaiJson {
 }
 
 export interface RuntimeAppRecord {
-  localId: string;
+  appId: string;
   descriptor: AaiJson;
   source: 'desktop' | 'web' | 'mcp-import' | 'skill-import' | 'acp-agent' | 'cli';
   location?: string;
+  toolSchemas?: Record<string, Record<string, unknown>>;
 }
 
 export interface DetailedCapability {

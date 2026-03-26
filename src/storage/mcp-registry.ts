@@ -11,7 +11,7 @@ const REGISTRY_FILE = 'mcp-registry.json';
 
 export interface McpRegistryEntry {
   id: string;
-  localId: string;
+  appId: string;
   protocol: 'mcp';
   config: McpConfig;
   exposureMode?: 'summary' | 'keywords';
@@ -34,7 +34,7 @@ export class McpRegistry {
       registryPath,
       (entry) => ({
         id: entry.id,
-        localId: entry.localId,
+        appId: entry.appId,
         protocol: entry.protocol,
         config: entry.config,
         exposureMode: entry.exposureMode,
@@ -67,16 +67,16 @@ export class McpRegistry {
     entry: Omit<McpRegistryEntry, 'id' | 'descriptorPath' | 'importedAt' | 'updatedAt'>,
     descriptor: AaiJson
   ): Promise<McpRegistryEntry> {
-    const existing = await this.get(entry.localId);
+    const existing = await this.get(entry.appId);
     const now = new Date().toISOString();
-    const appDir = getManagedAppDir(entry.localId);
+    const appDir = getManagedAppDir(entry.appId);
     const descriptorPath = join(appDir, 'aai.json');
 
     await mkdir(appDir, { recursive: true });
     await writeFile(descriptorPath, JSON.stringify(descriptor, null, 2), 'utf-8');
 
     const nextEntry: McpRegistryEntry = {
-      id: entry.localId,
+      id: entry.appId,
       ...entry,
       descriptorPath,
       importedAt: existing?.importedAt ?? now,
@@ -130,8 +130,8 @@ export async function listMcpRegistryEntries(): Promise<McpRegistryEntry[]> {
   return getMcpRegistry().list();
 }
 
-export async function getMcpRegistryEntry(localId: string): Promise<McpRegistryEntry | null> {
-  return getMcpRegistry().get(localId);
+export async function getMcpRegistryEntry(appId: string): Promise<McpRegistryEntry | null> {
+  return getMcpRegistry().get(appId);
 }
 
 export async function upsertMcpRegistryEntry(

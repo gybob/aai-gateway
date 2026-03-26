@@ -4,32 +4,32 @@
 
 AAI Gateway turns many apps, agents, skills, and MCP servers into one MCP server.
 
-## 核心价值
+## Core Values
 
-### 价值 1：自然语言驱动的工具接入
+### Value 1: Natural Language-Driven Tool Integration
 
-安装 AAI Gateway MCP 之后，你可以通过自然语言描述快速接入其他任意 MCP、技能，并操控其他 AI Agent 工具（包括 Claude Code、Codex、OpenCode 等）。
+After installing the AAI Gateway MCP, you can quickly integrate any other MCP or skill through natural language descriptions, and control other AI Agent tools (including Claude Code, Codex, OpenCode, etc.).
 
-AAI Gateway 还集成搜索工具，可以帮助你从权威、主流的网站上搜索官方、安全的 MCP 和技能，并实现一句话安装。
+AAI Gateway also integrates a search tool that helps you search for official and secure MCPs and skills from authoritative, mainstream websites, and install them with a single sentence. Control of other AI Agent tools is done via Agent Client Protocol (ACP), including session management.
 
-### 价值 2：渐进式披露策略
+### Value 2: Progressive Disclosure Strategy
 
-AAI Gateway 不会一次性向大模型上下文中塞入所有工具的描述，而是采用渐进式披露策略：
+AAI Gateway does not dump all tool descriptions into the LLM context at once. Instead, it employs a progressive disclosure strategy:
 
-**MCP Server 级别**：先只暴露 MCP Server 的整体描述。当大模型发现需要使用某个具体工具时，会先返回工具使用指导，然后 Agent 根据指导调用统一的 `aai:exec` 去执行。`aai:exec` 接受 `appId`、`tool`、`tool args` 作为参数。
+**MCP Server Level**: Only the overall description of the MCP Server is exposed initially. When the LLM determines that a specific tool needs to be used, it returns tool usage guidance first. The Agent then calls the unified `aai:exec` to execute based on that guidance. `aai:exec` accepts `appId`, `tool`, and `tool args` as parameters.
 
-**MCP / 技能 描述级别**：提供两个层级的披露策略：
+**MCP / Skill Description Level**: Two tiers of disclosure are provided:
 
-- `summary` — 自然语言描述，适合自动触发
-- `keywords` — 紧凑的关键词集合，进一步简化上下文占用
+- `summary` — Natural language description; good for automatic triggering
+- `keywords` — Compact keyword set; further reduces context overhead
 
-这让 OpenCode 这种需要大量工具和技能的场景下依然能良好运行。
+This allows OpenClaw (a popular personal assistant application) and similar tools that require many tools and skills to still run smoothly.
 
-## 使用方案
+## How To Use
 
-### 1. 安装 AAI Gateway MCP
+### 1. Install AAI Gateway MCP
 
-你不需要预装 `aai-gateway`。只需将其注册为用户级 MCP 服务器，通过 `npx` 启动即可。
+You do not need to preinstall `aai-gateway`. Simply register it as a user-level MCP server and launch it via `npx`.
 
 #### Claude Code
 
@@ -45,7 +45,7 @@ codex mcp add aai-gateway -- npx -y aai-gateway
 
 #### OpenCode
 
-在 `~/.config/opencode/opencode.json` 中添加：
+Add to `~/.config/opencode/opencode.json`:
 
 ```json
 {
@@ -60,47 +60,46 @@ codex mcp add aai-gateway -- npx -y aai-gateway
 }
 ```
 
-### 2. 搜索并安装 MCP 或技能
+### 2. Search and Install MCP or Skill
 
-如果你不知道该安装哪个 MCP 或技能，可以让 AI 工具调用 `import:search`。
+If you don't know which MCP or skill to install, just ask your AI tool to search for what you need using AAI Gateway (e.g., "please search for a filesystem MCP" or "find me a git commit skill").
 
-`import:search` 会：
+The search will:
 
-- 将用户请求转换为搜索关键词
-- 推荐更安全的权威来源优先搜索
-- 将搜索结果规范化为候选列表
-- 为每个候选项生成临时 ID 供用户确认
-- 将确认的项目路由到 `mcp:import` 或 `skill:import` 流程
+- Convert your request into search keywords
+- Recommend safer authoritative sources to search first
+- Normalize search results into a shortlist for your confirmation
+- Route confirmed items into the import flow
 
-**推荐的搜索来源顺序**：
+**Recommended Search Source Order**:
 
-1. 官方目录：`modelcontextprotocol/registry`、`modelcontextprotocol/servers`、`openai/skills`
-2. 社区精选列表：`punkpeye/awesome-mcp-servers`、`ComposioHQ/awesome-claude-skills`
-3. 高审查来源：如 ClawHub 等开放市场（需额外谨慎）
+1. Official catalogs: `modelcontextprotocol/registry`, `modelcontextprotocol/servers`, `openai/skills`
+2. Community-curated lists: `punkpeye/awesome-mcp-servers`, `ComposioHQ/awesome-claude-skills`
+3. Higher-scrutiny sources: Open marketplaces like ClawHub (use with extra caution)
 
-> 注意：推荐列表是首选起点，而非硬性白名单。请勿随意推荐来自不知名小网站工具。对于市场平台，请额外检查维护者身份、仓库活跃度、README 质量和许可证是否可见。
+> Note: The recommended list is a starting point, not a hard allowlist. Do not casually suggest tools from unknown websites. For marketplace platforms, also verify the maintainer's identity, repository activity, README quality, and license visibility.
 
-### 3. 导入 MCP Server
+### 3. Import an MCP Server
 
-主流程：复制主流 MCP 配置片段到 AI 工具，让它通过 AAI Gateway 导入。
+Main workflow: Copy a mainstream MCP config snippet into your AI tool and ask it to import that server through AAI Gateway.
 
-AI 工具会：
+The AI tool will:
 
-1. 读取你粘贴的 MCP 配置
-2. 询问你选择暴露模式
-3. 调用 `mcp:import`
+1. Read the MCP config you pasted
+2. Ask you to choose an exposure mode
+3. Call `mcp:import`
 
-AAI Gateway 保持导入参数与标准 MCP 配置格式一致：
+AAI Gateway keeps import parameters consistent with standard MCP config shapes:
 
-- stdio MCP：`command`、`args`、`env`、`cwd`
-- remote MCP：`url`、可选 `transport`、可选 `headers`
+- stdio MCP: `command`, `args`, `env`, `cwd`
+- remote MCP: `url`, optional `transport`, optional `headers`
 
-导入前请选择暴露模式：
+Choose an exposure mode before import:
 
-- `summary`：更容易自动触发
-- `keywords`：为更多工具留出空间，但通常需要更明确的关键词提及
+- `summary`: Easier automatic triggering
+- `keywords`: Leaves room for more tools, but usually needs more explicit keyword mentions
 
-**stdio MCP 示例**：
+**stdio MCP Example**:
 
 ```json
 {
@@ -109,7 +108,7 @@ AAI Gateway 保持导入参数与标准 MCP 配置格式一致：
 }
 ```
 
-**Remote Streamable HTTP MCP 示例**：
+**Remote Streamable HTTP MCP Example**:
 
 ```json
 {
@@ -117,7 +116,7 @@ AAI Gateway 保持导入参数与标准 MCP 配置格式一致：
 }
 ```
 
-**Remote SSE MCP 示例**：
+**Remote SSE MCP Example**:
 
 ```json
 {
@@ -126,23 +125,23 @@ AAI Gateway 保持导入参数与标准 MCP 配置格式一致：
 }
 ```
 
-导入完成后，AAI Gateway 返回：
+After import, AAI Gateway returns:
 
-- 生成的 app id
-- 生成的 `keywords`
-- 生成的 `summary`
-- 引导工具名称：`app:<id>`
+- The generated app id
+- The generated `keywords`
+- The generated `summary`
+- The guide tool name: `app:<id>`
 
-> **重要**：导入后需重启 AI 工具才能使用新导入的工具。重启后，导入的应用将显示为 `app:<id>`，使用 `aai:exec` 执行实际操作。
+> **Important**: Restart your AI tool before using the newly imported tool. After restart, the imported app will appear as `app:<id>`. Use `aai:exec` to actually run the imported app's operations.
 
-### 4. 导入技能 (Skill)
+### 4. Import a Skill
 
-技能导入同样通过 AI 工具完成。告诉 AI 工具调用 `skill:import`，然后提供：
+Skills are imported through the AI tool as well. Just tell the AI tool to import a skill using AAI Gateway, then provide either:
 
-- 本地技能路径
-- 或暴露 `SKILL.md` 的远程技能根 URL
+- A local skill path
+- A remote skill root URL that exposes `SKILL.md`
 
-**本地技能示例**：
+**Local Skill Example**:
 
 ```json
 {
@@ -150,7 +149,7 @@ AAI Gateway 保持导入参数与标准 MCP 配置格式一致：
 }
 ```
 
-**远程技能示例**：
+**Remote Skill Example**:
 
 ```json
 {
@@ -158,23 +157,23 @@ AAI Gateway 保持导入参数与标准 MCP 配置格式一致：
 }
 ```
 
-与 MCP 导入一样，技能导入返回 `app id`、`keywords`、`summary` 和 `app:<id>` 引导工具名称。
+Like MCP import, skill import returns `app id`, `keywords`, `summary`, and the `app:<id>` guide tool name.
 
-导入后需重启 AI 工具。
+Restart your AI tool after import.
 
-### 5. 支持的 ACP Agents
+### 5. Supported ACP Agents
 
-AAI Gateway 还能通过 ACP 控制类应用的 Agent。
+AAI Gateway can also control app-like agents through ACP.
 
-当前支持的 ACP Agent 类型：
+Currently supported ACP agent types:
 
 - OpenCode
 - Claude Code
 - Codex
 
-## 原理
+## How It Works
 
-### 架构图
+### Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -213,19 +212,19 @@ AAI Gateway 还能通过 ACP 控制类应用的 Agent。
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### 统一抽象：Agent App
+### Unified Abstraction: Agent App
 
-AAI Gateway 将 MCP、技能、ACP Agent、CLI 工具统一抽象为 **Agent App**。
+AAI Gateway unifies MCPs, Skills, ACP Agents, and CLI tools into **Agent Apps**.
 
-只要提供一个 App 的描述文件 (`aai.json`)，即可接入 AAI Gateway。描述文件告诉 AAI Gateway：
+To integrate an app with AAI Gateway, simply provide an app descriptor file (`aai.json`). The descriptor tells AAI Gateway:
 
-- App 是什么
-- 如何连接
-- 如何以低上下文成本暴露
+- What the app is
+- How to connect to it
+- How to expose it at low context cost
 
-### 描述文件示例
+### Descriptor Examples
 
-#### MCP Server 描述文件
+#### MCP Server Descriptor
 
 ```json
 {
@@ -250,7 +249,7 @@ AAI Gateway 将 MCP、技能、ACP Agent、CLI 工具统一抽象为 **Agent App
 }
 ```
 
-#### Skill 描述文件
+#### Skill Descriptor
 
 ```json
 {
@@ -274,7 +273,7 @@ AAI Gateway 将 MCP、技能、ACP Agent、CLI 工具统一抽象为 **Agent App
 }
 ```
 
-#### ACP Agent 描述文件
+#### ACP Agent Descriptor
 
 ```json
 {
@@ -298,7 +297,7 @@ AAI Gateway 将 MCP、技能、ACP Agent、CLI 工具统一抽象为 **Agent App
 }
 ```
 
-#### CLI 工具描述文件
+#### CLI Tool Descriptor
 
 ```json
 {
@@ -322,53 +321,53 @@ AAI Gateway 将 MCP、技能、ACP Agent、CLI 工具统一抽象为 **Agent App
 }
 ```
 
-## 如何将更多 App 预置集成到 AAI Gateway
+## Pre-bundling Apps in AAI Gateway
 
-### 提交 Pull Request
+### Submit a Pull Request
 
-如果你希望 AAI Gateway 默认打包某个 App 的描述文件，可以提交 PR。
+If you want AAI Gateway to ship with a descriptor for an app by default, open a PR.
 
-PR 需要包含：
+A PR should include:
 
-1. 描述文件本身
-2. 安全的发现规则（证明 App 确实已安装）
-3. 连接配置
-4. 说明为什么这个集成应该被捆绑
+1. The descriptor itself
+2. A safe discovery rule that proves the app is actually installed
+3. The connection config
+4. An explanation of why the integration should be bundled
 
-内置 ACP Agent 描述文件位于：
+Built-in ACP agent descriptors live in:
 
 - `src/discovery/descriptors/`
 
-它们在以下文件中注册：
+They are registered in:
 
 - `src/discovery/agent-registry.ts`
 
-标准 PR 流程：
+Standard PR workflow:
 
-1. 添加描述文件
-2. 添加或更新发现检查
-3. 在适当的发现源中注册
-4. 如果新集成面向用户，更新 README
+1. Add the descriptor file
+2. Add or update discovery checks
+3. Register it in the appropriate discovery source
+4. Update the README if the new integration is user-facing
 
-如果你不确定某个集成是否应该被捆绑，请先提交 Issue 讨论。
+If you're unsure whether an integration should be bundled, open an issue first to discuss.
 
-### 描述文件放置位置
+### Where to Place Descriptors
 
-AAI Gateway 从以下位置发现 App：
+AAI Gateway discovers apps from the following locations:
 
 #### Web Apps
 
-发布到：
+Publish at:
 
 ```
 https://<your-host>/.well-known/aai.json
 ```
 
-用户调用 `remote:discover` 时，AAI Gateway 会获取该路径。
+AAI Gateway fetches this path when the user calls `remote:discover`.
 
 #### macOS Apps
 
-推荐位置：
+Recommended locations:
 
 - `<YourApp>.app/Contents/Resources/aai.json`
 - `~/Library/Containers/<container>/Data/Library/Application Support/aai.json`
@@ -376,7 +375,7 @@ https://<your-host>/.well-known/aai.json
 
 #### Linux Apps
 
-扫描以下位置：
+Scanned locations:
 
 - `/usr/share`
 - `/usr/local/share`
@@ -384,20 +383,20 @@ https://<your-host>/.well-known/aai.json
 
 #### Windows Apps
 
-扫描以下位置：
+Scanned locations:
 
 - `C:\Program Files`
 - `C:\Program Files (x86)`
 - `%LOCALAPPDATA%`
 
-#### 描述文件编写建议
+#### Descriptor Guidelines
 
-- 保持描述文件小而实用
-- `app.name.default` 要清晰
-- `keywords` 要短且高信号
-- `summary` 要解释何时应该使用该 App
-- 详细能力数据放在下游协议中，而非描述文件中
-- 如果你的 App 已使用 MCP，保持描述文件最小化，让 MCP 提供惰性工具详情
+- Keep descriptors small and practical
+- Make `app.name.default` clear
+- Keep `keywords` short and high-signal
+- Make `summary` explain when the app should be used
+- Put detailed capability data in the downstream protocol, not in the descriptor
+- If your app already speaks MCP, keep the descriptor minimal and let MCP provide lazy tool details
 
 ## Disclaimer
 

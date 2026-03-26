@@ -1,4 +1,4 @@
-import type { ExecutorConfig, ExecutorDetail } from '../types/index.js';
+import type { ExecutorConfig } from '../types/index.js';
 import { logger } from '../utils/logger.js';
 
 import { AcpExecutor } from './acp.js';
@@ -15,7 +15,7 @@ import { SkillExecutor } from './skill.js';
  * Allows registration and retrieval of executors by protocol name.
  */
 export class ExecutorRegistry {
-  private executors = new Map<string, Executor<ExecutorConfig, ExecutorDetail>>();
+  private executors = new Map<string, Executor>();
 
   constructor() {
     // Register built-in executors
@@ -30,9 +30,9 @@ export class ExecutorRegistry {
    * @param protocol - Protocol identifier (e.g., 'mcp', 'skill')
    * @param executor - Executor implementation
    */
-  register<TConfig extends ExecutorConfig, TDetail extends ExecutorDetail>(
+  register(
     protocol: string,
-    executor: Executor<TConfig, TDetail>
+    executor: Executor
   ): void {
     if (this.executors.has(protocol)) {
       logger.warn({ protocol }, 'Overwriting existing executor');
@@ -45,7 +45,7 @@ export class ExecutorRegistry {
    * @param protocol - Protocol identifier
    * @returns Executor instance or undefined if not found
    */
-  get(protocol: string): Executor<ExecutorConfig, ExecutorDetail> | undefined {
+  get(protocol: string): Executor | undefined {
     return this.executors.get(protocol);
   }
 
@@ -61,7 +61,7 @@ export class ExecutorRegistry {
   /**
    * Execute an operation using the appropriate executor
    * @param protocol - Protocol identifier
-   * @param localId - Unique identifier for the connection
+   * @param appId - Unique identifier for the connection
    * @param config - Executor-specific configuration
    * @param operation - Operation name
    * @param args - Operation arguments
@@ -69,7 +69,7 @@ export class ExecutorRegistry {
    */
   async execute(
     protocol: string,
-    localId: string,
+    appId: string,
     config: ExecutorConfig,
     operation: string,
     args: Record<string, unknown>
@@ -78,70 +78,53 @@ export class ExecutorRegistry {
     if (!executor) {
       throw new Error(`Unknown protocol: ${protocol}`);
     }
-    const result = await executor.execute(localId, config, operation, args);
+    const result = await executor.execute(appId, config, operation, args);
     return result.data;
   }
 
   /**
    * Connect using the appropriate executor
    * @param protocol - Protocol identifier
-   * @param localId - Unique identifier for the connection
+   * @param appId - Unique identifier for the connection
    * @param config - Executor-specific configuration
    */
   async connect(
     protocol: string,
-    localId: string,
+    appId: string,
     config: ExecutorConfig
   ): Promise<void> {
     const executor = this.get(protocol);
     if (!executor) {
       throw new Error(`Unknown protocol: ${protocol}`);
     }
-    return executor.connect(localId, config);
+    return executor.connect(appId, config);
   }
 
   /**
    * Disconnect using the appropriate executor
    * @param protocol - Protocol identifier
-   * @param localId - Unique identifier for the connection
+   * @param appId - Unique identifier for the connection
    */
-  async disconnect(protocol: string, localId: string): Promise<void> {
+  async disconnect(protocol: string, appId: string): Promise<void> {
     const executor = this.get(protocol);
     if (!executor) {
       throw new Error(`Unknown protocol: ${protocol}`);
     }
-    return executor.disconnect(localId);
-  }
-
-  /**
-   * Get detailed capabilities using the appropriate executor
-   * @param protocol - Protocol identifier
-   * @param config - Executor-specific configuration
-   * @returns Detailed capabilities
-   */
-  async loadDetail(
-    protocol: string,
-    config: ExecutorConfig
-  ): Promise<ExecutorDetail> {
-    const executor = this.get(protocol);
-    if (!executor) {
-      throw new Error(`Unknown protocol: ${protocol}`);
-    }
-    return executor.loadDetail(config);
+    return executor.disconnect(appId);
   }
 
   /**
    * Check health using the appropriate executor
    * @param protocol - Protocol identifier
-   * @param localId - Unique identifier for the connection
+   * @param appId - Unique identifier for the connection
    * @returns true if healthy, false otherwise
    */
-  async health(protocol: string, localId: string): Promise<boolean> {
+  async health(protocol: string, appId: string): Promise<boolean> {
     const executor = this.get(protocol);
     if (!executor) {
       throw new Error(`Unknown protocol: ${protocol}`);
     }
-    return executor.health(localId);
+    return executor.health(appId);
   }
 
   /**
@@ -149,8 +132,7 @@ export class ExecutorRegistry {
    */
   private registerMcp(): void {
     const executor = new McpExecutor();
-    // @ts-expect-error - Intentional type conversion for executor registration
-    this.register('mcp', executor as Executor<ExecutorConfig, ExecutorDetail>);
+    this.register('mcp', executor);
   }
 
   /**
@@ -158,8 +140,7 @@ export class ExecutorRegistry {
    */
   private registerSkill(): void {
     const executor = new SkillExecutor();
-    // @ts-expect-error - Intentional type conversion for executor registration
-    this.register('skill', executor as Executor<ExecutorConfig, ExecutorDetail>);
+    this.register('skill', executor);
   }
 
   /**
@@ -167,8 +148,7 @@ export class ExecutorRegistry {
    */
   private registerAcp(): void {
     const executor = new AcpExecutor();
-    // @ts-expect-error - Intentional type conversion for executor registration
-    this.register('acp-agent', executor as Executor<ExecutorConfig, ExecutorDetail>);
+    this.register('acp-agent', executor);
   }
 
   /**
@@ -176,8 +156,7 @@ export class ExecutorRegistry {
    */
   private registerCli(): void {
     const executor = new CliExecutor();
-    // @ts-expect-error - Intentional type conversion for executor registration
-    this.register('cli', executor as Executor<ExecutorConfig, ExecutorDetail>);
+    this.register('cli', executor);
   }
 }
 

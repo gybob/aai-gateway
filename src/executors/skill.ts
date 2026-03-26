@@ -7,9 +7,9 @@ import type {
   DetailedCapability,
   SkillConfig,
   SkillExecutorConfig,
-  SkillExecutorDetail,
   ExecutionResult,
 } from '../types/index.js';
+import type { AppCapabilities, ToolSchema } from '../types/capabilities.js';
 
 import type { Executor } from './interface.js';
 
@@ -18,33 +18,52 @@ import type { Executor } from './interface.js';
  *
  * Implements the unified Executor interface for skill-based apps.
  */
-export class SkillExecutor implements Executor<SkillConfig & SkillExecutorConfig, SkillExecutorDetail> {
+export class SkillExecutor implements Executor {
   readonly protocol = 'skill';
 
-  async connect(_localId: string, _config: SkillConfig & SkillExecutorConfig): Promise<void> {
+  async connect(_appId: string, _config: SkillConfig & SkillExecutorConfig): Promise<void> {
     // Skills don't maintain connections
   }
 
-  async disconnect(_localId: string): Promise<void> {
+  async disconnect(_appId: string): Promise<void> {
     // Skills don't maintain connections
   }
 
-  async loadDetail(config: SkillConfig & SkillExecutorConfig): Promise<SkillExecutorDetail> {
-    const content = await readSkillMarkdown(config);
+  /**
+   * Load app-level capabilities for skills
+   * Skills have a single "read" tool for reading SKILL.md
+   */
+  async loadAppCapabilities(
+    _appId: string,
+    _config: SkillConfig & SkillExecutorConfig
+  ): Promise<AppCapabilities> {
     return {
-      manifest: {
-        name: 'Skill',
-        description: 'Skill-based app',
-      },
-      capabilities: {
-        title: 'Skill Details',
-        body: content,
-      },
+      title: 'Skill',
+      tools: [
+        {
+          name: 'read',
+          description: 'Read the skill documentation (SKILL.md)',
+        },
+      ],
     };
   }
 
+  /**
+   * Load schema for a specific skill tool
+   * Skills don't have structured schemas, return null
+   */
+  async loadToolSchema(
+    _appId: string,
+    _config: SkillConfig & SkillExecutorConfig,
+    _toolName: string
+  ): Promise<ToolSchema | null> {
+    // Skills don't have structured schemas
+    return null;
+  }
+
+
   async execute(
-    _localId: string,
+    _appId: string,
     config: SkillConfig & SkillExecutorConfig,
     operation: string,
     args: Record<string, unknown>
@@ -67,7 +86,7 @@ export class SkillExecutor implements Executor<SkillConfig & SkillExecutorConfig
     }
   }
 
-  async health(_localId: string): Promise<boolean> {
+  async health(_appId: string): Promise<boolean> {
     // Skills are always "healthy" as they don't maintain connections
     return true;
   }

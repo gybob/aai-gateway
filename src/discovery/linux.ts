@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 
 import { parseAaiJson } from '../parsers/schema.js';
 import type { RuntimeAppRecord } from '../types/aai-json.js';
-import { deriveLocalId } from '../utils/ids.js';
+import { deriveAppId } from '../utils/ids.js';
 import { logger } from '../utils/logger.js';
 
 import { evaluateDescriptorAvailability } from './checks.js';
@@ -27,7 +27,7 @@ export class LinuxDiscovery implements DesktopDiscovery {
           continue;
         }
         entries.push({
-          localId: deriveLocalId(`desktop:${aaiJsonPath}`, 'desktop'),
+          appId: deriveAppId(`desktop:${aaiJsonPath}`, 'desktop'),
           descriptor,
           source: 'desktop',
           location: availability.location ?? dirname(aaiJsonPath),

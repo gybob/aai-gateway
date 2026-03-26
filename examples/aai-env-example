@@ -1,0 +1,20 @@
+# AAI Gateway Environment Variables
+# Place this file at ~/.aai/.env
+# Use ${VAR_NAME} syntax in MCP/Skill configurations to reference these values
+
+# Example: MCP Server API Keys
+# FIRECRAWL_API_KEY=fc_xxxxxxxxxxxxx
+# JINA_API_KEY=jin_xxxxxxxxxxxxx
+
+# Example: Database connection strings
+# DB_HOST=localhost
+# DB_PORT=5432
+# DB_NAME=myapp
+# DB_USER=postgres
+# DB_PASSWORD=your_password_here
+
+# Example: Custom headers for remote MCP servers
+# ACCESS_TOKEN=your_oauth_token
+
+# Example: Service URLs
+# MCP_SERVER_URL=https://api.example.com/mcp
