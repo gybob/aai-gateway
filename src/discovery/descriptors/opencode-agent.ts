@@ -24,6 +24,6 @@ export const descriptor: AaiJson = {
   },
   exposure: {
     keywords: ['code', 'agent', 'development'],
-    summary: '用于代码编辑、分析和开发任务的 ACP agent。',
+    summary: 'ACP agent for code editing, analysis, and development tasks.',
   },
 };

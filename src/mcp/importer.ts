@@ -12,11 +12,15 @@ import { getManagedAppDir } from '../storage/paths.js';
 import { getSkillRegistryEntry, upsertSkillRegistryEntry } from '../storage/skill-registry.js';
 import type { AaiJson, McpConfig } from '../types/aai-json.js';
 import { deriveAppId, slugify } from '../utils/ids.js';
-import { loadDotenv, substituteConfigEnvVars } from '../utils/dotenv.js';
+import {
+  getDotenvPath,
+  hasEnvPlaceholders,
+  loadDotenv,
+  substituteConfigEnvVars,
+  substituteStringRecordEnvVars,
+} from '../utils/dotenv.js';
 
 const SECRET_PREFIX = 'mcp-import-headers-';
-
-export type ExposureMode = 'summary' | 'keywords';
 
 export const IMPORT_LIMITS = {
   nameLength: 128,
@@ -36,13 +40,10 @@ export const IMPORT_LIMITS = {
 } as const;
 
 export const EXPOSURE_LIMITS = {
-  keywordCount: 8,
-  keywordLength: 32,
   summaryLength: 200,
 } as const;
 
-export interface ExposureDraft {
-  keywords: string[];
+export interface SummaryDraft {
   summary: string;
 }
 
@@ -63,8 +64,6 @@ export interface McpImportPreviewOptions {
 }
 
 export interface McpImportOptions extends McpImportPreviewOptions {
-  exposureMode: ExposureMode;
-  keywords: string[];
   summary: string;
 }
 
@@ -78,20 +77,16 @@ export interface McpImportedResult {
   entry: McpRegistryEntry;
   descriptor: AaiJson;
   tools: McpListedTool[];
+  warnings?: string[];
 }
 
 export interface SkillImportSourceInput {
   path?: string;
-  url?: string;
 }
 
 export interface SkillImportPreviewOptions extends SkillImportSourceInput {}
 
-export interface SkillImportOptions extends SkillImportSourceInput {
-  exposureMode: ExposureMode;
-  keywords: string[];
-  summary: string;
-}
+export interface SkillImportOptions extends SkillImportSourceInput {}
 
 export interface SkillImportPreview {
   appId: string;
@@ -155,20 +150,14 @@ export function buildMcpImportConfig(input: McpImportConfigInput): McpConfig {
 
 export function buildSkillImportSource(input: SkillImportSourceInput): SkillImportSourceInput {
   validateOptionalStringLength(input.path, 'path', IMPORT_LIMITS.pathLength);
-  validateOptionalStringLength(input.url, 'url', IMPORT_LIMITS.urlLength);
 
   const path = input.path && input.path.length > 0 ? input.path : undefined;
-  const url = input.url && input.url.length > 0 ? input.url : undefined;
 
-  if (path && url) {
-    throw new Error('Skill import accepts either path or url, but not both');
+  if (!path) {
+    throw new Error('Skill import requires a local path');
   }
 
-  if (!path && !url) {
-    throw new Error('Skill import requires either path or url');
-  }
-
-  return { path, url };
+  return { path };
 }
 
 export function validateImportHeaders(headers?: Record<string, string>): void {
@@ -181,18 +170,8 @@ export function validateImportHeaders(headers?: Record<string, string>): void {
   );
 }
 
-export function normalizeExposureInput(input: {
-  keywords: string[];
-  summary: string;
-}): ExposureDraft {
-  const keywords = Array.from(
-    new Set(
-      input.keywords
-        .map((keyword) => keyword.trim())
-        .filter((keyword) => keyword.length > 0)
-    )
-  );
-  const summary = input.summary.trim();
+export function normalizeSummaryInput(summaryInput: string): SummaryDraft {
+  const summary = summaryInput.trim();
 
   if (summary.length === 0) {
     throw new Error('summary cannot be empty.');
@@ -204,25 +183,7 @@ export function normalizeExposureInput(input: {
     );
   }
 
-  if (keywords.length === 0) {
-    throw new Error('keywords cannot be empty.');
-  }
-
-  if (keywords.length > EXPOSURE_LIMITS.keywordCount) {
-    throw new Error(
-      `keywords has too many items. Maximum item count is ${EXPOSURE_LIMITS.keywordCount}.`
-    );
-  }
-
-  for (const [index, keyword] of keywords.entries()) {
-    if (keyword.length > EXPOSURE_LIMITS.keywordLength) {
-      throw new Error(
-        `keywords[${index}] is too long. Maximum length is ${EXPOSURE_LIMITS.keywordLength} characters.`
-      );
-    }
-  }
-
-  return { keywords, summary };
+  return { summary };
 }
 
 export async function discoverMcpImport(
@@ -246,46 +207,37 @@ export async function importMcpServer(
   storage: SecureStorage,
   options: McpImportOptions
 ): Promise<McpImportedResult> {
-  // Load environment variables from ~/.aai/.env
-  const { env: dotenv, missing: missingInEnv } = await loadDotenv();
-
-  // Substitute ${VAR_NAME} placeholders in config with values from .env
-  let finalConfig = options.config;
-  let missingVars: string[] = [...missingInEnv];
-
-  if (Object.keys(dotenv).length > 0) {
-    // Convert McpConfig to plain object for env substitution
-    const configAsRecord: Record<string, unknown> = JSON.parse(JSON.stringify(options.config));
-    const { result: substitutedConfig, missing } = substituteConfigEnvVars(
-      configAsRecord,
-      dotenv
-    );
-    finalConfig = substitutedConfig as unknown as McpConfig;
-    missingVars = [...missingVars, ...missing];
-  }
+  const warnings = buildSensitiveValueWarnings(options);
+  const { resolvedConfig, resolvedHeaders, missingVars } = await resolveImportedMcpRuntimeValues(
+    options.config,
+    options.headers
+  );
 
   if (missingVars.length > 0) {
     const uniqueMissing = [...new Set(missingVars)];
     throw new Error(
-      `Missing environment variables in ~/.aai/.env: ${uniqueMissing
+      `Missing environment variables in ${getDotenvPath()}: ${uniqueMissing
         .map((v) => `$\{${v}}`)
-        .join(', ')}. Please add these variables to your .env file.`
+        .join(', ')}.`
     );
   }
 
-  const preview = await discoverMcpImport(executor, { ...options, config: finalConfig });
+  const preview = await discoverMcpImport(executor, {
+    ...options,
+    config: resolvedConfig,
+    headers: resolvedHeaders,
+  });
   const descriptor = buildImportedMcpDescriptor(
     preview.name,
-    finalConfig,
-    normalizeExposureInput({ keywords: options.keywords, summary: options.summary })
+    options.config,
+    normalizeSummaryInput(options.summary)
   );
 
   const entry = await upsertMcpRegistryEntry(
     {
       appId: preview.appId,
       protocol: 'mcp',
-      config: finalConfig,
-      exposureMode: options.exposureMode,
+      config: options.config,
     },
     descriptor
   );
@@ -294,7 +246,7 @@ export async function importMcpServer(
     await storeImportedMcpHeaders(storage, preview.appId, options.headers);
   }
 
-  return { entry, descriptor, tools: preview.tools };
+  return { entry, descriptor, tools: preview.tools, ...(warnings.length > 0 ? { warnings } : {}) };
 }
 
 export async function storeImportedMcpHeaders(
@@ -318,6 +270,13 @@ export async function loadImportedMcpHeaders(
   }
 }
 
+export async function deleteImportedMcpHeaders(
+  storage: SecureStorage,
+  appId: string
+): Promise<void> {
+  await storage.delete(`${SECRET_PREFIX}${appId}`);
+}
+
 export async function discoverSkillImport(
   options: SkillImportPreviewOptions
 ): Promise<SkillImportPreview> {
@@ -339,12 +298,12 @@ export async function importSkill(
   // Load environment variables from ~/.aai/.env
   const { env: dotenv, missing: missingInEnv } = await loadDotenv();
 
-  // Substitute ${VAR_NAME} placeholders in path/url with values from .env
+  // Substitute ${VAR_NAME} placeholders in path with values from .env
   let finalOptions = options;
   let missingVars: string[] = [...missingInEnv];
 
   if (Object.keys(dotenv).length > 0) {
-    const pathOrUrl = options.path ?? options.url;
+    const pathOrUrl = options.path;
     if (pathOrUrl) {
       const { result: substituted, missing } = substituteConfigEnvVars(
         { source: pathOrUrl } as Record<string, unknown>,
@@ -352,21 +311,16 @@ export async function importSkill(
       );
       const substitutedSource = substituted.source as string;
       missingVars = [...missingVars, ...missing];
-
-      if (options.path) {
-        finalOptions = { ...options, path: substitutedSource };
-      } else {
-        finalOptions = { ...options, url: substitutedSource };
-      }
+      finalOptions = { ...options, path: substitutedSource };
     }
   }
 
   if (missingVars.length > 0) {
     const uniqueMissing = [...new Set(missingVars)];
     throw new Error(
-      `Missing environment variables in ~/.aai/.env: ${uniqueMissing
+      `Missing environment variables in ${getDotenvPath()}: ${uniqueMissing
         .map((v) => `$\{${v}}`)
-        .join(', ')}. Please add these variables to your .env file.`
+        .join(', ')}.`
     );
   }
 
@@ -376,11 +330,7 @@ export async function importSkill(
   const finalManagedSkillDir = join(finalAppDir, 'skill');
   await mkdir(finalAppDir, { recursive: true });
 
-  if (source.path) {
-    await copyDirectory(source.path, finalManagedSkillDir);
-  } else if (source.url) {
-    await writeRemoteSkill(preview.content, finalManagedSkillDir);
-  }
+  await copyDirectory(source.path!, finalManagedSkillDir);
 
   const descriptor: AaiJson = {
     schemaVersion: '2.0',
@@ -397,10 +347,7 @@ export async function importSkill(
         path: finalManagedSkillDir,
       },
     },
-    exposure: normalizeExposureInput({
-      keywords: options.keywords,
-      summary: options.summary,
-    }),
+    exposure: normalizeSummaryInput(deriveSkillSummary(preview)),
   };
 
   await writeFile(join(finalAppDir, 'aai.json'), JSON.stringify(descriptor, null, 2), 'utf-8');
@@ -411,12 +358,81 @@ export async function importSkill(
       config: {
         path: finalManagedSkillDir,
       },
-      exposureMode: options.exposureMode,
     },
     descriptor
   );
 
   return { appId: preview.appId, descriptor, managedPath: finalManagedSkillDir };
+}
+
+export async function resolveImportedMcpRuntimeValues(
+  config: McpConfig,
+  headers?: Record<string, string>
+): Promise<{
+  resolvedConfig: McpConfig;
+  resolvedHeaders: Record<string, string> | undefined;
+  missingVars: string[];
+}> {
+  const { env: dotenv, missing: missingInEnv } = await loadDotenv();
+  const configAsRecord: Record<string, unknown> = JSON.parse(JSON.stringify(config));
+  const { result: substitutedConfig, missing: configMissing } = substituteConfigEnvVars(
+    configAsRecord,
+    dotenv
+  );
+  const { result: substitutedHeaders, missing: headerMissing } = substituteStringRecordEnvVars(
+    headers,
+    dotenv
+  );
+
+  const missingVars = [...missingInEnv, ...configMissing, ...headerMissing];
+  return {
+    resolvedConfig: substitutedConfig as unknown as McpConfig,
+    resolvedHeaders: headers ? substitutedHeaders : undefined,
+    missingVars,
+  };
+}
+
+function buildSensitiveValueWarnings(options: McpImportOptions): string[] {
+  const warnings: string[] = [];
+  if (
+    containsPlaintextSensitiveValues(getMcpConfigEnv(options.config)) ||
+    containsPlaintextSensitiveValues(options.headers)
+  ) {
+    warnings.push(
+      `Sensitive values were provided directly in this chat. Next time, use \${VAR_NAME} placeholders and store the real values in ${getDotenvPath()} instead of sending secrets in the conversation.`
+    );
+  }
+  return warnings;
+}
+
+function getMcpConfigEnv(config: McpConfig): Record<string, string> | undefined {
+  return config.transport === 'stdio' ? config.env : undefined;
+}
+
+function containsPlaintextSensitiveValues(values?: Record<string, string>): boolean {
+  if (!values) {
+    return false;
+  }
+
+  return Object.entries(values).some(([key, value]) => {
+    if (!isSensitiveKey(key)) {
+      return false;
+    }
+    return !hasEnvPlaceholders(value);
+  });
+}
+
+function isSensitiveKey(key: string): boolean {
+  const normalized = key.toLowerCase();
+  return (
+    normalized === 'authorization' ||
+    normalized.includes('api-key') ||
+    normalized.includes('apikey') ||
+    normalized.endsWith('_api_key') ||
+    normalized.endsWith('_token') ||
+    normalized.endsWith('_secret') ||
+    normalized.endsWith('_password')
+  );
 }
 
 export function parseSkillFrontMatter(content: string): SkillFrontMatter {
@@ -462,7 +478,7 @@ async function deriveImportName(
   return config.transport === 'stdio' ? basename(config.command) : new URL(config.url).hostname;
 }
 
-function buildImportedMcpDescriptor(name: string, config: McpConfig, exposure: ExposureDraft): AaiJson {
+function buildImportedMcpDescriptor(name: string, config: McpConfig, exposure: SummaryDraft): AaiJson {
   return {
     schemaVersion: '2.0',
     version: '1.0.0',
@@ -569,7 +585,6 @@ function deriveSkillName(options: SkillImportSourceInput, content: string): stri
   const titleMatch = frontMatter.body.match(/^#\s+(.+)$/m);
   if (titleMatch?.[1]) return titleMatch[1].trim();
   if (options.path) return basename(options.path);
-  if (options.url) return new URL(options.url).hostname;
   return 'Imported Skill';
 }
 
@@ -580,7 +595,7 @@ async function deriveUniqueSkillAppId(options: SkillImportSourceInput, content: 
     return preferred;
   }
 
-  const seed = options.path ? `skill:${options.path}` : `skill:${options.url ?? 'imported-skill'}`;
+  const seed = `skill:${options.path ?? 'imported-skill'}`;
   return deriveAppId(seed, preferred);
 }
 
@@ -589,11 +604,7 @@ async function readSkillSourceContent(options: SkillImportSourceInput): Promise<
     return readFile(join(options.path, 'SKILL.md'), 'utf-8');
   }
 
-  if (options.url) {
-    return fetchRemoteSkill(options.url);
-  }
-
-  throw new Error('Skill import requires either path or url');
+  throw new Error('Skill import requires a local path');
 }
 
 async function copyDirectory(sourceDir: string, targetDir: string): Promise<void> {
@@ -601,19 +612,19 @@ async function copyDirectory(sourceDir: string, targetDir: string): Promise<void
   await fs.cp(sourceDir, targetDir, { recursive: true });
 }
 
-async function fetchRemoteSkill(skillRootUrl: string): Promise<string> {
-  const skillUrl = `${skillRootUrl.replace(/\/$/, '')}/SKILL.md`;
-  const response = await fetch(skillUrl);
-  if (!response.ok) {
-    throw new Error(`Failed to download remote skill: ${skillUrl} (${response.status})`);
-  }
-
-  return response.text();
+function deriveSkillSummary(preview: SkillImportPreview): string {
+  const preferred = preview.description?.trim() || extractFirstParagraph(preview.content) || `Use ${preview.name} through AAI Gateway.`;
+  return normalizeSummaryInput(preferred.slice(0, EXPOSURE_LIMITS.summaryLength)).summary;
 }
 
-async function writeRemoteSkill(content: string, targetDir: string): Promise<void> {
-  await mkdir(targetDir, { recursive: true });
-  await writeFile(join(targetDir, 'SKILL.md'), content, 'utf-8');
+function extractFirstParagraph(content: string): string {
+  const frontMatter = parseSkillFrontMatter(content);
+  const cleaned = frontMatter.body
+    .replace(/^# .+$/m, '')
+    .split(/\n\s*\n/)
+    .map((block) => block.replace(/\s+/g, ' ').trim())
+    .find((block) => block.length > 0);
+  return cleaned ?? '';
 }
 
 function validateOptionalStringLength(

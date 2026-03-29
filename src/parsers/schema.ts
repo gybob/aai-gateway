@@ -31,14 +31,9 @@ const McpConfigSchema = z.discriminatedUnion('transport', [
   }),
 ]);
 
-const SkillConfigSchema = z.union([
-  z.object({
-    path: z.string().min(1),
-  }),
-  z.object({
-    url: z.string().url(),
-  }),
-]);
+const SkillConfigSchema = z.object({
+  path: z.string().min(1),
+});
 
 const AccessSchema = z.discriminatedUnion('protocol', [
   z.object({
@@ -90,8 +85,8 @@ export const AaiJsonSchema = z.object({
   discovery: DiscoverySchema.optional(),
   access: AccessSchema,
   exposure: z.object({
-    keywords: z.array(z.string().min(1)).max(8),
-    summary: z.string().min(1).max(500),
+    summary: z.string().min(1).max(200),
+    keywords: z.array(z.string().min(1)).max(8).optional(),
   }),
 });
 

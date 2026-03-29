@@ -5,7 +5,6 @@ export { logger } from './utils/logger.js';
 export { parseAaiJson } from './parsers/schema.js';
 export type { AaiJson, RuntimeAppRecord } from './types/aai-json.js';
 export { createDesktopDiscovery } from './discovery/index.js';
-export { fetchWebDescriptor } from './discovery/web.js';
 export { createSecureStorage } from './storage/secure-storage/index.js';
 export type { SecureStorage } from './storage/secure-storage/interface.js';
 export { ConsentManager } from './consent/manager.js';

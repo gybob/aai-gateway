@@ -1,29 +1,25 @@
 # AAI Gateway
 
-## One MCP. Many Apps. Less Context.
+## Why AAI Gateway
 
-AAI Gateway turns many apps, agents, skills, and MCP servers into one MCP server.
+AAI stands for **Agent App Interface**.
 
-## Core Values
+### Three Pain Points of MCP/Skill Configuration
 
-### Value 1: Natural Language-Driven Tool Integration
+**1. Context Token Waste**: Every MCP server injects its schema, descriptions, and tool lists into the prompt. As you add more servers, the model spends more tokens understanding tools than executing tasks.
 
-After installing the AAI Gateway MCP, you can quickly integrate any other MCP or skill through natural language descriptions, and control other AI Agent tools (including Claude Code, Codex, OpenCode, etc.).
+**2. Config Cannot Be Shared Across Agents**: MCP/Skill configured in Claude Code cannot be directly used in OpenCode or Codex. You have to configure it separately for each agent tool.
 
-AAI Gateway also integrates a search tool that helps you search for official and secure MCPs and skills from authoritative, mainstream websites, and install them with a single sentence. Control of other AI Agent tools is done via Agent Client Protocol (ACP), including session management.
+**3. Requires Agent Restart After Installation**: Traditionally, adding a new MCP or Skill requires restarting the agent tool to take effect.
 
-### Value 2: Progressive Disclosure Strategy
+### What AAI Gateway Solves
 
-AAI Gateway does not dump all tool descriptions into the LLM context at once. Instead, it employs a progressive disclosure strategy:
+- **Progressive Disclosure**: Expose app overview first, reveal tool details only when needed, avoiding context explosion
+- **Centralized Config Management**: Import MCP/Skill once, share across all agent tools
+- **Hot Loading**: Auto-notify agents after import, **no restart required**
+- **Natural Language Interaction**: Search, import, and manage MCPs/Skills through simple conversation
 
-**MCP Server Level**: Only the overall description of the MCP Server is exposed initially. When the LLM determines that a specific tool needs to be used, it returns tool usage guidance first. The Agent then calls the unified `aai:exec` to execute based on that guidance. `aai:exec` accepts `appId`, `tool`, and `tool args` as parameters.
-
-**MCP / Skill Description Level**: Two tiers of disclosure are provided:
-
-- `summary` — Natural language description; good for automatic triggering
-- `keywords` — Compact keyword set; further reduces context overhead
-
-This allows OpenClaw (a popular personal assistant application) and similar tools that require many tools and skills to still run smoothly.
+AAI Gateway unifies MCP servers, Skills, ACP agents, and CLI tools under one roof, making it simple and efficient for agents to discover and use software.
 
 ## How To Use
 
@@ -86,18 +82,15 @@ Main workflow: Copy a mainstream MCP config snippet into your AI tool and ask it
 The AI tool will:
 
 1. Read the MCP config you pasted
-2. Ask you to choose an exposure mode
-3. Call `mcp:import`
+2. Inspect the downstream MCP tools through AAI Gateway
+3. Summarize when the MCP should be used
+4. Ask whether it should be enabled for the current agent only or for all agents
+5. Call `mcp:import`
 
 AAI Gateway keeps import parameters consistent with standard MCP config shapes:
 
 - stdio MCP: `command`, `args`, `env`, `cwd`
 - remote MCP: `url`, optional `transport`, optional `headers`
-
-Choose an exposure mode before import:
-
-- `summary`: Easier automatic triggering
-- `keywords`: Leaves room for more tools, but usually needs more explicit keyword mentions
 
 **stdio MCP Example**:
 
@@ -128,18 +121,18 @@ Choose an exposure mode before import:
 After import, AAI Gateway returns:
 
 - The generated app id
-- The generated `keywords`
 - The generated `summary`
 - The guide tool name: `app:<id>`
 
-> **Important**: Restart your AI tool before using the newly imported tool. After restart, the imported app will appear as `app:<id>`. Use `aai:exec` to actually run the imported app's operations.
+> AAI Gateway sends `tools/listChanged` after import. Clients that implement this notification can pick up new tools without restart.
 
 ### 4. Import a Skill
 
-Skills are imported through the AI tool as well. Just tell the AI tool to import a skill using AAI Gateway, then provide either:
+Skills are imported through the AI tool as well. Tell the AI tool to import a skill using AAI Gateway, then provide:
 
 - A local skill path
-- A remote skill root URL that exposes `SKILL.md`
+
+If the skill is remote, download and extract the whole skill directory first. AAI Gateway only imports from a local directory and copies the full directory into managed storage.
 
 **Local Skill Example**:
 
@@ -149,17 +142,7 @@ Skills are imported through the AI tool as well. Just tell the AI tool to import
 }
 ```
 
-**Remote Skill Example**:
-
-```json
-{
-  "url": "https://example.com/skill"
-}
-```
-
-Like MCP import, skill import returns `app id`, `keywords`, `summary`, and the `app:<id>` guide tool name.
-
-Restart your AI tool after import.
+AAI Gateway derives the imported skill summary from the skill's own `SKILL.md` description. It can also generate a lightweight proxy `SKILL.md` for the current agent so the agent can discover the skill automatically.
 
 ### 5. Supported ACP Agents
 
@@ -187,7 +170,7 @@ Currently supported ACP agent types:
 │  ┌─────────────────────────────────────────────────────────┐│
 │  │              Progressive Disclosure Layer               ││
 │  │  - App-level exposure (not tool-level)                  ││
-│  │  - Summary / Keywords modes                              ││
+│  │  - Summary-only disclosure                               ││
 │  │  - Lazy tool loading on demand                          ││
 │  └─────────────────────────────────────────────────────────┘│
 │  ┌─────────────────────────────────────────────────────────┐│
@@ -197,8 +180,8 @@ Currently supported ACP agent types:
 │  └─────────────────────────────────────────────────────────┘│
 │  ┌─────────────────────────────────────────────────────────┐│
 │  │                  Discovery Layer                         ││
-│  │  - Desktop Descriptors  - Web Descriptors               ││
-│  │  - Gateway Imports       - Built-in Descriptors          ││
+│  │  - Desktop Descriptors  - Managed Imports                ││
+│  │  - Built-in Descriptors                                   ││
 │  └─────────────────────────────────────────────────────────┘│
 └────────────────────────┬────────────────────────────────────┘
                          │  Native Protocol
@@ -243,7 +226,6 @@ To integrate an app with AAI Gateway, simply provide an app descriptor file (`aa
     }
   },
   "exposure": {
-    "keywords": ["file", "filesystem", "read", "write"],
     "summary": "Use this app when the user wants to read from or write to the local filesystem."
   }
 }
@@ -263,11 +245,10 @@ To integrate an app with AAI Gateway, simply provide an app descriptor file (`aa
   "access": {
     "protocol": "skill",
     "config": {
-      "url": "https://github.com/example/git-commit-skill"
+      "path": "/absolute/path/to/git-commit-skill"
     }
   },
   "exposure": {
-    "keywords": ["git", "commit", "version control"],
     "summary": "Use this app when the user wants to create git commits with auto-generated messages."
   }
 }
@@ -291,7 +272,6 @@ To integrate an app with AAI Gateway, simply provide an app descriptor file (`aa
     }
   },
   "exposure": {
-    "keywords": ["claude", "code", "coding", "agent"],
     "summary": "Use this app when the user wants Claude Code to perform coding tasks."
   }
 }
@@ -315,7 +295,6 @@ To integrate an app with AAI Gateway, simply provide an app descriptor file (`aa
     }
   },
   "exposure": {
-    "keywords": ["example", "utility"],
     "summary": "Use this app when the user wants to work with Example App."
   }
 }
@@ -355,16 +334,6 @@ If you're unsure whether an integration should be bundled, open an issue first t
 
 AAI Gateway discovers apps from the following locations:
 
-#### Web Apps
-
-Publish at:
-
-```
-https://<your-host>/.well-known/aai.json
-```
-
-AAI Gateway fetches this path when the user calls `remote:discover`.
-
 #### macOS Apps
 
 Recommended locations:
@@ -393,7 +362,6 @@ Scanned locations:
 
 - Keep descriptors small and practical
 - Make `app.name.default` clear
-- Keep `keywords` short and high-signal
 - Make `summary` explain when the app should be used
 - Put detailed capability data in the downstream protocol, not in the descriptor
 - If your app already speaks MCP, keep the descriptor minimal and let MCP provide lazy tool details

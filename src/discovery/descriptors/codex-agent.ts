@@ -27,6 +27,6 @@ export const descriptor: AaiJson = {
   },
   exposure: {
     keywords: ['code', 'openai', 'agent'],
-    summary: '通过 ACP adapter 接入的 Codex agent。',
+    summary: 'Codex agent connected through the ACP adapter.',
   },
 };

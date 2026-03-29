@@ -43,8 +43,6 @@ export interface ExecutionResult {
   error?: string;
   /** Schema for the tool (used when validation fails) */
   schema?: Record<string, unknown>;
-  /** Suggestion for fixing the error */
-  suggestion?: string;
 }
 
 /**

@@ -63,8 +63,8 @@ export interface CliAccess {
 export type Access = McpAccess | SkillAccess | AcpAgentAccess | CliAccess;
 
 export interface Exposure {
-  keywords: string[];
   summary: string;
+  keywords?: string[];
 }
 
 export interface CommandDiscoveryCheck {

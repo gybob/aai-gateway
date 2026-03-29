@@ -1,18 +1,26 @@
-import { homedir } from 'node:os';
-import { join } from 'node:path';
-
 import { readFile } from 'node:fs/promises';
+
+import { getAaiHomeDir } from './config.js';
 
 export interface DotenvResult {
   env: Record<string, string>;
   missing: string[];
 }
 
+export interface SubstitutionResult<T> {
+  result: T;
+  missing: string[];
+}
+
+export function getDotenvPath(): string {
+  return `${getAaiHomeDir()}/.env`;
+}
+
 /**
  * Load environment variables from ~/.aai/.env file
  */
 export async function loadDotenv(): Promise<DotenvResult> {
-  const dotenvPath = join(homedir(), '.aai', '.env');
+  const dotenvPath = getDotenvPath();
 
   try {
     const content = await readFile(dotenvPath, 'utf-8');
@@ -71,7 +79,7 @@ export function substituteEnvVars(str: string, env: Record<string, string>): str
 /**
  * Find all ${VAR_NAME} placeholders in a string
  */
-function findEnvPlaceholders(str: string): string[] {
+export function findEnvPlaceholders(str: string): string[] {
   const matches: string[] = [];
   const regex = /\$\{([^}]+)\}/g;
   let match: RegExpExecArray | null;
@@ -79,6 +87,10 @@ function findEnvPlaceholders(str: string): string[] {
     matches.push(match[1]);
   }
   return matches;
+}
+
+export function hasEnvPlaceholders(str: string): boolean {
+  return findEnvPlaceholders(str).length > 0;
 }
 
 /**
@@ -96,7 +108,7 @@ function checkMissingVars(value: string, env: Record<string, string>): string[] 
 export function substituteConfigEnvVars(
   config: Record<string, unknown>,
   env: Record<string, string>
-): { result: Record<string, unknown>; missing: string[] } {
+): SubstitutionResult<Record<string, unknown>> {
   const missing: string[] = [];
   const result: Record<string, unknown> = {};
 
@@ -139,6 +151,25 @@ export function substituteConfigEnvVars(
     } else {
       result[key] = value;
     }
+  }
+
+  return { result, missing };
+}
+
+export function substituteStringRecordEnvVars(
+  values: Record<string, string> | undefined,
+  env: Record<string, string>
+): SubstitutionResult<Record<string, string>> {
+  if (!values) {
+    return { result: {}, missing: [] };
+  }
+
+  const missing: string[] = [];
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(values)) {
+    const missingInValue = checkMissingVars(value, env);
+    missing.push(...missingInValue);
+    result[key] = missingInValue.length > 0 ? value : substituteEnvVars(value, env);
   }
 
   return { result, missing };

@@ -173,6 +173,5 @@ export function createSchemaValidationError(
   return new AaiError('INVALID_PARAMS', message, {
     schema,
     validationErrors: result.errors,
-    suggestion: '请检查参数格式并参考返回的 schema 重试',
   });
 }

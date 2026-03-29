@@ -14,7 +14,7 @@ import { AAI_GATEWAY_NAME, AAI_GATEWAY_VERSION } from '../version.js';
 import { ACP_TOOL_SCHEMAS } from './acp-tool-schemas.js';
 import { validateArgs, formatValidationErrors } from '../utils/schema-validator.js';
 
-import type { ExecutionObserver, ExecutionTaskStatus, TaskCapableExecutor } from './events.js';
+import type { ExecutionObserver, TaskCapableExecutor } from './events.js';
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
@@ -27,20 +27,61 @@ interface PendingRequest {
 
 type AcpContentBlock = Record<string, unknown> & { type: string };
 
+type GatewayTurnState =
+  | 'running'
+  | 'waiting_permission'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+interface GatewayTurnError {
+  code: string;
+  message: string;
+}
+
+interface GatewayPermissionOption {
+  id: string;
+  label: string;
+}
+
+interface GatewayPermissionRequest {
+  permissionId: string;
+  title: string;
+  description?: string;
+  options: GatewayPermissionOption[];
+}
+
+interface PendingPermissionRequest extends GatewayPermissionRequest {
+  appId: string;
+  turnId: string;
+  sessionId: string;
+  downstreamRequestId: number | string;
+}
+
 interface PromptTurnState {
   appId: string;
   turnId: string;
   sessionId: string;
+  promptMessageId: string;
+  trackedMessageIds: Set<string>;
+  startedAt?: number;
   outputText: string;
   content: AcpContentBlock[];
+  pendingContent: AcpContentBlock[];
   done: boolean;
-  status: ExecutionTaskStatus;
-  statusMessage?: string;
-  error?: string;
+  state: GatewayTurnState;
+  message?: string;
+  error?: GatewayTurnError;
+  stopReason?: string | null;
+  permissionRequest?: GatewayPermissionRequest;
   waiters: Set<() => void>;
   cleanupTimer?: NodeJS.Timeout;
+  inactivityTimer?: NodeJS.Timeout;
+  drainTimer?: NodeJS.Timeout;
   lastTouchedAt: number;
+  lastUpdateAt: number;
   params: Record<string, unknown>;
+  awaitingDownstreamResponse?: boolean;
 }
 
 interface JsonRpcResponse {
@@ -56,7 +97,14 @@ interface JsonRpcNotification {
   params?: unknown;
 }
 
-type JsonRpcMessage = JsonRpcResponse | JsonRpcNotification;
+interface JsonRpcRequest {
+  jsonrpc: '2.0';
+  id: number | string;
+  method: string;
+  params?: unknown;
+}
+
+type JsonRpcMessage = JsonRpcResponse | JsonRpcNotification | JsonRpcRequest;
 
 interface ProcessState {
   proc: ChildProcess;
@@ -65,14 +113,12 @@ interface ProcessState {
   initializeResult?: Record<string, unknown>;
 }
 
-const ACP_INITIALIZE_TIMEOUT_MS = 60000;
+const ACP_INITIALIZE_TIMEOUT_MS = 30000;
 const ACP_SESSION_TIMEOUT_MS = 30000;
 const ACP_POLL_WAIT_MS = 30000;
+const ACP_TURN_INACTIVITY_TIMEOUT_MS = 3 * 60_000;
 const ACP_TURN_TTL_MS = 5 * 60_000;
 const ACP_MAX_OUTPUT_CHARS = 200_000;
-const ACP_EMPTY_CONTENT_MESSAGE = '处理中，请继续等待';
-const ACP_NON_INTERACTIVE_GUIDANCE =
-  'AAI Gateway instruction: operate in non-interactive mode. Do not ask for human confirmation, approval, or additional input. If confirmation would normally be required, choose the safest non-interactive path available or explain the limitation in your final response instead of waiting.';
 
 function toToolSchemaReference(schema: ToolSchema): Record<string, unknown> {
   return {
@@ -99,7 +145,6 @@ function validateAcpArgs(tool: string, args: Record<string, unknown>): void {
       {
         schema: toToolSchemaReference(schema),
         validationErrors: result.errors,
-        suggestion: `请参考 schema 重试:\n${JSON.stringify(schema.inputSchema, null, 2)}`,
       }
     );
   }
@@ -115,7 +160,9 @@ export class AcpExecutor implements TaskCapableExecutor {
   private states = new Map<string, ProcessState>();
   private pendingRequests = new Map<string, PendingRequest>();
   private promptTurns = new Map<string, PromptTurnState>();
+  private pendingPermissionRequests = new Map<string, PendingPermissionRequest>();
   private activeTurnIdsBySession = new Map<string, string>();
+  private trackedTurnIdsBySessionAndMessage = new Map<string, string>();
   private queuedTurnIdsBySession = new Map<string, string[]>();
   private sessionOwners = new Map<string, string>();
   private requestId = 0;
@@ -203,7 +250,6 @@ export class AcpExecutor implements TaskCapableExecutor {
             success: false,
             error: errorMessage,
             schema: toToolSchemaReference(schema),
-            suggestion: `请参考 schema 重试:\n${JSON.stringify(schema.inputSchema, null, 2)}`,
           };
         }
       }
@@ -213,7 +259,7 @@ export class AcpExecutor implements TaskCapableExecutor {
       if (operation === 'prompt') {
         throw new AaiError(
           'INVALID_PARAMS',
-          'ACP tool "prompt" has been removed. Call "session/new" first, then call "session/prompt" with the returned sessionId.'
+          'ACP tool "prompt" has been removed. Call "session/new" first, then call "turn/start" with the returned sessionId.'
         );
       }
 
@@ -222,19 +268,26 @@ export class AcpExecutor implements TaskCapableExecutor {
       }
 
       if (operation === 'session/prompt') {
-        return { success: true, data: await this.handleSessionPromptRequest(appId, args) };
+        throw new AaiError(
+          'INVALID_PARAMS',
+          'ACP tool "session/prompt" is not exposed by AAI Gateway. Call "session/new" first, then call "turn/start" and poll with "turn/poll".'
+        );
+      }
+
+      if (operation === 'turn/start') {
+        return { success: true, data: await this.handleTurnStartRequest(appId, args) };
       }
 
       if (operation === 'turn/poll') {
         return { success: true, data: await this.handleTurnPollRequest(appId, args) };
       }
 
-      if (operation === 'turn/cancel') {
-        return { success: true, data: await this.handleTurnCancelRequest(appId, args) };
+      if (operation === 'turn/respondPermission') {
+        return { success: true, data: await this.handleTurnRespondPermissionRequest(appId, args) };
       }
 
-      if (operation === 'session/poll') {
-        return { success: true, data: await this.handleSessionPollRequest(appId, args) };
+      if (operation === 'turn/cancel') {
+        return { success: true, data: await this.handleTurnCancelRequest(appId, args) };
       }
 
       const normalized = await this.normalizeOperation(appId, operation, args);
@@ -408,25 +461,18 @@ export class AcpExecutor implements TaskCapableExecutor {
     };
   }
 
-  private async handleSessionPromptRequest(
+  private async handleTurnStartRequest(
     appId: string,
     args: Record<string, unknown>
   ): Promise<unknown> {
-    validateAcpArgs('session/prompt', args);
+    validateAcpArgs('turn/start', args);
     assertPromptInput(args);
-    const sessionId = requireSessionId(args, 'ACP session/prompt requires args.sessionId. Call session/new first, then pass the returned sessionId to session/prompt.');
+    const sessionId = requireSessionId(
+      args,
+      'ACP turn/start requires args.sessionId. Call session/new first, then pass the returned sessionId to turn/start.'
+    );
     this.sessionOwners.set(sessionId, appId);
     return this.startPromptTurn(appId, sessionId, normalizePromptArgs(args, sessionId));
-  }
-
-  private async handleSessionPollRequest(
-    appId: string,
-    args: Record<string, unknown>
-  ): Promise<unknown> {
-    validateAcpArgs('session/poll', args);
-    const sessionId = requireSessionId(args);
-    const turnId = this.resolveTurnIdForSessionPoll(sessionId);
-    return this.waitForPromptTurn(appId, turnId);
   }
 
   private async handleTurnPollRequest(
@@ -435,6 +481,42 @@ export class AcpExecutor implements TaskCapableExecutor {
   ): Promise<unknown> {
     validateAcpArgs('turn/poll', args);
     return this.waitForPromptTurn(appId, requireTurnId(args));
+  }
+
+  private async handleTurnRespondPermissionRequest(
+    _appId: string,
+    args: Record<string, unknown>
+  ): Promise<unknown> {
+    validateAcpArgs('turn/respondPermission', args);
+    const turn = this.getPromptTurn(requireTurnId(args));
+    const permissionId = requirePermissionId(args);
+    const pending = this.pendingPermissionRequests.get(permissionId);
+
+    if (!pending || pending.turnId !== turn.turnId) {
+      throw new AaiError(
+        'INVALID_PARAMS',
+        `No active ACP permission request found for permission '${permissionId}' on turn '${turn.turnId}'.`
+      );
+    }
+
+    const decision = normalizePermissionDecision(args.decision, pending);
+    await this.sendJsonRpcResult(pending.appId, pending.downstreamRequestId, {
+      outcome: decision,
+    });
+
+    this.clearPendingPermissionRequest(turn, permissionId);
+    if (!turn.done) {
+      turn.state = 'running';
+      turn.message = 'Permission response sent downstream.';
+      turn.lastTouchedAt = Date.now();
+      this.recordPromptTurnActivity(turn);
+      this.notifyPromptTurnWaiters(turn);
+    }
+
+    return {
+      turnId: turn.turnId,
+      accepted: true,
+    };
   }
 
   private async handleTurnCancelRequest(
@@ -450,17 +532,13 @@ export class AcpExecutor implements TaskCapableExecutor {
     }
 
     if (!isActiveTurn) {
-      this.finishPromptTurn(turn, 'cancelled', 'ACP turn was cancelled before execution started.');
+      this.finishPromptTurn(turn, 'cancelled', undefined, 'cancelled');
       return this.buildTurnCancelResult(turn, true);
     }
 
-    await this.sendRequest(
-      appId,
-      'session/cancel',
-      { sessionId: turn.sessionId },
-      ACP_SESSION_TIMEOUT_MS
-    );
-    this.finishPromptTurn(turn, 'cancelled', 'ACP turn was cancelled by the caller.');
+    await this.cancelPendingPermissionRequest(turn);
+    await this.sendNotification(appId, 'session/cancel', { sessionId: turn.sessionId });
+    this.finishPromptTurn(turn, 'cancelled', undefined, 'cancelled');
     return this.buildTurnCancelResult(turn, true);
   }
 
@@ -470,20 +548,26 @@ export class AcpExecutor implements TaskCapableExecutor {
     params: Record<string, unknown>
   ): Promise<unknown> {
     const turnId = randomUUID();
+    const promptMessageId = requireMessageId(params);
     const turn: PromptTurnState = {
       appId,
       turnId,
       sessionId,
+      promptMessageId,
+      trackedMessageIds: new Set([promptMessageId]),
       outputText: '',
       content: [],
+      pendingContent: [],
       done: false,
-      status: 'queued',
+      state: 'running',
       waiters: new Set(),
       lastTouchedAt: Date.now(),
+      lastUpdateAt: Date.now(),
       params,
-      statusMessage: 'Waiting to start.',
+      message: 'Waiting to start.',
     };
     this.promptTurns.set(turnId, turn);
+    this.bindMessageIdToTurn(sessionId, promptMessageId, turn);
     this.sessionOwners.set(sessionId, appId);
 
     const activeTurnId = this.activeTurnIdsBySession.get(sessionId);
@@ -491,18 +575,24 @@ export class AcpExecutor implements TaskCapableExecutor {
       const queued = this.queuedTurnIdsBySession.get(sessionId) ?? [];
       queued.push(turnId);
       this.queuedTurnIdsBySession.set(sessionId, queued);
-      turn.statusMessage = 'Waiting for an earlier turn on the same session to finish.';
+      turn.message = 'Waiting for an earlier turn on the same session to finish.';
     } else {
       this.launchPromptTurn(turn);
     }
 
-    return this.waitForPromptTurn(appId, turnId);
+    return {
+      turnId: turn.turnId,
+      sessionId: turn.sessionId,
+      state: turn.state,
+    };
   }
 
   private launchPromptTurn(turn: PromptTurnState): void {
-    turn.status = 'working';
-    turn.statusMessage = 'Turn started.';
+    turn.state = 'running';
+    turn.message = 'Turn started.';
+    turn.startedAt = Date.now();
     turn.lastTouchedAt = Date.now();
+    this.recordPromptTurnActivity(turn);
     this.activeTurnIdsBySession.set(turn.sessionId, turn.turnId);
 
     try {
@@ -518,7 +608,6 @@ export class AcpExecutor implements TaskCapableExecutor {
 
   private waitForPromptTurn(_appId: string, turnId: string): Promise<unknown> {
     const turn = this.getPromptTurn(turnId);
-    turn.lastTouchedAt = Date.now();
     if (turn.done) {
       return Promise.resolve(this.buildPromptTurnResult(turn));
     }
@@ -527,16 +616,12 @@ export class AcpExecutor implements TaskCapableExecutor {
       const wake = () => {
         clearTimeout(timer);
         turn.waiters.delete(wake);
-        const nextTurn = this.getPromptTurn(turnId);
-        nextTurn.lastTouchedAt = Date.now();
-        resolve(this.buildPromptTurnResult(nextTurn));
+        resolve(this.buildPromptTurnResult(this.getPromptTurn(turnId)));
       };
 
       const timer = setTimeout(() => {
         turn.waiters.delete(wake);
-        const nextTurn = this.getPromptTurn(turnId);
-        nextTurn.lastTouchedAt = Date.now();
-        resolve(this.buildPromptTurnResult(nextTurn));
+        resolve(this.buildPromptTurnResult(this.getPromptTurn(turnId)));
       }, this.pollWaitMs);
 
       turn.waiters.add(wake);
@@ -544,12 +629,17 @@ export class AcpExecutor implements TaskCapableExecutor {
   }
 
   private buildPromptTurnResult(turn: PromptTurnState): Record<string, unknown> {
-    const content = this.collectTurnContent(turn);
+    const content = this.takePendingTurnContent(turn);
     return {
       turnId: turn.turnId,
       sessionId: turn.sessionId,
       done: turn.done,
-      content: content.length > 0 ? content : [{ type: 'text', text: ACP_EMPTY_CONTENT_MESSAGE }],
+      state: turn.state,
+      ...(turn.message ? { message: turn.message } : {}),
+      ...(turn.permissionRequest ? { permissionRequest: { ...turn.permissionRequest } } : {}),
+      ...(turn.stopReason !== undefined ? { stopReason: turn.stopReason } : {}),
+      ...(turn.error ? { error: { ...turn.error } } : {}),
+      content,
     };
   }
 
@@ -560,11 +650,9 @@ export class AcpExecutor implements TaskCapableExecutor {
     return {
       turnId: turn.turnId,
       sessionId: turn.sessionId,
-      cancelled,
+      accepted: cancelled,
       done: turn.done,
-      status: turn.status,
-      ...(turn.statusMessage ? { statusMessage: turn.statusMessage } : {}),
-      ...(turn.error ? { error: turn.error } : {}),
+      state: turn.state,
     };
   }
 
@@ -574,11 +662,19 @@ export class AcpExecutor implements TaskCapableExecutor {
       return;
     }
 
+    if (turn.done) {
+      this.handleSettledPromptResponseAfterLocalFinish(turn);
+      return;
+    }
+
     const finalContent = extractResultContent(result);
     if (finalContent.length > 0) {
       this.appendPromptTurnContent(turn, finalContent);
     }
-    this.finishPromptTurn(turn, 'completed');
+
+    const stopReason = extractStopReason(result);
+    const finalState = mapStopReasonToGatewayTurnState(stopReason);
+    this.finishPromptTurn(turn, finalState, undefined, stopReason);
   }
 
   private failPromptTurn(turnId: string, error: unknown): void {
@@ -587,7 +683,15 @@ export class AcpExecutor implements TaskCapableExecutor {
       return;
     }
 
-    this.finishPromptTurn(turn, 'failed', error instanceof Error ? error.message : String(error));
+    if (turn.done) {
+      this.handleSettledPromptResponseAfterLocalFinish(turn);
+      return;
+    }
+
+    this.finishPromptTurn(turn, 'failed', {
+      code: 'downstream_error',
+      message: error instanceof Error ? error.message : String(error),
+    });
   }
 
   private notifyPromptTurnWaiters(turn: PromptTurnState): void {
@@ -603,7 +707,7 @@ export class AcpExecutor implements TaskCapableExecutor {
     if (!turn) {
       throw new AaiError(
         'INVALID_PARAMS',
-        `No ACP prompt turn found for turn '${turnId}'. Start a prompt first, or use a valid turnId returned by the gateway.`
+        `No ACP prompt turn found for turn '${turnId}'. Call turn/start first, or use a valid turnId returned by the gateway.`
       );
     }
     return turn;
@@ -619,7 +723,11 @@ export class AcpExecutor implements TaskCapableExecutor {
         this.finishPromptTurn(
           turn,
           'cancelled',
-          `ACP agent '${appId}' stopped before the turn completed.`,
+          {
+            code: 'downstream_stopped',
+            message: `ACP agent '${appId}' stopped before the turn completed.`,
+          },
+          'cancelled',
           false
         );
       }
@@ -712,6 +820,13 @@ export class AcpExecutor implements TaskCapableExecutor {
   }
 
   private dispatchMessage(message: JsonRpcMessage): void {
+    if (isJsonRpcRequest(message) && message.method === 'session/request_permission') {
+      void this.handlePermissionRequest(message).catch((err) => {
+        logger.warn({ err, method: message.method, id: message.id }, 'Failed to handle ACP request');
+      });
+      return;
+    }
+
     if ('id' in message && !('method' in message)) {
       const pending = this.pendingRequests.get(String(message.id));
       if (!pending) {
@@ -741,13 +856,50 @@ export class AcpExecutor implements TaskCapableExecutor {
     }
   }
 
+  private async handlePermissionRequest(message: JsonRpcRequest): Promise<void> {
+    const sessionId = extractSessionId(message.params);
+    if (!sessionId) {
+      return;
+    }
+
+    const turn = this.resolvePromptTurnForPermission(sessionId);
+    const appId = turn?.appId ?? this.sessionOwners.get(sessionId);
+    const pending = createPendingPermissionRequest(message, appId);
+    if (!pending) {
+      if (appId) {
+        await this.sendJsonRpcResult(appId, message.id, {
+          outcome: { outcome: 'cancelled' },
+        });
+      }
+      return;
+    }
+
+    if (!turn || turn.done) {
+      await this.sendJsonRpcResult(pending.appId, pending.downstreamRequestId, {
+        outcome: { outcome: 'cancelled' },
+      });
+      return;
+    }
+
+    pending.turnId = turn.turnId;
+    this.clearPendingPermissionRequest(turn);
+    this.pendingPermissionRequests.set(pending.permissionId, pending);
+    turn.permissionRequest = toGatewayPermissionRequest(pending);
+    turn.state = 'waiting_permission';
+    turn.message = 'Waiting for user permission.';
+    turn.lastTouchedAt = Date.now();
+    if (turn.inactivityTimer) {
+      clearTimeout(turn.inactivityTimer);
+      turn.inactivityTimer = undefined;
+    }
+    this.notifyPromptTurnWaiters(turn);
+  }
+
   private capturePromptUpdate(sessionId: string, params: unknown): void {
     const content = extractUpdateContent(params);
     const taskStatus = extractTaskStatus(params);
-    if (content.length === 0) {
-      if (!taskStatus) {
-        return;
-      }
+    if (content.length === 0 && !taskStatus) {
+      return;
     }
 
     logger.debug(
@@ -760,29 +912,32 @@ export class AcpExecutor implements TaskCapableExecutor {
       'ACP session/update received'
     );
 
-    const turnId = this.activeTurnIdsBySession.get(sessionId);
-    if (!turnId) {
-      return;
-    }
-
-    const turn = this.promptTurns.get(turnId);
+    const updateMessageId = extractUpdateMessageId(params);
+    const turn = this.resolvePromptTurnForUpdate(sessionId, updateMessageId);
     if (!turn) {
       return;
     }
 
-    let changed = false;
+    if (turn.done) {
+      return;
+    }
+
+    if (updateMessageId) {
+      this.bindMessageIdToTurn(sessionId, updateMessageId, turn);
+    }
+
+    let contentChanged = false;
     if (content.length > 0) {
-      changed = this.appendPromptTurnContent(turn, content) || changed;
+      contentChanged = this.appendPromptTurnContent(turn, content) || contentChanged;
     }
 
-    if (taskStatus) {
-      turn.status = taskStatus.status;
-      turn.statusMessage = taskStatus.message;
-      turn.lastTouchedAt = Date.now();
-      changed = true;
+    // session/update taskStatus is treated as downstream activity only.
+    // It does not map to the lifetime of the gateway prompt turn.
+    if (contentChanged || taskStatus) {
+      this.recordPromptTurnActivity(turn);
     }
 
-    if (changed && turn.done) {
+    if (contentChanged) {
       this.notifyPromptTurnWaiters(turn);
     }
   }
@@ -799,11 +954,16 @@ export class AcpExecutor implements TaskCapableExecutor {
 
         turn.outputText = merged.mergedText;
         appendAccumulatedContentBlock(turn.content, { ...block, text: merged.deltaText });
+        appendAccumulatedContentBlock(turn.pendingContent, { ...block, text: merged.deltaText });
         changed = true;
         continue;
       }
 
-      changed = appendAccumulatedContentBlock(turn.content, block) || changed;
+      const appended = appendAccumulatedContentBlock(turn.content, block);
+      if (appended) {
+        appendAccumulatedContentBlock(turn.pendingContent, block);
+      }
+      changed = appended || changed;
     }
 
     if (!changed) {
@@ -816,29 +976,52 @@ export class AcpExecutor implements TaskCapableExecutor {
 
   private finishPromptTurn(
     turn: PromptTurnState,
-    status: 'completed' | 'failed' | 'cancelled',
-    error?: string,
-    advanceQueue = true
+    state: 'completed' | 'failed' | 'cancelled',
+    error?: GatewayTurnError,
+    stopReason?: string | null,
+    advanceQueue = true,
+    releaseSessionBinding = true
   ): void {
     if (turn.done) {
       return;
     }
 
     turn.done = true;
-    turn.status = status;
+    turn.state = state;
+    turn.message = undefined;
     turn.error = error;
+    turn.stopReason = stopReason ?? null;
     turn.lastTouchedAt = Date.now();
+    if (turn.inactivityTimer) {
+      clearTimeout(turn.inactivityTimer);
+      turn.inactivityTimer = undefined;
+    }
+    if (turn.drainTimer) {
+      clearTimeout(turn.drainTimer);
+      turn.drainTimer = undefined;
+    }
+    this.clearPendingPermissionRequest(turn);
 
-    if (this.activeTurnIdsBySession.get(turn.sessionId) === turn.turnId) {
-      this.activeTurnIdsBySession.delete(turn.sessionId);
-      if (advanceQueue) {
-        this.launchNextPromptTurn(turn.sessionId);
-      }
+    if (releaseSessionBinding) {
+      this.releaseTurnSessionBinding(turn, advanceQueue);
     } else {
       this.dequeuePromptTurn(turn.sessionId, turn.turnId);
     }
 
     this.schedulePromptTurnCleanup(turn);
+    logger.info(
+      {
+        appId: turn.appId,
+        sessionId: turn.sessionId,
+        turnId: turn.turnId,
+        state,
+        stopReason: turn.stopReason,
+        durationMs: turn.startedAt ? Date.now() - turn.startedAt : undefined,
+        outputChars: turn.outputText.length,
+        ...(error ? { error: error.message } : {}),
+      },
+      'ACP session/prompt turn finished'
+    );
     this.notifyPromptTurnWaiters(turn);
   }
 
@@ -902,6 +1085,14 @@ export class AcpExecutor implements TaskCapableExecutor {
     if (turn.cleanupTimer) {
       clearTimeout(turn.cleanupTimer);
     }
+    if (turn.inactivityTimer) {
+      clearTimeout(turn.inactivityTimer);
+    }
+    if (turn.drainTimer) {
+      clearTimeout(turn.drainTimer);
+    }
+
+    this.clearPendingPermissionRequest(turn);
 
     if (this.activeTurnIdsBySession.get(turn.sessionId) === turn.turnId) {
       this.activeTurnIdsBySession.delete(turn.sessionId);
@@ -909,35 +1100,254 @@ export class AcpExecutor implements TaskCapableExecutor {
       this.dequeuePromptTurn(turn.sessionId, turn.turnId);
     }
 
+    this.unbindTurnMessageIds(turn);
     this.promptTurns.delete(turnId);
   }
 
-  private collectTurnContent(turn: PromptTurnState): AcpContentBlock[] {
-    return turn.content.map((block) => ({ ...block }));
+  private takePendingTurnContent(turn: PromptTurnState): AcpContentBlock[] {
+    const content = turn.pendingContent.map((block) => ({ ...block }));
+    turn.pendingContent = [];
+    return content;
   }
 
-  private resolveTurnIdForSessionPoll(sessionId: string): string {
+  private recordPromptTurnActivity(turn: PromptTurnState): void {
+    turn.lastTouchedAt = Date.now();
+    turn.lastUpdateAt = turn.lastTouchedAt;
+
+    if (turn.inactivityTimer) {
+      clearTimeout(turn.inactivityTimer);
+      turn.inactivityTimer = undefined;
+    }
+
+    if (turn.state === 'waiting_permission') {
+      return;
+    }
+
+    turn.inactivityTimer = setTimeout(() => {
+      const nextTurn = this.promptTurns.get(turn.turnId);
+      if (!nextTurn || nextTurn.done || nextTurn.state === 'waiting_permission') {
+        return;
+      }
+
+      const inactiveForMs = Date.now() - nextTurn.lastUpdateAt;
+      logger.warn(
+        {
+          sessionId: nextTurn.sessionId,
+          turnId: nextTurn.turnId,
+          inactiveForMs,
+          timeoutMs: ACP_TURN_INACTIVITY_TIMEOUT_MS,
+        },
+        'ACP turn timed out waiting for session/update activity'
+      );
+      void this.handlePromptTurnInactivityTimeout(nextTurn);
+    }, ACP_TURN_INACTIVITY_TIMEOUT_MS);
+  }
+
+  private async handlePromptTurnInactivityTimeout(turn: PromptTurnState): Promise<void> {
+    if (turn.done || turn.state === 'waiting_permission') {
+      return;
+    }
+
+    const error: GatewayTurnError = {
+      code: 'downstream_timeout',
+      message: `ACP turn timed out after ${ACP_TURN_INACTIVITY_TIMEOUT_MS}ms without any session/update activity.`,
+    };
+    turn.awaitingDownstreamResponse = true;
+
+    try {
+      await this.sendNotification(turn.appId, 'session/cancel', { sessionId: turn.sessionId });
+    } catch (cancelError) {
+      logger.warn(
+        { appId: turn.appId, sessionId: turn.sessionId, turnId: turn.turnId, err: cancelError },
+        'Failed to send ACP session/cancel after inactivity timeout'
+      );
+    }
+
+    this.finishPromptTurn(turn, 'failed', error, null, false, false);
+    this.schedulePromptTurnDrain(turn);
+  }
+
+  private schedulePromptTurnDrain(turn: PromptTurnState): void {
+    if (turn.drainTimer) {
+      clearTimeout(turn.drainTimer);
+    }
+
+    turn.drainTimer = setTimeout(() => {
+      const nextTurn = this.promptTurns.get(turn.turnId);
+      if (!nextTurn || !nextTurn.awaitingDownstreamResponse) {
+        return;
+      }
+
+      logger.warn(
+        { sessionId: nextTurn.sessionId, turnId: nextTurn.turnId, timeoutMs: ACP_SESSION_TIMEOUT_MS },
+        'ACP prompt turn drain window expired; releasing session binding locally'
+      );
+      nextTurn.awaitingDownstreamResponse = false;
+      this.releaseTurnSessionBinding(nextTurn, true);
+    }, ACP_SESSION_TIMEOUT_MS);
+  }
+
+  private handleSettledPromptResponseAfterLocalFinish(turn: PromptTurnState): void {
+    if (!turn.awaitingDownstreamResponse) {
+      return;
+    }
+
+    turn.awaitingDownstreamResponse = false;
+    if (turn.drainTimer) {
+      clearTimeout(turn.drainTimer);
+      turn.drainTimer = undefined;
+    }
+    this.releaseTurnSessionBinding(turn, true);
+  }
+
+  private releaseTurnSessionBinding(turn: PromptTurnState, advanceQueue: boolean): void {
+    if (this.activeTurnIdsBySession.get(turn.sessionId) === turn.turnId) {
+      this.activeTurnIdsBySession.delete(turn.sessionId);
+      if (advanceQueue) {
+        this.launchNextPromptTurn(turn.sessionId);
+      }
+      return;
+    }
+
+    this.dequeuePromptTurn(turn.sessionId, turn.turnId);
+  }
+
+  private resolvePromptTurnForPermission(sessionId: string): PromptTurnState | undefined {
     const activeTurnId = this.activeTurnIdsBySession.get(sessionId);
-    if (activeTurnId) {
-      return activeTurnId;
+    if (!activeTurnId) {
+      return undefined;
     }
 
-    const completedTurns = Array.from(this.promptTurns.values()).filter(
-      (turn) => turn.sessionId === sessionId
-    );
-    if (completedTurns.length === 1) {
-      return completedTurns[0].turnId;
-    }
-
-    throw new AaiError(
-      'INVALID_PARAMS',
-      `ACP session '${sessionId}' no longer maps cleanly to a single turn. Use turn/poll with the turnId returned by session/prompt.`
-    );
+    return this.promptTurns.get(activeTurnId);
   }
+
+  private resolvePromptTurnForUpdate(
+    sessionId: string,
+    updateMessageId?: string
+  ): PromptTurnState | undefined {
+    if (updateMessageId) {
+      const trackedTurnId = this.trackedTurnIdsBySessionAndMessage.get(
+        buildSessionMessageKey(sessionId, updateMessageId)
+      );
+      if (trackedTurnId) {
+        return this.promptTurns.get(trackedTurnId);
+      }
+    }
+
+    const activeTurnId = this.activeTurnIdsBySession.get(sessionId);
+    if (!activeTurnId) {
+      return undefined;
+    }
+
+    return this.promptTurns.get(activeTurnId);
+  }
+
+  private bindMessageIdToTurn(
+    sessionId: string,
+    messageId: string,
+    turn: PromptTurnState
+  ): void {
+    const key = buildSessionMessageKey(sessionId, messageId);
+    this.trackedTurnIdsBySessionAndMessage.set(key, turn.turnId);
+    turn.trackedMessageIds.add(messageId);
+  }
+
+  private unbindTurnMessageIds(turn: PromptTurnState): void {
+    for (const messageId of turn.trackedMessageIds) {
+      this.trackedTurnIdsBySessionAndMessage.delete(
+        buildSessionMessageKey(turn.sessionId, messageId)
+      );
+    }
+    turn.trackedMessageIds.clear();
+  }
+
+  private clearPendingPermissionRequest(turn: PromptTurnState, permissionId?: string): void {
+    const targetPermissionId = permissionId ?? turn.permissionRequest?.permissionId;
+    if (!targetPermissionId) {
+      turn.permissionRequest = undefined;
+      return;
+    }
+
+    this.pendingPermissionRequests.delete(targetPermissionId);
+    if (turn.permissionRequest?.permissionId === targetPermissionId) {
+      turn.permissionRequest = undefined;
+    }
+  }
+
+  private async cancelPendingPermissionRequest(turn: PromptTurnState): Promise<void> {
+    const permissionId = turn.permissionRequest?.permissionId;
+    if (!permissionId) {
+      return;
+    }
+
+    const pending = this.pendingPermissionRequests.get(permissionId);
+    if (!pending) {
+      turn.permissionRequest = undefined;
+      return;
+    }
+
+    await this.sendJsonRpcResult(pending.appId, pending.downstreamRequestId, {
+      outcome: { outcome: 'cancelled' },
+    });
+    this.clearPendingPermissionRequest(turn, permissionId);
+  }
+
+  private async sendNotification(
+    appId: string,
+    method: string,
+    params: Record<string, unknown>
+  ): Promise<void> {
+    const state = this.states.get(appId);
+    if (!state?.proc.stdin) {
+      throw new AaiError('SERVICE_UNAVAILABLE', `ACP agent '${appId}' is not running`);
+    }
+
+    const payload = JSON.stringify({
+      jsonrpc: '2.0',
+      method,
+      params,
+    });
+
+    logger.info(
+      {
+        appId,
+        method,
+        sessionId: typeof params.sessionId === 'string' ? params.sessionId : undefined,
+      },
+      'ACP notification sent'
+    );
+
+    state.proc.stdin.write(`${payload}\n`);
+  }
+
+  private async sendJsonRpcResult(
+    appId: string,
+    id: number | string,
+    result: Record<string, unknown>
+  ): Promise<void> {
+    const state = this.states.get(appId);
+    if (!state?.proc.stdin) {
+      throw new AaiError('SERVICE_UNAVAILABLE', `ACP agent '${appId}' is not running`);
+    }
+
+    const payload = JSON.stringify({
+      jsonrpc: '2.0',
+      id,
+      result,
+    });
+
+    logger.info({ appId, responseTo: id }, 'ACP response sent');
+    state.proc.stdin.write(`${payload}\n`);
+  }
+
 }
 
 function isJsonRpcNotification(message: JsonRpcMessage): message is JsonRpcNotification {
-  return 'method' in message;
+  return 'method' in message && !('id' in message);
+}
+
+function isJsonRpcRequest(message: JsonRpcMessage): message is JsonRpcRequest {
+  return 'method' in message && 'id' in message;
 }
 
 function extractSessionId(params: unknown): string | null {
@@ -977,6 +1387,20 @@ function extractUpdateContent(params: unknown): AcpContentBlock[] {
   ];
 
   return normalizeContentBlocks(candidates);
+}
+
+function extractUpdateMessageId(params: unknown): string | undefined {
+  if (!params || typeof params !== 'object') {
+    return undefined;
+  }
+
+  const update = (params as { update?: unknown }).update;
+  if (!update || typeof update !== 'object') {
+    return undefined;
+  }
+
+  const messageId = (update as { messageId?: unknown }).messageId;
+  return typeof messageId === 'string' && messageId.length > 0 ? messageId : undefined;
 }
 
 function extractTaskStatus(
@@ -1094,8 +1518,21 @@ function normalizePromptArgs(
       typeof args.messageId === 'string' && args.messageId.length > 0
         ? args.messageId
         : randomUUID(),
-    prompt: applyNonInteractivePromptGuidance(prompt),
+    prompt,
   };
+}
+
+function requireMessageId(params: Record<string, unknown>): string {
+  const messageId = params.messageId;
+  if (typeof messageId === 'string' && messageId.length > 0) {
+    return messageId;
+  }
+
+  throw new AaiError('INTERNAL_ERROR', 'ACP prompt turn is missing messageId');
+}
+
+function buildSessionMessageKey(sessionId: string, messageId: string): string {
+  return `${sessionId}::${messageId}`;
 }
 
 function assertPromptInput(args: Record<string, unknown>): void {
@@ -1108,7 +1545,7 @@ function assertPromptInput(args: Record<string, unknown>): void {
 function createMissingPromptError(): AaiError {
   return new AaiError(
     'INVALID_PARAMS',
-    'ACP session/prompt requires args.prompt (ACP content blocks array)'
+    'ACP turn/start requires args.prompt (ACP content blocks array)'
   );
 }
 
@@ -1133,30 +1570,55 @@ function requireTurnId(args: Record<string, unknown>): string {
   throw new AaiError('INVALID_PARAMS', 'ACP turn polling requires args.turnId');
 }
 
-function applyNonInteractivePromptGuidance(prompt: unknown[]): unknown[] {
-  const [first, ...rest] = prompt;
-
-  if (
-    first &&
-    typeof first === 'object' &&
-    (first as { type?: unknown }).type === 'text' &&
-    typeof (first as { text?: unknown }).text === 'string'
-  ) {
-    const firstText = (first as { text: string }).text;
-    if (firstText.startsWith(ACP_NON_INTERACTIVE_GUIDANCE)) {
-      return prompt;
-    }
-
-    return [
-      {
-        ...(first as Record<string, unknown>),
-        text: `${ACP_NON_INTERACTIVE_GUIDANCE}\n\n${firstText}`,
-      },
-      ...rest,
-    ];
+function requirePermissionId(args: Record<string, unknown>): string {
+  const permissionId = args.permissionId;
+  if (typeof permissionId === 'string' && permissionId.length > 0) {
+    return permissionId;
   }
 
-  return [{ type: 'text', text: ACP_NON_INTERACTIVE_GUIDANCE }, ...prompt];
+  throw new AaiError('INVALID_PARAMS', 'ACP turn/respondPermission requires args.permissionId');
+}
+
+function normalizePermissionDecision(
+  value: unknown,
+  pending: PendingPermissionRequest
+): { outcome: 'cancelled' } | { outcome: 'selected'; optionId: string } {
+  if (!value || typeof value !== 'object') {
+    throw new AaiError(
+      'INVALID_PARAMS',
+      'ACP turn/respondPermission requires args.decision with { type: "select" | "cancel" }.'
+    );
+  }
+
+  const decision = value as { type?: unknown; optionId?: unknown };
+  if (decision.type === 'cancel') {
+    return { outcome: 'cancelled' };
+  }
+
+  if (decision.type !== 'select') {
+    throw new AaiError(
+      'INVALID_PARAMS',
+      'ACP turn/respondPermission args.decision.type must be "select" or "cancel".'
+    );
+  }
+
+  const optionId = decision.optionId;
+  if (typeof optionId !== 'string' || optionId.length === 0) {
+    throw new AaiError(
+      'INVALID_PARAMS',
+      'ACP turn/respondPermission requires args.decision.optionId when decision.type is "select".'
+    );
+  }
+
+  const valid = pending.options.some((option) => option.id === optionId);
+  if (!valid) {
+    throw new AaiError(
+      'INVALID_PARAMS',
+      `Permission option '${optionId}' is not valid for permission '${pending.permissionId}'.`
+    );
+  }
+
+  return { outcome: 'selected', optionId };
 }
 
 function mergePromptText(
@@ -1239,13 +1701,31 @@ function extractResultContent(result: unknown): AcpContentBlock[] {
 }
 
 function normalizeContentBlocks(candidates: unknown[]): AcpContentBlock[] {
-  const blocks = candidates.flatMap((candidate) => collectContentBlocks(candidate));
+  const blocks = dedupeContentBlocks(
+    candidates.flatMap((candidate) => collectContentBlocks(candidate))
+  );
   if (blocks.length > 0) {
     return blocks;
   }
 
   const fragments = Array.from(new Set(candidates.flatMap((candidate) => collectTextFragments(candidate))));
   return fragments.map((text) => ({ type: 'text', text }));
+}
+
+function dedupeContentBlocks(blocks: AcpContentBlock[]): AcpContentBlock[] {
+  const seen = new Set<string>();
+  const deduped: AcpContentBlock[] = [];
+
+  for (const block of blocks) {
+    const serialized = JSON.stringify(block);
+    if (seen.has(serialized)) {
+      continue;
+    }
+    seen.add(serialized);
+    deduped.push(block);
+  }
+
+  return deduped;
 }
 
 function collectContentBlocks(value: unknown): AcpContentBlock[] {
@@ -1318,6 +1798,107 @@ function previewContentBlocks(blocks: AcpContentBlock[]): string | undefined {
     .join('');
 
   return texts.length > 0 ? truncateLogPreview(texts) : undefined;
+}
+
+function createPendingPermissionRequest(
+  message: JsonRpcRequest,
+  appId?: string
+): PendingPermissionRequest | null {
+  const sessionId = extractSessionId(message.params);
+  if (!sessionId || !appId) {
+    return null;
+  }
+
+  const params =
+    message.params && typeof message.params === 'object'
+      ? (message.params as Record<string, unknown>)
+      : null;
+  const toolCall =
+    params?.toolCall && typeof params.toolCall === 'object'
+      ? (params.toolCall as Record<string, unknown>)
+      : null;
+  const options = normalizePermissionOptions(params?.options);
+  if (options.length === 0) {
+    return null;
+  }
+
+  const title =
+    extractStringField(toolCall ?? {}, 'title') ??
+    extractStringField(params ?? {}, 'title') ??
+    'Permission request';
+  const description =
+    firstNonEmptyText(
+      toolCall ? collectTextFragments(toolCall.content ?? toolCall.rawInput ?? toolCall.rawOutput) : []
+    ) ??
+    extractStringField(params ?? {}, 'detail') ??
+    extractStringField(params ?? {}, 'message');
+
+  return {
+    appId,
+    turnId: '',
+    sessionId,
+    downstreamRequestId: message.id,
+    permissionId: randomUUID(),
+    title,
+    ...(description ? { description } : {}),
+    options,
+  };
+}
+
+function normalizePermissionOptions(value: unknown): GatewayPermissionOption[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') {
+      return [];
+    }
+
+    const option = entry as Record<string, unknown>;
+    const id = option.optionId;
+    const label = option.name;
+    if (typeof id !== 'string' || id.length === 0 || typeof label !== 'string' || label.length === 0) {
+      return [];
+    }
+
+    return [{ id, label }];
+  });
+}
+
+function firstNonEmptyText(texts: string[]): string | undefined {
+  return texts.find((text) => text.length > 0);
+}
+
+function toGatewayPermissionRequest(
+  pending: PendingPermissionRequest
+): GatewayPermissionRequest {
+  return {
+    permissionId: pending.permissionId,
+    title: pending.title,
+    ...(pending.description ? { description: pending.description } : {}),
+    options: pending.options.map((option) => ({ ...option })),
+  };
+}
+
+function extractStopReason(result: unknown): string | null {
+  if (!result || typeof result !== 'object') {
+    return null;
+  }
+
+  const raw = (result as { stopReason?: unknown; stop_reason?: unknown }).stopReason ??
+    (result as { stopReason?: unknown; stop_reason?: unknown }).stop_reason;
+  return typeof raw === 'string' && raw.length > 0 ? raw : null;
+}
+
+function mapStopReasonToGatewayTurnState(
+  stopReason: string | null
+): 'completed' | 'cancelled' {
+  if (!stopReason) {
+    return 'completed';
+  }
+
+  return stopReason === 'cancelled' ? 'cancelled' : 'completed';
 }
 
 function extractPromptCapabilities(

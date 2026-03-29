@@ -196,7 +196,7 @@ async function probeAgent(agent) {
           },
         ],
       },
-      60000
+      30000
     );
 
     const text = extractTextFromNotifications(probe.notifications, sessionId);

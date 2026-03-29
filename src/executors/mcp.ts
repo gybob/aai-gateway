@@ -4,6 +4,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 import { AaiError } from '../errors/errors.js';
+import { getDotenvPath } from '../utils/dotenv.js';
 import type {
   McpConfig,
   ExecutionResult,
@@ -12,6 +13,7 @@ import type { AppCapabilities, ToolSchema } from '../types/capabilities.js';
 import { logger } from '../utils/logger.js';
 import { AAI_GATEWAY_NAME, AAI_GATEWAY_VERSION } from '../version.js';
 import { validateArgs, formatValidationErrors } from '../utils/schema-validator.js';
+import { loadImportedMcpHeaders as loadImportedHeadersFromStorage, resolveImportedMcpRuntimeValues } from '../mcp/importer.js';
 
 import type { ExecutionObserver } from './events.js';
 import type { Executor } from './interface.js';
@@ -33,6 +35,11 @@ export interface McpConnectionTarget {
   headers?: Record<string, string>;
 }
 
+interface ResolvedMcpConnectionTarget extends McpConnectionTarget {
+  config: McpConfig;
+  headers?: Record<string, string>;
+}
+
 interface ClientState {
   client: Client;
   targetKey: string;
@@ -47,7 +54,7 @@ interface McpServerInfo {
   [key: string]: unknown;
 }
 
-const MCP_MAX_REQUEST_TIMEOUT_MS = 2_147_483_647;
+const MCP_DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 
 /**
  * MCP Executor implementation
@@ -68,8 +75,8 @@ export class McpExecutor implements Executor {
     this.secureStorage = secureStorage;
   }
 
-  async connect(appId: string, config: McpConfig): Promise<void> {
-    const targetKey = JSON.stringify(config);
+  async connect(appId: string, config: McpConfig, headers?: Record<string, string>): Promise<void> {
+    const targetKey = JSON.stringify({ config, headers: headers ?? {} });
     const existing = this.clients.get(appId);
     if (existing && existing.targetKey === targetKey) {
       return;
@@ -83,7 +90,7 @@ export class McpExecutor implements Executor {
       { name: AAI_GATEWAY_NAME, version: AAI_GATEWAY_VERSION },
       { capabilities: {} }
     );
-    const transport = this.createTransport(config);
+    const transport = this.createTransport(config, headers);
     const activityListeners = new Set<(message: unknown) => void>();
     transport.onmessage = (message) => {
       for (const listener of Array.from(activityListeners)) {
@@ -93,7 +100,7 @@ export class McpExecutor implements Executor {
 
     try {
       await client.connect(transport);
-      this.clients.set(appId, { client, targetKey, config, activityListeners });
+      this.clients.set(appId, { client, targetKey, config, headers, activityListeners });
       logger.info({ appId, config: summarizeMcpConfig(config) }, 'MCP connection established');
     } catch (err) {
       logger.error({ appId, config: summarizeMcpConfig(config), err }, 'MCP connection failed');
@@ -120,10 +127,12 @@ export class McpExecutor implements Executor {
 
   /**
    * Load app-level capabilities (tool list without parameter definitions)
-   * This guides agents to use schema endpoint for parameter details
+   * Returns only tool summaries for guide generation
    */
   async loadAppCapabilities(appId: string, config: McpConfig): Promise<AppCapabilities> {
-    const headers = await loadImportedMcpHeaders(this.secureStorage, appId);
+    const headers = this.secureStorage
+      ? await loadImportedHeadersFromStorage(this.secureStorage, appId)
+      : undefined;
     const result = await this.listTools({ appId, config, headers });
 
     // Cache the full tools data (含 inputSchema)
@@ -184,7 +193,6 @@ export class McpExecutor implements Executor {
           success: false,
           error: errorMessage,
           schema: schema.inputSchema,
-          suggestion: `请参考 schema 重试:\n${JSON.stringify(schema.inputSchema, null, 2)}`,
         };
       }
     }
@@ -257,6 +265,7 @@ export class McpExecutor implements Executor {
       state.activityListeners.add(activityListener);
 
       try {
+        const timeoutMs = getMcpRequestTimeoutMs(target.config);
         const result = (await client.callTool(
           {
             name: toolName,
@@ -264,7 +273,7 @@ export class McpExecutor implements Executor {
           },
           undefined,
           {
-            timeout: MCP_MAX_REQUEST_TIMEOUT_MS,
+            timeout: timeoutMs,
             onprogress: (progress) => {
               void observer?.onProgress?.({
                 progress: progress.progress,
@@ -327,7 +336,7 @@ export class McpExecutor implements Executor {
     return this.disconnect(appId);
   }
 
-  private createTransport(config: McpConfig) {
+  private createTransport(config: McpConfig, headers?: Record<string, string>) {
     switch (config.transport) {
       case 'stdio':
         return new StdioClientTransport({
@@ -338,20 +347,62 @@ export class McpExecutor implements Executor {
           stderr: 'pipe',
         });
       case 'streamable-http':
-        return new StreamableHTTPClientTransport(new URL(config.url));
+        return new StreamableHTTPClientTransport(new URL(config.url), {
+          ...(headers ? { requestInit: { headers } } : {}),
+        });
       case 'sse':
-        return new SSEClientTransport(new URL(config.url));
+        return new SSEClientTransport(new URL(config.url), {
+          ...(headers ? { requestInit: { headers } } : {}),
+        });
     }
   }
 
   private async connectLegacy(target: McpConnectionTarget): Promise<Client> {
-    await this.connect(target.appId, target.config);
+    const resolvedTarget = await this.resolveTarget(target);
+    await this.connect(resolvedTarget.appId, resolvedTarget.config, resolvedTarget.headers);
     const state = this.clients.get(target.appId);
     if (!state) {
       throw new AaiError('SERVICE_UNAVAILABLE', `MCP app '${target.appId}' is not connected`);
     }
     return state.client;
   }
+
+  private async resolveTarget(target: McpConnectionTarget): Promise<ResolvedMcpConnectionTarget> {
+    const storedHeaders = this.secureStorage
+      ? await loadImportedHeadersFromStorage(this.secureStorage, target.appId)
+      : undefined;
+    const rawHeaders = target.headers ?? storedHeaders;
+    const { resolvedConfig, resolvedHeaders, missingVars } = await resolveImportedMcpRuntimeValues(
+      target.config,
+      rawHeaders
+    );
+
+    if (missingVars.length > 0) {
+      const uniqueMissing = [...new Set(missingVars)];
+      throw new AaiError(
+        'INVALID_REQUEST',
+        `Missing environment variables for MCP app '${target.appId}': ${uniqueMissing.map((name) => `$\{${name}}`).join(', ')}`,
+        {
+          code: 'MISSING_ENV_VARS',
+          missingVars: uniqueMissing,
+          envFile: getDotenvPath(),
+          setupExample: uniqueMissing.map((name) => `${name}=your_value_here`),
+          userAction:
+            `Do not read ${getDotenvPath()}. Help the user open it and ask them to paste the values themselves.`,
+        }
+      );
+    }
+
+    return {
+      appId: target.appId,
+      config: resolvedConfig,
+      ...(resolvedHeaders ? { headers: resolvedHeaders } : {}),
+    };
+  }
+}
+
+function getMcpRequestTimeoutMs(config: McpConfig): number {
+  return config.timeout ?? MCP_DEFAULT_REQUEST_TIMEOUT_MS;
 }
 
 function extractNotificationMessage(message: unknown): string | null {
@@ -401,15 +452,6 @@ function summarizeMcpConfig(config: McpConfig): Record<string, unknown> {
         ...(config.timeout ? { timeout: config.timeout } : {}),
       };
   }
-}
-
-// Helper to load headers for imported MCP apps
-async function loadImportedMcpHeaders(
-  _secureStorage: SecureStorage | undefined,
-  _appId: string
-): Promise<Record<string, string> | undefined> {
-  // TODO: Implement header loading from secure storage if needed
-  return undefined;
 }
 
 // Placeholder for SecureStorage type

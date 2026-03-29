@@ -1,93 +1,54 @@
 import type { AaiJson } from '../types/aai-json.js';
 import type { AppCapabilities } from '../types/capabilities.js';
-import { getLocalizedName, isSkillAccess, isSkillPathConfig } from '../types/aai-json.js';
+import { getLocalizedName, isSkillAccess, isSkillPathConfig, type InternationalizedName } from '../types/aai-json.js';
 import { getSystemLocale } from '../utils/locale.js';
 
 // ============================================================================
 // Templates
 // ============================================================================
 
-const TEMPLATE_APP_LIST_MCP = `{{LOCALIZED_NAME}}. Guide tool only. You must call this tool first before any aai:exec call. Do not guess tool names or arguments. After reading the guide, you must call aai:schema for the specific MCP tool you intend to use, and only then call aai:exec with arguments that match that exact schema. Keywords: {{KEYWORDS}}. {{SUMMARY}}`;
-
-const TEMPLATE_APP_LIST_SKILL = `{{LOCALIZED_NAME}}. Guide tool only. You must call this tool first before any skill:import or mcp:import. Do not guess install sources. Keywords: {{KEYWORDS}}. {{SUMMARY}}`;
-
-const TEMPLATE_APP_LIST_CLI = `{{LOCALIZED_NAME}}. Guide tool only. You must call this tool first before any aai:exec call. Do not guess tool names or arguments. After reading the guide, use aai:exec with the exact CLI tool and arguments described there. Keywords: {{KEYWORDS}}. {{SUMMARY}}`;
-
-const TEMPLATE_APP_LIST_ACP = `Get {{LOCALIZED_NAME}} operation guide`;
+const TEMPLATE_GUIDE_TOOL_SUMMARY = `{{LOCALIZED_NAME}}. {{SUMMARY}} Guide tool, no arguments.`;
 
 const TEMPLATE_APP_GUIDE = `# {{LOCALIZED_NAME}}
 
 - App ID: {{LOCAL_ID}}
-- Protocol: {{PROTOCOL}}
-- Keywords: {{KEYWORDS}}
 - Summary: {{SUMMARY}}
 
-## {{TITLE}}
+## Tools
 
 {{TOOLS}}
 
-## Schema Lookup
+{{EXAMPLES_SECTION}}{{NOTES_SECTION}}`;
 
-Always call \`aai:schema\` with \`{ app: "{{LOCAL_ID}}", tool: "<tool-name>" }\` before \`aai:exec\`. Do not guess tool arguments.
-
-## Execution
-
-{{EXECUTION}}`;
-
-const TEMPLATE_TOOL_ITEM = `### {{NAME}}
-
-{{DESCRIPTION}}
-`;
-
-const TEMPLATE_EXEC_MCP = `Use \`aai:exec\` with the app ID above.
-Pass \`tool: "<mcp-tool-name>"\` and \`args\` matching the schema from \`aai:schema\`.`;
-
-const TEMPLATE_EXEC_ACP = `Use \`aai:exec\` with the app ID above.
-Pass \`tool: "<acp-tool-name>"\` and \`args\` matching the schema from \`aai:schema\`.`;
-
-const TEMPLATE_EXEC_SKILL = `This AAI Gateway skill is the same as a native skill. The only difference is where the skill files live.
-
-{{SKILL_DIR}}
-
-If SKILL.md only provides instructions, follow those instructions directly and do not call \`aai:exec\`.
-If SKILL.md tells you to read a script or file, read it from the AAI Gateway managed skill directory above.
-If SKILL.md tells you to use an AAI Gateway wrapped tool, first call that tool guide (\`app:<id>\`), then use \`aai:exec\` with the exact tool name and arguments from that guide.
-Only use \`aai:exec\` for this skill when SKILL.md explicitly requires it.`;
-
-const TEMPLATE_EXEC_CLI = `Use \`aai:exec\` with the app ID above.
-Use \`tool: "run"\` or a subcommand name. Pass \`args.argv\` as a string array and \`args.stdin\` as optional text.`;
+const TEMPLATE_TOOL_ITEM = `- {{NAME}}: {{DESCRIPTION}}`;
 
 // ============================================================================
 // Public Functions
 // ============================================================================
 
-export function generateAppListDescription(_appId: string, descriptor: AaiJson): string {
-  const locale = getSystemLocale();
-  const localizedName = getLocalizedName(descriptor.app.name, locale);
-  const keywords = descriptor.exposure.keywords.join(', ');
-
+export function generateGuideToolSummary(_appId: string, descriptor: AaiJson): string {
+  const localizedName = getEnglishName(descriptor.app.name);
   const params = {
     LOCALIZED_NAME: localizedName,
-    KEYWORDS: keywords,
-    SUMMARY: descriptor.exposure.summary,
+    SUMMARY: normalizeGuideToolSummary(descriptor.exposure.summary),
   };
 
   switch (descriptor.access.protocol) {
     case 'mcp':
-      return renderTemplate(TEMPLATE_APP_LIST_MCP, params);
+      return renderTemplate(TEMPLATE_GUIDE_TOOL_SUMMARY, params);
     case 'skill':
-      return renderTemplate(TEMPLATE_APP_LIST_SKILL, params);
+      return renderTemplate(TEMPLATE_GUIDE_TOOL_SUMMARY, params);
     case 'cli':
-      return renderTemplate(TEMPLATE_APP_LIST_CLI, params);
+      return renderTemplate(TEMPLATE_GUIDE_TOOL_SUMMARY, params);
     case 'acp-agent':
-      return renderTemplate(TEMPLATE_APP_LIST_ACP, params);
+      return renderTemplate(TEMPLATE_GUIDE_TOOL_SUMMARY, params);
   }
 }
 
 /**
  * Generate app guide using the new AppCapabilities interface
  */
-export function generateAppGuide(
+export function generateAppGuideMarkdown(
   appId: string,
   descriptor: AaiJson,
   capabilities: AppCapabilities
@@ -95,20 +56,19 @@ export function generateAppGuide(
   const protocol = descriptor.access.protocol;
   const locale = getSystemLocale();
   const localizedName = getLocalizedName(descriptor.app.name, locale);
-  const keywords = descriptor.exposure.keywords.join(', ');
-
   const toolsSection = buildToolsSection(capabilities);
-  const executionSection = buildExecutionSection(protocol, descriptor);
+  const examplesSection = buildExamplesSection(protocol, capabilities);
+  const notesSection = buildNotesSection(protocol, descriptor);
 
   return renderTemplate(TEMPLATE_APP_GUIDE, {
     LOCALIZED_NAME: localizedName,
     LOCAL_ID: appId,
-    PROTOCOL: protocol,
-    KEYWORDS: keywords,
     SUMMARY: descriptor.exposure.summary,
-    TITLE: capabilities.title,
     TOOLS: toolsSection,
-    EXECUTION: executionSection,
+    EXAMPLES_SECTION: examplesSection
+      ? `\n## Examples\n\nExecute via \`aai:exec\` with \`app: "${appId}"\`:\n\n${examplesSection}\n`
+      : '',
+    NOTES_SECTION: notesSection ? `\n## Notes\n\n${notesSection}\n` : '',
   });
 }
 
@@ -122,34 +82,59 @@ function buildToolsSection(capabilities: AppCapabilities): string {
   }
 
   return capabilities.tools
-    .map(
-      (tool) =>
-        renderTemplate(TEMPLATE_TOOL_ITEM, {
-          NAME: tool.name,
-          DESCRIPTION: tool.description?.trim() || 'No description provided.',
-        }) + '\n'
-    )
-    .join('');
+    .map((tool) => {
+      const desc = tool.description?.trim();
+      const shortDesc = desc ? truncateDescription(desc) : 'No description provided.';
+      return renderTemplate(TEMPLATE_TOOL_ITEM, {
+        NAME: tool.name,
+        DESCRIPTION: shortDesc,
+      });
+    })
+    .join('\n');
 }
 
-function buildExecutionSection(protocol: string, descriptor: AaiJson): string {
+function truncateDescription(desc: string): string {
+  const firstSentence = desc.split(/(?<=[.!?])\s/)[0];
+  return firstSentence.length <= 120 ? firstSentence : `${firstSentence.slice(0, 117)}...`;
+}
+
+function buildExamplesSection(protocol: string, capabilities: AppCapabilities): string {
   switch (protocol) {
     case 'mcp':
-      return TEMPLATE_EXEC_MCP;
+      return '';
 
     case 'acp-agent':
-      return TEMPLATE_EXEC_ACP;
+      return buildAcpExamples(capabilities);
 
-    case 'skill': {
-      const skillDir = buildSkillDirSection(descriptor);
-      return renderTemplate(TEMPLATE_EXEC_SKILL, { SKILL_DIR: skillDir });
-    }
+    case 'skill':
+      return buildSkillExamples(capabilities);
 
     case 'cli':
-      return TEMPLATE_EXEC_CLI;
+      return buildCliExamples(capabilities);
 
     default:
-      return 'No specific execution instructions available.';
+      return '';
+  }
+}
+
+function buildNotesSection(protocol: string, descriptor: AaiJson): string {
+  switch (protocol) {
+    case 'mcp':
+      return [
+        'Execute via `aai:exec` with the app id above.',
+        'If a call fails validation, the error response includes the correct schema.',
+      ].join('\n');
+    case 'acp-agent':
+      return 'session/new returns promptCapabilities. turn/start.prompt must match those capabilities.';
+    case 'skill':
+      return [
+        'Execute via `aai:exec` with the app id above.',
+        buildSkillDirSection(descriptor),
+      ].join('\n');
+    case 'cli':
+      return 'Pass args.argv as a string array and args.stdin as optional text.';
+    default:
+      return '';
   }
 }
 
@@ -158,6 +143,100 @@ function buildSkillDirSection(descriptor: AaiJson): string {
     return `AAI Gateway managed skill directory: \`${descriptor.access.config.path}\`.`;
   }
   return 'AAI Gateway managed skill directory: use the local skill path configured for this imported skill.';
+}
+
+function buildAcpExamples(capabilities: AppCapabilities): string {
+  return capabilities.tools
+    .map((tool) => {
+      const example = buildAcpExample(tool.name);
+      if (!example) {
+        return '';
+      }
+      return renderExampleJson(example);
+    })
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+function buildSkillExamples(capabilities: AppCapabilities): string {
+  if (!capabilities.tools.some((tool) => tool.name === 'read')) {
+    return '';
+  }
+
+  return renderExampleJson({
+    tool: 'read',
+    args: {},
+  });
+}
+
+function buildCliExamples(capabilities: AppCapabilities): string {
+  const primaryTool = capabilities.tools.find((tool) => tool.name === 'run')?.name ?? 'run';
+  return renderExampleJson({
+    tool: primaryTool,
+    args: {
+      argv: ['--help'],
+    },
+  });
+}
+
+function buildAcpExample(toolName: string): Record<string, unknown> | null {
+  switch (toolName) {
+    case 'session/new':
+      return {
+        tool: 'session/new',
+        args: {
+          cwd: '/absolute/path/to/project',
+        },
+      };
+    case 'turn/start':
+      return {
+        tool: 'turn/start',
+        args: {
+          sessionId: '<sessionId>',
+          prompt: [{ type: 'text', text: 'Summarize the current project.' }],
+        },
+      };
+    case 'turn/poll':
+      return {
+        tool: 'turn/poll',
+        args: {
+          turnId: '<turnId>',
+        },
+      };
+    case 'turn/respondPermission':
+      return {
+        tool: 'turn/respondPermission',
+        args: {
+          turnId: '<turnId>',
+          permissionId: '<permissionId>',
+          decision: {
+            type: 'select',
+            optionId: '<optionId>',
+          },
+        },
+      };
+    case 'turn/cancel':
+      return {
+        tool: 'turn/cancel',
+        args: {
+          turnId: '<turnId>',
+        },
+      };
+    default:
+      return null;
+  }
+}
+
+function renderExampleJson(payload: Record<string, unknown>): string {
+  return ['```json', JSON.stringify(payload, null, 2), '```'].join('\n');
+}
+
+function normalizeGuideToolSummary(summary: string): string {
+  return summary.trim().replace(/\s+/g, ' ');
+}
+
+function getEnglishName(name: InternationalizedName): string {
+  return name.en ?? name['en-US'] ?? name.default;
 }
 
 // ============================================================================

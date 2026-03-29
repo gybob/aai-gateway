@@ -27,6 +27,6 @@ export const descriptor: AaiJson = {
   },
   exposure: {
     keywords: ['code', 'anthropic', 'agent'],
-    summary: '通过 ACP adapter 接入的 Claude Code agent。',
+    summary: 'Claude Code agent connected through the ACP adapter.',
   },
 };
