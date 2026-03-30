@@ -6,7 +6,7 @@ import { createCliCallerContextFromEnv } from './utils/caller-context.js';
 import { logger } from './utils/logger.js';
 import { AAI_GATEWAY_VERSION } from './version.js';
 
-type CommandName = 'serve' | 'scan' | 'list' | 'guide' | 'schema' | 'exec';
+type CommandName = 'serve' | 'scan' | 'list' | 'guide' | 'exec';
 
 interface ParsedOptions {
   command: CommandName;
@@ -67,7 +67,6 @@ function normalizeCommand(value: string | undefined): CommandName | undefined {
   switch (value) {
     case 'list':
     case 'guide':
-    case 'schema':
     case 'exec':
       return value;
     default:
@@ -83,7 +82,6 @@ Usage:
   aai-gateway [options]
   aai-gateway list [--json]
   aai-gateway guide --app <app-id>
-  aai-gateway schema --tool <tool> [--app <app-id>] [--json]
   aai-gateway exec --tool <tool> [--app <app-id>] [--args-json <json>] [--json]
 
 Options:
@@ -142,17 +140,6 @@ async function runGuide(options: ParsedOptions): Promise<void> {
     server.getAppGuideForCaller(stripAppPrefix(options.app!), caller)
   );
   console.log(guide);
-}
-
-async function runSchema(options: ParsedOptions): Promise<void> {
-  if (!options.tool) {
-    throw new Error('schema requires --tool <tool>');
-  }
-  const caller = createCliCallerContextFromEnv();
-  const result = await withServer(options.dev, (server) =>
-    server.getSchemaForCaller(options.app ? stripAppPrefix(options.app) : undefined, options.tool!, caller)
-  );
-  printToolResult(result, options.json);
 }
 
 async function runExec(options: ParsedOptions): Promise<void> {
@@ -235,9 +222,6 @@ async function main(): Promise<void> {
       return;
     case 'guide':
       await runGuide(options);
-      return;
-    case 'schema':
-      await runSchema(options);
       return;
     case 'exec':
       await runExec(options);

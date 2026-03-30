@@ -1,5 +1,5 @@
 import type { AaiJson } from '../types/aai-json.js';
-import type { AppCapabilities } from '../types/capabilities.js';
+import type { AppCapabilities, ToolSchema } from '../types/capabilities.js';
 import { getLocalizedName, isSkillAccess, isSkillPathConfig, type InternationalizedName } from '../types/aai-json.js';
 import { getSystemLocale } from '../utils/locale.js';
 
@@ -20,7 +20,11 @@ const TEMPLATE_APP_GUIDE = `# {{LOCALIZED_NAME}}
 
 {{EXAMPLES_SECTION}}{{NOTES_SECTION}}`;
 
-const TEMPLATE_TOOL_ITEM = `- {{NAME}}: {{DESCRIPTION}}`;
+const TEMPLATE_TOOL_ITEM = `### {{NAME}}
+
+{{DESCRIPTION}}
+
+{{SCHEMA}}`;
 
 // ============================================================================
 // Public Functions
@@ -88,9 +92,18 @@ function buildToolsSection(capabilities: AppCapabilities): string {
       return renderTemplate(TEMPLATE_TOOL_ITEM, {
         NAME: tool.name,
         DESCRIPTION: shortDesc,
+        SCHEMA: formatToolSchema(tool),
       });
     })
     .join('\n');
+}
+
+function formatToolSchema(tool: ToolSchema): string {
+  const schema: Record<string, unknown> = { inputSchema: tool.inputSchema };
+  if (tool.outputSchema) {
+    schema.outputSchema = tool.outputSchema;
+  }
+  return ['```json', JSON.stringify(schema, null, 2), '```'].join('\n');
 }
 
 function truncateDescription(desc: string): string {
@@ -120,10 +133,7 @@ function buildExamplesSection(protocol: string, capabilities: AppCapabilities): 
 function buildNotesSection(protocol: string, descriptor: AaiJson): string {
   switch (protocol) {
     case 'mcp':
-      return [
-        'Execute via `aai:exec` with the app id above.',
-        'If a call fails validation, the error response includes the correct schema.',
-      ].join('\n');
+      return 'Execute via `aai:exec` with the app id above.';
     case 'acp-agent':
       return 'session/new returns promptCapabilities. turn/start.prompt must match those capabilities.';
     case 'skill':

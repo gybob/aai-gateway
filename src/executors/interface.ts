@@ -1,5 +1,5 @@
 import type { ExecutionResult } from '../types/index.js';
-import type { AppCapabilities, ToolSchema } from '../types/capabilities.js';
+import type { AppCapabilities } from '../types/capabilities.js';
 
 /**
  * Unified Executor Interface
@@ -26,23 +26,12 @@ export interface Executor {
   disconnect(appId: string): Promise<void>;
 
   /**
-   * Load app-level capabilities (tool list without parameter definitions)
-   * This guides agents to use schema endpoint for parameter details
+   * Load app-level capabilities (tool list with full schemas)
    * @param appId - Unique identifier for this app
    * @param config - Executor-specific configuration
-   * @returns App capabilities with tool summaries
+   * @returns App capabilities with tool schemas
    */
   loadAppCapabilities(appId: string, config: unknown): Promise<AppCapabilities>;
-
-  /**
-   * Load schema for a specific tool (includes parameter definitions)
-   * Used for validation and schema endpoint
-   * @param appId - Unique identifier for this app
-   * @param config - Executor-specific configuration
-   * @param toolName - Name of the tool
-   * @returns Tool schema or null if not found
-   */
-  loadToolSchema(appId: string, config: unknown, toolName: string): Promise<ToolSchema | null>;
 
   /**
    * Execute an operation on the target system

@@ -173,15 +173,6 @@ export class AaiGatewayServer {
     return result.content[0]?.text ?? '';
   }
 
-  async getSchemaForCaller(
-    appIdOrUrl: string | undefined,
-    toolName: string,
-    caller: CallerContext
-  ): Promise<CallToolResult> {
-    this.setCallerContext(caller);
-    return this.handleSchema(appIdOrUrl, toolName, caller);
-  }
-
   async executeForCaller(
     appIdOrUrl: string | undefined,
     toolName: string,
@@ -375,14 +366,6 @@ export class AaiGatewayServer {
         );
       }
 
-      if (name === 'aai:schema') {
-        const payload = args as { app?: string; tool?: string } | undefined;
-        if (!payload?.tool) {
-          throw new AaiError('INVALID_REQUEST', "aai:schema requires 'tool'");
-        }
-        return this.handleSchema(payload.app, payload.tool, this.requireCallerContext('mcp'));
-      }
-
       if (name === 'mcp:import' || name === 'skill:import') {
         return this.handleGatewayToolGuide(name);
       }
@@ -430,53 +413,6 @@ export class AaiGatewayServer {
           text: generateAppGuideMarkdown(appId, descriptor, capabilities),
         },
       ],
-    };
-  }
-
-  private async handleSchema(
-    appIdOrUrl: string | undefined,
-    toolName: string,
-    caller: CallerContext
-  ): Promise<CallToolResult> {
-    const gatewayTool = getGatewayToolDefinition(toolName);
-    if (gatewayTool) {
-      const schema = buildSchemaResponseDocument(gatewayTool);
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(schema, null, 2),
-          },
-        ],
-        structuredContent: schema,
-      };
-    }
-
-    if (!appIdOrUrl) {
-      throw new AaiError(
-        'INVALID_REQUEST',
-        "aai:schema requires 'app' for app tools. Gateway tools only need 'tool'."
-      );
-    }
-
-    const resolved = await this.resolveApp(appIdOrUrl, caller);
-    const { appId, descriptor } = resolved;
-    const access = descriptor.access;
-    const executor = this.getExecutor(access.protocol);
-    const schema = await executor.loadToolSchema(appId, access.config as any, toolName);
-
-    if (!schema) {
-      throw new AaiError('UNKNOWN_TOOL', `Tool '${toolName}' not found in app '${appIdOrUrl}'`);
-    }
-
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(schema, null, 2),
-        },
-      ],
-      structuredContent: schema as unknown as Record<string, unknown>,
     };
   }
 
@@ -604,9 +540,10 @@ export class AaiGatewayServer {
 
       const capabilities = {
         title: 'MCP Tools',
-        tools: result.tools.map((t: { name: string; description?: string }) => ({
+        tools: result.tools.map((t) => ({
           name: t.name,
           description: t.description ?? '',
+          inputSchema: t.inputSchema ?? { type: 'object' as const, properties: {} },
         })),
       };
 
@@ -730,7 +667,7 @@ export class AaiGatewayServer {
       } catch {
         capabilities = {
           title: 'Skill',
-          tools: [{ name: 'read', description: 'Read the skill documentation' }],
+          tools: [{ name: 'read', description: 'Read the skill documentation', inputSchema: { type: 'object' as const, properties: {} } }],
         };
       }
 
@@ -1843,7 +1780,7 @@ export function buildGatewayToolDefinitions(): GatewayToolDefinition[] {
     {
       name: 'aai:exec',
       description:
-        'Execute a tool. Only call this after reading the guide returned by the corresponding guide tool (e.g. app:*, mcp:import).',
+        'Execute a tool. Read the guide first (e.g. app:*, mcp:import) — it contains the full schema.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -2076,17 +2013,6 @@ function getGatewayToolDefinition(toolName: string): GatewayToolDefinition | und
   return buildGatewayToolDefinitions().find((tool) => tool.name === toolName);
 }
 
-function buildSchemaResponseDocument(tool: {
-  name: string;
-  description?: string;
-  inputSchema: Record<string, unknown>;
-}): Record<string, unknown> {
-  return {
-    name: tool.name,
-    ...(tool.description ? { description: tool.description } : {}),
-    inputSchema: tool.inputSchema,
-  };
-}
 
 function isGatewayExecutionTool(toolName: string): boolean {
   return (
@@ -2107,10 +2033,18 @@ function generateGatewayToolGuide(tool: {
 }): string {
   const examples = extractGuideExamples(tool.inputSchema, tool.name);
   const notes = getGatewayToolGuideNotes(tool.name);
+  // Strip examples from schema display (they are shown separately)
+  const { examples: _ex, ...schemaForDisplay } = tool.inputSchema;
   return [
     `# ${tool.name}`,
     '',
     tool.description,
+    '',
+    '## Schema',
+    '',
+    '```json',
+    JSON.stringify({ inputSchema: schemaForDisplay }, null, 2),
+    '```',
     ...(examples.length > 0
       ? [
           '',

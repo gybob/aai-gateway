@@ -9,7 +9,7 @@ import type {
   SkillExecutorConfig,
   ExecutionResult,
 } from '../types/index.js';
-import type { AppCapabilities, ToolSchema } from '../types/capabilities.js';
+import type { AppCapabilities } from '../types/capabilities.js';
 
 import type { Executor } from './interface.js';
 
@@ -43,22 +43,10 @@ export class SkillExecutor implements Executor {
         {
           name: 'read',
           description: 'Read the skill documentation (SKILL.md)',
+          inputSchema: { type: 'object' as const, properties: {} },
         },
       ],
     };
-  }
-
-  /**
-   * Load schema for a specific skill tool
-   * Skills don't have structured schemas, return null
-   */
-  async loadToolSchema(
-    _appId: string,
-    _config: SkillConfig & SkillExecutorConfig,
-    _toolName: string
-  ): Promise<ToolSchema | null> {
-    // Skills don't have structured schemas
-    return null;
   }
 
 

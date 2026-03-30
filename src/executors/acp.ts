@@ -8,7 +8,7 @@ import type {
   DetailedCapability,
   ExecutionResult,
 } from '../types/index.js';
-import type { AppCapabilities, ToolSchema } from '../types/capabilities.js';
+import type { AppCapabilities } from '../types/capabilities.js';
 import { logger } from '../utils/logger.js';
 import { AAI_GATEWAY_NAME, AAI_GATEWAY_VERSION } from '../version.js';
 import { ACP_TOOL_SCHEMAS } from './acp-tool-schemas.js';
@@ -116,11 +116,11 @@ interface ProcessState {
 const ACP_INITIALIZE_TIMEOUT_MS = 30000;
 const ACP_SESSION_TIMEOUT_MS = 30000;
 const ACP_POLL_WAIT_MS = 30000;
-const ACP_TURN_INACTIVITY_TIMEOUT_MS = 3 * 60_000;
-const ACP_TURN_TTL_MS = 5 * 60_000;
+const ACP_TURN_INACTIVITY_TIMEOUT_MS = 10 * 60_000;
+const ACP_TURN_TTL_MS = 15 * 60_000;
 const ACP_MAX_OUTPUT_CHARS = 200_000;
 
-function toToolSchemaReference(schema: ToolSchema): Record<string, unknown> {
+function toToolSchemaReference(schema: { name: string; inputSchema: Record<string, unknown> }): Record<string, unknown> {
   return {
     name: schema.name,
     inputSchema: schema.inputSchema,
@@ -179,7 +179,7 @@ export class AcpExecutor implements TaskCapableExecutor {
 
 
   /**
-   * Load app-level capabilities (tool list without parameter definitions)
+   * Load app-level capabilities with full tool schemas
    * ACP tools are hardcoded
    */
   async loadAppCapabilities(
@@ -189,29 +189,11 @@ export class AcpExecutor implements TaskCapableExecutor {
     const tools = ACP_TOOL_SCHEMAS.map((schema) => ({
       name: schema.name,
       description: schema.description ?? '',
+      inputSchema: schema.inputSchema ?? { type: 'object' as const, properties: {} },
+      outputSchema: schema.outputSchema,
     }));
 
     return { title: 'ACP Agent', tools };
-  }
-
-  /**
-   * Load schema for a specific tool
-   * Returns null if tool not found
-   */
-  async loadToolSchema(
-    _appId: string,
-    _config: AcpAgentConfig & AcpExecutorConfig,
-    toolName: string
-  ): Promise<ToolSchema | null> {
-    const schema = ACP_TOOL_SCHEMAS.find((s) => s.name === toolName);
-    if (!schema) return null;
-
-    return {
-      name: schema.name,
-      description: schema.description,
-      inputSchema: schema.inputSchema ?? { type: 'object', properties: {} },
-      outputSchema: schema.outputSchema,
-    };
   }
 
   async execute(
@@ -240,16 +222,17 @@ export class AcpExecutor implements TaskCapableExecutor {
     args: Record<string, unknown>
   ): Promise<ExecutionResult> {
     try {
-      // Validate arguments against schema if available
-      const schema = await this.loadToolSchema(appId, config, operation);
+      // Validate arguments against hardcoded ACP schema
+      const schema = ACP_TOOL_SCHEMAS.find((s) => s.name === operation);
       if (schema) {
-        const result = validateArgs(args, schema.inputSchema);
+        const inputSchema = schema.inputSchema ?? { type: 'object', properties: {} };
+        const result = validateArgs(args, inputSchema);
         if (!result.valid) {
           const errorMessage = `参数校验失败 for '${operation}'\n${formatValidationErrors(result)}`;
           return {
             success: false,
             error: errorMessage,
-            schema: toToolSchemaReference(schema),
+            schema: toToolSchemaReference({ name: schema.name, inputSchema }),
           };
         }
       }

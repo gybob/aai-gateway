@@ -10,18 +10,18 @@ import { buildGatewayToolDefinitions } from './mcp/server.js';
 import { importMcpServer } from './mcp/importer.js';
 
 describe('ACP guide metadata', () => {
-  it('includes ACP tool descriptions in the generated app guide', async () => {
+  it('includes ACP tool descriptions and schemas in the generated app guide', async () => {
     const executor = new AcpExecutor();
     const capabilities = await executor.loadAppCapabilities(appId, descriptor.access.config);
     const guide = generateAppGuideMarkdown(appId, descriptor, capabilities);
 
     expect(guide).not.toContain('No description provided.');
-    expect(guide).toContain('- session/new:');
-    expect(guide).toContain('- turn/start:');
-    expect(guide).toContain('- turn/respondPermission:');
+    expect(guide).toContain('### session/new');
+    expect(guide).toContain('### turn/start');
+    expect(guide).toContain('### turn/respondPermission');
     expect(guide).toContain('Create a new ACP session');
-    expect(guide).toContain('- turn/cancel:');
-    expect(guide).not.toContain('session/prompt');
+    expect(guide).toContain('### turn/cancel');
+    expect(guide).toContain('"inputSchema"');
     expect(guide).not.toContain('## Schema Lookup');
     expect(guide).toContain('## Examples');
     expect(guide).toContain('aai:exec');
@@ -405,7 +405,7 @@ describe('ACP prompt polling aggregation', () => {
     executor.activeTurnIdsBySession.set(turn.sessionId, turn.turnId);
     executor.recordPromptTurnActivity(turn);
 
-    vi.advanceTimersByTime(3 * 60_000);
+    vi.advanceTimersByTime(10 * 60_000);
     await Promise.resolve();
 
     expect(executor.buildPromptTurnResult(turn)).toEqual({
@@ -416,7 +416,7 @@ describe('ACP prompt polling aggregation', () => {
       stopReason: null,
       error: {
         code: 'downstream_timeout',
-        message: 'ACP turn timed out after 180000ms without any session/update activity.',
+        message: 'ACP turn timed out after 600000ms without any session/update activity.',
       },
       content: [],
     });
@@ -461,7 +461,7 @@ describe('ACP prompt polling aggregation', () => {
     executor.queuedTurnIdsBySession.set(activeTurn.sessionId, [queuedTurn.turnId]);
     executor.recordPromptTurnActivity(activeTurn);
 
-    vi.advanceTimersByTime(3 * 60_000);
+    vi.advanceTimersByTime(10 * 60_000);
     await Promise.resolve();
 
     expect(activeTurn.done).toBe(true);
@@ -530,7 +530,7 @@ describe('Gateway progressive disclosure schemas', () => {
     const byName = new Map(tools.map((tool) => [tool.name, tool]));
 
     expect(byName.get('aai:exec')?.description).toBe(
-      'Execute a tool. Only call this after reading the guide returned by the corresponding guide tool (e.g. app:*, mcp:import).'
+      'Execute a tool. Read the guide first (e.g. app:*, mcp:import) — it contains the full schema.'
     );
     expect(byName.get('mcp:import')?.description).toBe(
       'Import an MCP server into AAI Gateway. Guide tool, no arguments.'

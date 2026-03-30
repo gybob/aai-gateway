@@ -7,7 +7,7 @@ import type {
   DetailedCapability,
   ExecutionResult,
 } from '../types/index.js';
-import type { AppCapabilities, ToolSchema } from '../types/capabilities.js';
+import type { AppCapabilities } from '../types/capabilities.js';
 
 import type { Executor } from './interface.js';
 
@@ -45,24 +45,12 @@ export class CliExecutor implements Executor {
         tools: commands.map((cmd) => ({
           name: cmd,
           description: 'CLI command',
+          inputSchema: { type: 'object' as const, properties: {} },
         })),
       };
     } catch {
       return { title: 'CLI', tools: [] };
     }
-  }
-
-  /**
-   * Load schema for a specific CLI command
-   * CLI apps don't have structured schemas, return null
-   */
-  async loadToolSchema(
-    _appId: string,
-    _config: CliConfig & CliExecutorConfig,
-    _toolName: string
-  ): Promise<ToolSchema | null> {
-    // CLI apps don't have structured schemas
-    return null;
   }
 
 

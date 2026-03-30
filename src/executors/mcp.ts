@@ -9,7 +9,7 @@ import type {
   McpConfig,
   ExecutionResult,
 } from '../types/index.js';
-import type { AppCapabilities, ToolSchema } from '../types/capabilities.js';
+import type { AppCapabilities } from '../types/capabilities.js';
 import { logger } from '../utils/logger.js';
 import { AAI_GATEWAY_NAME, AAI_GATEWAY_VERSION } from '../version.js';
 import { validateArgs, formatValidationErrors } from '../utils/schema-validator.js';
@@ -126,8 +126,7 @@ export class McpExecutor implements Executor {
 
 
   /**
-   * Load app-level capabilities (tool list without parameter definitions)
-   * Returns only tool summaries for guide generation
+   * Load app-level capabilities with full tool schemas
    */
   async loadAppCapabilities(appId: string, config: McpConfig): Promise<AppCapabilities> {
     const headers = this.secureStorage
@@ -135,44 +134,16 @@ export class McpExecutor implements Executor {
       : undefined;
     const result = await this.listTools({ appId, config, headers });
 
-    // Cache the full tools data (含 inputSchema)
+    // Cache the full tools data for validation during execute
     this.toolsCache.set(appId, result);
 
-    // Return only tool summaries (不含 schema)
     const tools = result.map((t) => ({
       name: t.name,
       description: t.description ?? '',
+      inputSchema: t.inputSchema ?? { type: 'object' as const, properties: {} },
     }));
 
     return { title: 'MCP Tools', tools };
-  }
-
-  /**
-   * Load schema for a specific tool
-   * Looks up from cache, returns null if not found
-   */
-  async loadToolSchema(
-    appId: string,
-    config: McpConfig,
-    toolName: string
-  ): Promise<ToolSchema | null> {
-    // Try cache first
-    let tools = this.toolsCache.get(appId);
-
-    // Cache miss - reload from MCP
-    if (!tools) {
-      await this.loadAppCapabilities(appId, config);
-      tools = this.toolsCache.get(appId);
-      if (!tools) return null;
-    }
-
-    const tool = tools.find((t) => t.name === toolName);
-    if (!tool) return null;
-
-    return {
-      name: tool.name,
-      inputSchema: tool.inputSchema ?? { type: 'object', properties: {} },
-    };
   }
 
   async execute(
@@ -181,18 +152,22 @@ export class McpExecutor implements Executor {
     operation: string,
     args: Record<string, unknown>
   ): Promise<ExecutionResult> {
-    // Get schema for validation
-    const schema = await this.loadToolSchema(appId, config, operation);
-
-    // Validate if schema is available
-    if (schema) {
-      const result = validateArgs(args, schema.inputSchema);
+    // Validate against cached schema if available
+    let tools = this.toolsCache.get(appId);
+    if (!tools) {
+      await this.loadAppCapabilities(appId, config);
+      tools = this.toolsCache.get(appId);
+    }
+    const cachedTool = tools?.find((t) => t.name === operation);
+    if (cachedTool) {
+      const inputSchema = cachedTool.inputSchema ?? { type: 'object', properties: {} };
+      const result = validateArgs(args, inputSchema);
       if (!result.valid) {
         const errorMessage = `参数校验失败 for '${operation}'\n${formatValidationErrors(result)}`;
         return {
           success: false,
           error: errorMessage,
-          schema: schema.inputSchema,
+          schema: inputSchema,
         };
       }
     }
