@@ -1,6 +1,11 @@
 import type { AaiJson } from '../types/aai-json.js';
 import type { AppCapabilities, ToolSchema } from '../types/capabilities.js';
-import { getLocalizedName, isSkillAccess, isSkillPathConfig, type InternationalizedName } from '../types/aai-json.js';
+import {
+  getLocalizedName,
+  isSkillAccess,
+  isSkillPathConfig,
+  type InternationalizedName,
+} from '../types/aai-json.js';
 import { getSystemLocale } from '../utils/locale.js';
 
 // ============================================================================
@@ -240,9 +245,9 @@ function buildAcpToolsSection(appId: string, capabilities: AppCapabilities): str
         '',
         shortDesc,
         '',
-        "Example `aai:exec` call:",
+        'args：',
         '',
-        example ? renderExampleJson(example) : 'No example available.',
+        example ? JSON.stringify(example, null, 2) : 'No example available.',
       ].join('\n');
     })
     .join('\n\n');
@@ -272,49 +277,54 @@ function buildCliExamples(capabilities: AppCapabilities): string {
 function buildAcpExample(toolName: string, appId: string): Record<string, unknown> | null {
   switch (toolName) {
     case 'session/new':
-      return buildExecExample(appId, 'session/new', {
-        cwd: '/absolute/path/to/project',
-      });
-    case 'turn/start':
-      return buildExecExample(appId, 'turn/start', {
-        sessionId: '<sessionId>',
-        prompt: [{ type: 'text', text: 'Summarize the current project.' }],
-      });
-    case 'turn/poll':
-      return buildExecExample(appId, 'turn/poll', {
-        turnId: '<turnId>',
-      });
-    case 'turn/respondPermission':
-      return buildExecExample(appId, 'turn/respondPermission', {
-        turnId: '<turnId>',
-        permissionId: '<permissionId>',
-        decision: {
-          type: 'select',
-          optionId: '<optionId>',
+      return {
+        app: appId,
+        tool: 'session/new',
+        args: {
+          cwd: '/absolute/path/to/project',
         },
-      });
+      };
+    case 'turn/start':
+      return {
+        app: appId,
+        tool: 'turn/start',
+        args: {
+          sessionId: '<sessionId>',
+          prompt: [{ type: 'text', text: 'Summarize the current project.' }],
+        },
+      };
+    case 'turn/poll':
+      return {
+        app: appId,
+        tool: 'turn/poll',
+        args: {
+          turnId: '<turnId>',
+        },
+      };
+    case 'turn/respondPermission':
+      return {
+        app: appId,
+        tool: 'turn/respondPermission',
+        args: {
+          turnId: '<turnId>',
+          permissionId: '<permissionId>',
+          decision: {
+            type: 'select',
+            optionId: '<optionId>',
+          },
+        },
+      };
     case 'turn/cancel':
-      return buildExecExample(appId, 'turn/cancel', {
-        turnId: '<turnId>',
-      });
+      return {
+        app: appId,
+        tool: 'turn/cancel',
+        args: {
+          turnId: '<turnId>',
+        },
+      };
     default:
       return null;
   }
-}
-
-function buildExecExample(
-  appId: string,
-  tool: string,
-  args: Record<string, unknown>
-): Record<string, unknown> {
-  return {
-    tool: 'aai:exec',
-    args: {
-      app: appId,
-      tool,
-      args,
-    },
-  };
 }
 
 function renderExampleJson(payload: Record<string, unknown>): string {

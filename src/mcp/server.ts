@@ -18,6 +18,7 @@ import { getLocalizedName } from '../types/aai-json.js';
 import { getSystemLocale } from '../utils/locale.js';
 import { logger } from '../utils/logger.js';
 import { AAI_GATEWAY_NAME, AAI_GATEWAY_VERSION } from '../version.js';
+import { loadAaiConfig } from '../utils/config.js';
 
 import { generateSkillCreateGuide } from '../guides/skill-create-guide.js';
 import { type SkillImportMode } from '../guides/skill-stub-generator.js';
@@ -92,7 +93,13 @@ export class AaiGatewayServer {
 
   async initialize(): Promise<void> {
     this.secureStorage = createSecureStorage();
-    this.consentManager = new ConsentManager(this.secureStorage, createConsentDialog());
+
+    const config = loadAaiConfig();
+    this.consentManager = new ConsentManager(
+      this.secureStorage,
+      createConsentDialog(),
+      config.toolApproval ?? false
+    );
 
     // Initialize core services
     this.executionCoordinator = new ExecutionCoordinator(this.secureStorage, this.consentManager);

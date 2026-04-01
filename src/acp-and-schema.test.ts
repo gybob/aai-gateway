@@ -34,8 +34,7 @@ describe('ACP guide metadata', () => {
     expect(guide).not.toContain('"inputSchema"');
     expect(guide).not.toContain('## Schema Lookup');
     expect(guide).not.toContain('## Examples');
-    expect(guide).toContain('Example `aai:exec` call:');
-    expect(guide).toContain('"tool": "aai:exec"');
+    expect(guide).toContain('args：');
     expect(guide).toContain('"tool": "session/new"');
     expect(guide).toContain('"tool": "turn/start"');
     expect(guide).not.toContain('Protocol:');
