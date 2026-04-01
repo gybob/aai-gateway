@@ -71,13 +71,13 @@ import type { CallerContext } from '../types/caller.js';
 import { createMcpCallerContext } from '../utils/caller-context.js';
 import { getDotenvPath } from '../utils/dotenv.js';
 import {
-  deleteAppVisibilityState,
+  deleteAppPolicyState,
   disableAppForAgent,
   enableAppForAgent,
-  loadAppVisibilityState,
+  loadAppPolicyState,
   removeAppFromAllAgents,
   saveAgentState,
-  saveAppVisibilityState,
+  saveAppPolicyState,
   upsertAgentState,
 } from '../storage/agent-state.js';
 import { getManagedAppDir } from '../storage/paths.js';
@@ -236,53 +236,34 @@ export class AaiGatewayServer {
 
   private async listVisibleApps(caller: CallerContext): Promise<RuntimeAppRecord[]> {
     const apps = Array.from(this.appRegistry.values());
-    const visibility = await Promise.all(
-      apps.map(async (app) => ((await this.isAppVisibleToCaller(app, caller)) ? app : null))
+    const enabledApps = await Promise.all(
+      apps.map(async (app) => ((await this.isAppEnabledForCaller(app, caller)) ? app : null))
     );
-    return visibility.filter((app): app is RuntimeAppRecord => app !== null);
+    return enabledApps.filter((app): app is RuntimeAppRecord => app !== null);
   }
 
   private async listManageableApps(caller: CallerContext): Promise<Array<{
     app: RuntimeAppRecord;
-    disabled: boolean;
+    enabled: boolean;
   }>> {
-    const agentState = await upsertAgentState({
-      agentId: caller.id,
-      callerName: caller.name,
-      agentType: caller.type,
-      skillDir: caller.skillDir,
-    });
-
     const apps = Array.from(this.appRegistry.values());
     const manageable = await Promise.all(
       apps.map(async (app) => {
-        if (!(await this.isAppAvailableToCaller(app, caller, true))) {
-          return null;
-        }
-
         return {
           app,
-          disabled: agentState.disabledApps.includes(app.appId),
+          enabled: await this.isAppEnabledForCaller(app, caller),
         };
       })
     );
 
     return manageable.filter(
-      (entry): entry is { app: RuntimeAppRecord; disabled: boolean } => entry !== null
+      (entry): entry is { app: RuntimeAppRecord; enabled: boolean } => entry !== null
     );
   }
 
-  private async isAppVisibleToCaller(
+  private async isAppEnabledForCaller(
     app: RuntimeAppRecord,
     caller: CallerContext
-  ): Promise<boolean> {
-    return this.isAppAvailableToCaller(app, caller, false);
-  }
-
-  private async isAppAvailableToCaller(
-    app: RuntimeAppRecord,
-    caller: CallerContext,
-    includeDisabled: boolean
   ): Promise<boolean> {
     const agentState = await upsertAgentState({
       agentId: caller.id,
@@ -291,20 +272,20 @@ export class AaiGatewayServer {
       skillDir: caller.skillDir,
     });
 
-    if (!includeDisabled && agentState.disabledApps.includes(app.appId)) {
+    const override = agentState.appOverrides[app.appId];
+    if (override === 'enabled') {
+      return true;
+    }
+    if (override === 'disabled') {
       return false;
     }
 
-    const visibility = await loadAppVisibilityState(app.appId);
-    if (!visibility) {
+    const policy = await loadAppPolicyState(app.appId);
+    if (!policy || policy.defaultEnabled === 'all') {
       return true;
     }
 
-    if (visibility.mode === 'all') {
-      return true;
-    }
-
-    return visibility.ownerAgentId === caller.id;
+    return policy.importerAgentId === caller.id;
   }
 
   private setupHandlers(): void {
@@ -509,11 +490,9 @@ export class AaiGatewayServer {
         headers: options.headers,
         summary: options.metadata.summary,
       });
-      await enableAppForAgent(caller.id, result.entry.appId);
-
-      await saveAppVisibilityState(result.entry.appId, {
-        mode: options.metadata.enableScope === 'current' ? 'current-agent' : 'all',
-        ownerAgentId: options.metadata.enableScope === 'current' ? caller.id : undefined,
+      await saveAppPolicyState(result.entry.appId, {
+        defaultEnabled: options.metadata.enableScope === 'current' ? 'importer-only' : 'all',
+        importerAgentId: caller.id,
         updatedAt: new Date().toISOString(),
       });
 
@@ -557,7 +536,7 @@ export class AaiGatewayServer {
               `App tool prefix: app:${result.entry.appId}`,
               `Descriptor: ${result.entry.descriptorPath}`,
               `Summary: ${result.descriptor.exposure.summary}`,
-              `Enabled for: ${options.metadata.enableScope === 'current' ? 'current agent only' : 'all agents'}`,
+              `Default enabled for: ${options.metadata.enableScope === 'current' ? 'importing agent only' : 'all agents'}`,
               ...(result.warnings ?? []),
               '✓ 新工具已可用，Agent 无需重启即可感知。',
               '',
@@ -602,11 +581,9 @@ export class AaiGatewayServer {
       const result = await importSkill({
         path: options.path,
       });
-      await enableAppForAgent(caller.id, result.appId);
-
-      await saveAppVisibilityState(result.appId, {
-        mode: 'current-agent',
-        ownerAgentId: caller.id,
+      await saveAppPolicyState(result.appId, {
+        defaultEnabled: 'importer-only',
+        importerAgentId: caller.id,
         updatedAt: new Date().toISOString(),
       });
 
@@ -681,6 +658,7 @@ export class AaiGatewayServer {
               `App tool name after restart: app:${result.appId}`,
               `Skill directory: ${result.managedPath}`,
               `Summary: ${result.descriptor.exposure.summary}`,
+              'Default enabled for: importing agent only',
               `Current-agent trigger mode: ${options.importMode}`,
               ...(stubPath ? [`Generated proxy skill: ${stubPath}`] : []),
               '✓ 新工具已可用，Agent 无需重启即可感知。',
@@ -735,12 +713,12 @@ export class AaiGatewayServer {
   private async handleListAllApps(caller: CallerContext): Promise<CallToolResult> {
     const apps = await this.listManageableApps(caller);
     const payload = {
-      apps: apps.map(({ app, disabled }) => ({
+      apps: apps.map(({ app, enabled }) => ({
         app: app.appId,
         name: app.descriptor.app.name.default,
         summary: app.descriptor.exposure.summary,
         source: app.source,
-        disabled,
+        enabled,
         removable: app.source === 'mcp-import' || app.source === 'skill-import',
       })),
     };
@@ -765,7 +743,7 @@ export class AaiGatewayServer {
       throw new AaiError('INVALID_REQUEST', "disableApp requires 'app'");
     }
 
-    await this.resolveManageableApp(appId, caller);
+    await this.resolveManageableApp(appId);
     await disableAppForAgent(caller.id, appId);
     await this.notifyToolsListChanged();
 
@@ -799,7 +777,7 @@ export class AaiGatewayServer {
       throw new AaiError('INVALID_REQUEST', "enableApp requires 'app'");
     }
 
-    await this.resolveManageableApp(appId, caller);
+    await this.resolveManageableApp(appId);
     await enableAppForAgent(caller.id, appId);
     await this.notifyToolsListChanged();
 
@@ -826,7 +804,7 @@ export class AaiGatewayServer {
 
   private async handleRemoveApp(
     args: Record<string, unknown> | undefined,
-    caller: CallerContext
+    _caller: CallerContext
   ): Promise<CallToolResult> {
     const appId = typeof args?.app === 'string' ? args.app.trim() : '';
     if (!appId) {
@@ -840,7 +818,7 @@ export class AaiGatewayServer {
       );
     }
 
-    const app = await this.resolveManageableApp(appId, caller);
+    const app = await this.resolveManageableApp(appId);
     if (app.source !== 'mcp-import' && app.source !== 'skill-import') {
       throw new AaiError(
         'INVALID_REQUEST',
@@ -855,7 +833,7 @@ export class AaiGatewayServer {
       await getSkillRegistry().delete(appId);
     }
 
-    await deleteAppVisibilityState(appId);
+    await deleteAppPolicyState(appId);
     await removeAppFromAllAgents(appId);
     await rm(getManagedAppDir(appId), { recursive: true, force: true });
     this.appRegistry.delete(appId);
@@ -995,33 +973,18 @@ export class AaiGatewayServer {
     appId: string,
     caller: CallerContext
   ): Promise<RuntimeAppRecord | undefined> {
-    return this.resolveScopedManagedApp(appId, caller, false);
-  }
-
-  private async resolveManageableApp(
-    appId: string,
-    caller: CallerContext
-  ): Promise<RuntimeAppRecord> {
-    const existing = await this.resolveScopedManagedApp(appId, caller, true);
-    if (!existing) {
-      throw new AaiError('UNKNOWN_APP', `App not found: ${appId}`);
-    }
-
-    return existing;
-  }
-
-  private async resolveScopedManagedApp(
-    appId: string,
-    caller: CallerContext,
-    includeDisabled: boolean
-  ): Promise<RuntimeAppRecord | undefined> {
     const existing = this.appRegistry.get(appId);
     if (!existing) {
       return undefined;
     }
 
-    if (!(await this.isAppAvailableToCaller(existing, caller, includeDisabled))) {
-      return undefined;
+    return (await this.isAppEnabledForCaller(existing, caller)) ? existing : undefined;
+  }
+
+  private async resolveManageableApp(appId: string): Promise<RuntimeAppRecord> {
+    const existing = this.appRegistry.get(appId);
+    if (!existing) {
+      throw new AaiError('UNKNOWN_APP', `App not found: ${appId}`);
     }
 
     return existing;
@@ -2031,30 +1994,40 @@ function generateGatewayToolGuide(tool: {
   description: string;
   inputSchema: Record<string, unknown>;
 }): string {
+  if (tool.name === 'mcp:import') {
+    return generateMcpImportGuide(tool);
+  }
+
   const examples = extractGuideExamples(tool.inputSchema, tool.name);
   const notes = getGatewayToolGuideNotes(tool.name);
-  // Strip examples from schema display (they are shown separately)
-  const { examples: _ex, ...schemaForDisplay } = tool.inputSchema;
   return [
     `# ${tool.name}`,
     '',
-    tool.description,
+    `This is only an operation guide for \`${tool.name}\`. To perform the actual operation, you must call \`aai:exec\`.`,
     '',
-    '## Schema',
+    'The `aai:exec` tool accepts three parameters: `app`, `tool`, and `args`.',
+    `For this operation, leave \`app\` empty, set \`tool\` to "${tool.name}", and refer to the examples below for \`args\`.`,
     '',
-    '```json',
-    JSON.stringify({ inputSchema: schemaForDisplay }, null, 2),
-    '```',
     ...(examples.length > 0
       ? [
           '',
           '## Examples',
           '',
-          'Pass these as `args` to `aai:exec` with `tool` set accordingly:',
+          'The examples below are complete `aai:exec` calls.',
           '',
           ...examples.flatMap((example) => [
             '```json',
-            JSON.stringify({ tool: tool.name, args: example }, null, 2),
+            JSON.stringify(
+              {
+                tool: 'aai:exec',
+                args: {
+                  tool: tool.name,
+                  args: example,
+                },
+              },
+              null,
+              2
+            ),
             '```',
             '',
           ]),
@@ -2066,6 +2039,65 @@ function generateGatewayToolGuide(tool: {
           notes,
         ]
       : []),
+  ].join('\n');
+}
+
+function generateMcpImportGuide(tool: {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+}): string {
+  const inspectExample = {
+    tool: 'aai:exec',
+    args: {
+      tool: 'mcp:import',
+      args: {
+        command: 'npx',
+        args: ['-y', '@brave/brave-search-mcp-server'],
+        timeout: 60000,
+        name: 'brave-search',
+      },
+    },
+  };
+
+  const finalizeExample = {
+    tool: 'aai:exec',
+    args: {
+      tool: 'mcp:import',
+      args: {
+        command: 'npx',
+        args: ['-y', '@brave/brave-search-mcp-server'],
+        timeout: 60000,
+        name: 'brave-search',
+        summary: 'Use this MCP for Brave web search.',
+        enableScope: 'all',
+      },
+    },
+  };
+
+  return [
+    `# ${tool.name}`,
+    '',
+    'This is only an operation guide for `mcp:import`. To perform the actual operation, you must call `aai:exec`.',
+    '',
+    'The `aai:exec` tool accepts three parameters: `app`, `tool`, and `args`.',
+    'For this operation, leave `app` empty, set `tool` to `"mcp:import"`, and refer to the examples below for `args`.',
+    '',
+    'The examples below are complete `aai:exec` calls.',
+    '',
+    '## Examples',
+    '',
+    'Phase 1 — inspect:',
+    '```json',
+    JSON.stringify(inspectExample, null, 2),
+    '```',
+    '',
+    'Phase 2 — finalize import:',
+    '```json',
+    JSON.stringify(finalizeExample, null, 2),
+    '```',
+    '',
+    getGatewayToolGuideNotes(tool.name) ?? '',
   ].join('\n');
 }
 
@@ -2094,19 +2126,7 @@ function extractGuideExamples(
 function getGatewayToolGuideNotes(toolName: string): string | null {
   if (toolName === 'mcp:import') {
     return [
-      'Import is a two-phase process. Both phases are executed via `aai:exec`.',
-      '',
-      '## Phase 1 — Inspection',
-      '',
-      'Call `aai:exec` with `tool: "mcp:import"` and the source config only (no `summary` or `enableScope`).',
-      'Returns the list of available MCP tools without creating an import record.',
-      '',
-      '## Phase 2 — Final import',
-      '',
-      'Call `aai:exec` again with the same source config plus `summary` and `enableScope`.',
-      'Creates the import record and notifies the client — no restart required.',
-      '',
-      '## Parameters for `aai:exec` args',
+      '## Parameters',
       '',
       '### Local stdio MCP',
       '',
@@ -2136,37 +2156,29 @@ function getGatewayToolGuideNotes(toolName: string): string | null {
       '| `summary` | string | phase 2 | Short English description of when to use this MCP |',
       '| `enableScope` | `"current"` \\| `"all"` | phase 2 | Enable for current agent or all agents |',
       '',
-      '## Examples',
+      '## Notes',
       '',
-      'Phase 1 — inspect a local stdio MCP:',
-      '```',
-      'aai:exec { tool: "mcp:import", args: { command: "npx", args: ["-y", "open-websearch@latest"], env: { "MODE": "stdio", "DEFAULT_SEARCH_ENGINE": "bing" }, timeout: 30000, name: "open-websearch" } }',
-      '```',
-      '',
-      'Phase 2 — finalize import:',
-      '```',
-      'aai:exec { tool: "mcp:import", args: { command: "npx", args: ["-y", "open-websearch@latest"], env: { "MODE": "stdio", "DEFAULT_SEARCH_ENGINE": "bing" }, timeout: 30000, name: "open-websearch", summary: "Web search via multiple engines", enableScope: "all" } }',
-      '```',
-      '',
-      'Phase 1 — inspect a remote MCP:',
-      '```',
-      `aai:exec { tool: "mcp:import", args: { url: "https://example.com/mcp", headers: { "Authorization": "Bearer \${API_TOKEN}" }, name: "Example MCP" } }`,
-      '```',
+      'Phase 1 omits `summary` and `enableScope`.',
+      'Phase 2 repeats the same source config and adds `summary` and `enableScope`.',
       '',
       '## Environment variables & API keys',
       '',
-      `Store sensitive values (API keys, tokens) in \`${getDotenvPath()}\` using \${VAR_NAME} placeholders in the MCP config.`,
+      `\`${getDotenvPath()}\` is a sensitive secrets file.`,
+      'Do not read, summarize, or repeat its contents.',
+      'Never ask the user to send API keys, tokens, or any other secret values in chat.',
+      `Store sensitive values in \`${getDotenvPath()}\` and reference them from the MCP config with \${VAR_NAME} placeholders.`,
       '',
       'If the import fails due to missing environment variables, the error response includes step-by-step setup instructions.',
       'Follow those instructions to guide the user:',
-      '1. Search the web for where to obtain each missing key (provider portal, API dashboard, etc.).',
-      '2. Open the env file for the user via shell command — NEVER read or display its contents.',
-      '3. Ask the user to paste the values, then retry the import.',
+      '1. Explain which environment variables are missing.',
+      '2. Guide the user on how to obtain each value, for example from the provider portal or API dashboard.',
+      '3. Provide a configuration example such as `BRAVE_API_KEY=your_api_key_here` so the user knows what to put in the file.',
+      `4. Only after the user has obtained the required values, open \`${getDotenvPath()}\` for the user via a bash command. The file may be shown to the user, but you must not read, summarize, or repeat its contents.`,
+      '5. Tell the user to fill in the real values manually, save the file locally, then retry the import.',
       '',
       '## Web search tips',
       '',
-      'When the error lists multiple missing variables or you need to research an MCP server,',
-      'search for each variable or topic one at a time rather than in a single query.',
+      'When you need to research an MCP server or missing credentials, search for each variable or topic one at a time.',
     ].join('\n');
   }
 

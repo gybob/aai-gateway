@@ -9,14 +9,14 @@ export interface AgentState {
   agentType?: string;
   callerName: string;
   skillDir?: string;
-  disabledApps: string[];
+  appOverrides: Record<string, 'enabled' | 'disabled'>;
   generatedStubs: Record<string, string>;
   updatedAt: string;
 }
 
-export interface AppVisibilityState {
-  mode: 'all' | 'current-agent';
-  ownerAgentId?: string;
+export interface AppPolicyState {
+  defaultEnabled: 'all' | 'importer-only';
+  importerAgentId?: string;
   updatedAt: string;
 }
 
@@ -69,7 +69,7 @@ export async function upsertAgentState(input: {
     callerName: input.callerName,
     agentType: input.agentType ?? existing?.agentType,
     skillDir: input.skillDir ?? existing?.skillDir,
-    disabledApps: existing?.disabledApps ?? [],
+    appOverrides: existing?.appOverrides ?? {},
     generatedStubs: existing?.generatedStubs ?? {},
     updatedAt: new Date().toISOString(),
   };
@@ -77,23 +77,16 @@ export async function upsertAgentState(input: {
   return next;
 }
 
-export async function listDisabledAppsForAgent(agentId: string): Promise<string[]> {
-  const state = await loadAgentState(agentId);
-  return state?.disabledApps ?? [];
-}
-
 export async function disableAppForAgent(agentId: string, appId: string): Promise<AgentState> {
   const state = (await loadAgentState(agentId)) ?? {
     agentId,
     callerName: agentId,
-    disabledApps: [],
+    appOverrides: {},
     generatedStubs: {},
     updatedAt: new Date().toISOString(),
   };
 
-  if (!state.disabledApps.includes(appId)) {
-    state.disabledApps.push(appId);
-  }
+  state.appOverrides[appId] = 'disabled';
 
   const stubPath = state.generatedStubs[appId];
   if (stubPath) {
@@ -112,7 +105,7 @@ export async function enableAppForAgent(agentId: string, appId: string): Promise
     const next: AgentState = {
       agentId,
       callerName: agentId,
-      disabledApps: [],
+      appOverrides: { [appId]: 'enabled' },
       generatedStubs: {},
       updatedAt: new Date().toISOString(),
     };
@@ -120,31 +113,31 @@ export async function enableAppForAgent(agentId: string, appId: string): Promise
     return next;
   }
 
-  state.disabledApps = state.disabledApps.filter((item) => item !== appId);
+  state.appOverrides[appId] = 'enabled';
   state.updatedAt = new Date().toISOString();
   await saveAgentState(state);
   return state;
 }
 
-export async function loadAppVisibilityState(appId: string): Promise<AppVisibilityState | null> {
+export async function loadAppPolicyState(appId: string): Promise<AppPolicyState | null> {
   try {
     const raw = await readFile(getAppStatePath(appId), 'utf-8');
-    return JSON.parse(raw) as AppVisibilityState;
+    return JSON.parse(raw) as AppPolicyState;
   } catch {
     return null;
   }
 }
 
-export async function saveAppVisibilityState(
+export async function saveAppPolicyState(
   appId: string,
-  state: AppVisibilityState
+  state: AppPolicyState
 ): Promise<void> {
   const path = getAppStatePath(appId);
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, JSON.stringify(state, null, 2), 'utf-8');
 }
 
-export async function deleteAppVisibilityState(appId: string): Promise<void> {
+export async function deleteAppPolicyState(appId: string): Promise<void> {
   await rm(getAppStatePath(appId), { force: true });
 }
 
@@ -168,9 +161,8 @@ export async function removeAppFromAllAgents(appId: string): Promise<void> {
     }
 
     let changed = false;
-    const nextDisabledApps = state.disabledApps.filter((item) => item !== appId);
-    if (nextDisabledApps.length !== state.disabledApps.length) {
-      state.disabledApps = nextDisabledApps;
+    if (state.appOverrides[appId]) {
+      delete state.appOverrides[appId];
       changed = true;
     }
 

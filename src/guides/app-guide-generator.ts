@@ -20,11 +20,37 @@ const TEMPLATE_APP_GUIDE = `# {{LOCALIZED_NAME}}
 
 {{EXAMPLES_SECTION}}{{NOTES_SECTION}}`;
 
+const TEMPLATE_MCP_APP_GUIDE = `# {{LOCALIZED_NAME}}
+
+This is only an operation guide for tools in this app. To perform the actual operation, you must call \`aai:exec\`.
+
+The \`aai:exec\` tool accepts three parameters: \`app\`, \`tool\`, and \`args\`.
+For this app, set \`app\` to "{{LOCAL_ID}}", set \`tool\` to one of the tool names below, and refer to the schema of the selected tool below for \`args\`.
+
+## Tools
+
+{{TOOLS}}`;
+
+const TEMPLATE_ACP_APP_GUIDE = `# {{LOCALIZED_NAME}}
+
+This is only an operation guide for tools in this app. To perform the actual operation, you must call \`aai:exec\`.
+
+The \`aai:exec\` tool accepts three parameters: \`app\`, \`tool\`, and \`args\`.
+For this app, set \`app\` to "{{LOCAL_ID}}", set \`tool\` to one of the tool names below, and use each tool's example below as the reference for \`args\`.
+
+## Tools
+
+{{TOOLS}}{{NOTES_SECTION}}`;
+
 const TEMPLATE_TOOL_ITEM = `### {{NAME}}
 
 {{DESCRIPTION}}
 
 {{SCHEMA}}`;
+
+const TEMPLATE_TOOL_ITEM_NO_SCHEMA = `### {{NAME}}
+
+{{DESCRIPTION}}`;
 
 // ============================================================================
 // Public Functions
@@ -58,6 +84,13 @@ export function generateAppGuideMarkdown(
   capabilities: AppCapabilities
 ): string {
   const protocol = descriptor.access.protocol;
+  if (protocol === 'mcp') {
+    return generateMcpAppGuideMarkdown(appId, descriptor, capabilities);
+  }
+  if (protocol === 'acp-agent') {
+    return generateAcpAppGuideMarkdown(appId, descriptor, capabilities);
+  }
+
   const locale = getSystemLocale();
   const localizedName = getLocalizedName(descriptor.app.name, locale);
   const toolsSection = buildToolsSection(capabilities);
@@ -76,23 +109,61 @@ export function generateAppGuideMarkdown(
   });
 }
 
+function generateMcpAppGuideMarkdown(
+  appId: string,
+  descriptor: AaiJson,
+  capabilities: AppCapabilities
+): string {
+  const locale = getSystemLocale();
+  const localizedName = getLocalizedName(descriptor.app.name, locale);
+  const toolsSection = buildToolsSection(capabilities);
+
+  return renderTemplate(TEMPLATE_MCP_APP_GUIDE, {
+    LOCALIZED_NAME: localizedName,
+    LOCAL_ID: appId,
+    TOOLS: toolsSection,
+  });
+}
+
+function generateAcpAppGuideMarkdown(
+  appId: string,
+  descriptor: AaiJson,
+  capabilities: AppCapabilities
+): string {
+  const locale = getSystemLocale();
+  const localizedName = getLocalizedName(descriptor.app.name, locale);
+  const toolsSection = buildAcpToolsSection(appId, capabilities);
+  const notesSection = buildNotesSection('acp-agent', descriptor);
+
+  return renderTemplate(TEMPLATE_ACP_APP_GUIDE, {
+    LOCALIZED_NAME: localizedName,
+    LOCAL_ID: appId,
+    TOOLS: toolsSection,
+    NOTES_SECTION: notesSection ? `\n\n## Notes\n\n${notesSection}\n` : '',
+  });
+}
+
 // ============================================================================
 // Helper Functions
 // ============================================================================
 
-function buildToolsSection(capabilities: AppCapabilities): string {
+function buildToolsSection(
+  capabilities: AppCapabilities,
+  options: { includeSchema?: boolean } = {}
+): string {
   if (capabilities.tools.length === 0) {
     return 'No tools available.';
   }
 
+  const includeSchema = options.includeSchema ?? true;
   return capabilities.tools
     .map((tool) => {
       const desc = tool.description?.trim();
       const shortDesc = desc ? truncateDescription(desc) : 'No description provided.';
-      return renderTemplate(TEMPLATE_TOOL_ITEM, {
+      return renderTemplate(includeSchema ? TEMPLATE_TOOL_ITEM : TEMPLATE_TOOL_ITEM_NO_SCHEMA, {
         NAME: tool.name,
         DESCRIPTION: shortDesc,
-        SCHEMA: formatToolSchema(tool),
+        SCHEMA: includeSchema ? formatToolSchema(tool) : '',
       });
     })
     .join('\n');
@@ -117,7 +188,7 @@ function buildExamplesSection(protocol: string, capabilities: AppCapabilities): 
       return '';
 
     case 'acp-agent':
-      return buildAcpExamples(capabilities);
+      return '';
 
     case 'skill':
       return buildSkillExamples(capabilities);
@@ -132,8 +203,6 @@ function buildExamplesSection(protocol: string, capabilities: AppCapabilities): 
 
 function buildNotesSection(protocol: string, descriptor: AaiJson): string {
   switch (protocol) {
-    case 'mcp':
-      return 'Execute via `aai:exec` with the app id above.';
     case 'acp-agent':
       return 'session/new returns promptCapabilities. turn/start.prompt must match those capabilities.';
     case 'skill':
@@ -155,16 +224,27 @@ function buildSkillDirSection(descriptor: AaiJson): string {
   return 'AAI Gateway managed skill directory: use the local skill path configured for this imported skill.';
 }
 
-function buildAcpExamples(capabilities: AppCapabilities): string {
+function buildAcpToolsSection(appId: string, capabilities: AppCapabilities): string {
+  if (capabilities.tools.length === 0) {
+    return 'No tools available.';
+  }
+
   return capabilities.tools
     .map((tool) => {
-      const example = buildAcpExample(tool.name);
-      if (!example) {
-        return '';
-      }
-      return renderExampleJson(example);
+      const desc = tool.description?.trim();
+      const shortDesc = desc ? truncateDescription(desc) : 'No description provided.';
+      const example = buildAcpExample(tool.name, appId);
+
+      return [
+        `### ${tool.name}`,
+        '',
+        shortDesc,
+        '',
+        "Example `aai:exec` call:",
+        '',
+        example ? renderExampleJson(example) : 'No example available.',
+      ].join('\n');
     })
-    .filter(Boolean)
     .join('\n\n');
 }
 
@@ -189,52 +269,52 @@ function buildCliExamples(capabilities: AppCapabilities): string {
   });
 }
 
-function buildAcpExample(toolName: string): Record<string, unknown> | null {
+function buildAcpExample(toolName: string, appId: string): Record<string, unknown> | null {
   switch (toolName) {
     case 'session/new':
-      return {
-        tool: 'session/new',
-        args: {
-          cwd: '/absolute/path/to/project',
-        },
-      };
+      return buildExecExample(appId, 'session/new', {
+        cwd: '/absolute/path/to/project',
+      });
     case 'turn/start':
-      return {
-        tool: 'turn/start',
-        args: {
-          sessionId: '<sessionId>',
-          prompt: [{ type: 'text', text: 'Summarize the current project.' }],
-        },
-      };
+      return buildExecExample(appId, 'turn/start', {
+        sessionId: '<sessionId>',
+        prompt: [{ type: 'text', text: 'Summarize the current project.' }],
+      });
     case 'turn/poll':
-      return {
-        tool: 'turn/poll',
-        args: {
-          turnId: '<turnId>',
-        },
-      };
+      return buildExecExample(appId, 'turn/poll', {
+        turnId: '<turnId>',
+      });
     case 'turn/respondPermission':
-      return {
-        tool: 'turn/respondPermission',
-        args: {
-          turnId: '<turnId>',
-          permissionId: '<permissionId>',
-          decision: {
-            type: 'select',
-            optionId: '<optionId>',
-          },
+      return buildExecExample(appId, 'turn/respondPermission', {
+        turnId: '<turnId>',
+        permissionId: '<permissionId>',
+        decision: {
+          type: 'select',
+          optionId: '<optionId>',
         },
-      };
+      });
     case 'turn/cancel':
-      return {
-        tool: 'turn/cancel',
-        args: {
-          turnId: '<turnId>',
-        },
-      };
+      return buildExecExample(appId, 'turn/cancel', {
+        turnId: '<turnId>',
+      });
     default:
       return null;
   }
+}
+
+function buildExecExample(
+  appId: string,
+  tool: string,
+  args: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    tool: 'aai:exec',
+    args: {
+      app: appId,
+      tool,
+      args,
+    },
+  };
 }
 
 function renderExampleJson(payload: Record<string, unknown>): string {

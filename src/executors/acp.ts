@@ -73,11 +73,13 @@ interface PromptTurnState {
   message?: string;
   error?: GatewayTurnError;
   stopReason?: string | null;
-  permissionRequest?: GatewayPermissionRequest;
+  permissionRequests: GatewayPermissionRequest[];
   waiters: Set<() => void>;
   cleanupTimer?: NodeJS.Timeout;
   inactivityTimer?: NodeJS.Timeout;
+  permissionTimer?: NodeJS.Timeout;
   drainTimer?: NodeJS.Timeout;
+  finishedAsCancelOrTimeout?: boolean;
   lastTouchedAt: number;
   lastUpdateAt: number;
   params: Record<string, unknown>;
@@ -119,6 +121,9 @@ const ACP_POLL_WAIT_MS = 30000;
 const ACP_TURN_INACTIVITY_TIMEOUT_MS = 10 * 60_000;
 const ACP_TURN_TTL_MS = 15 * 60_000;
 const ACP_MAX_OUTPUT_CHARS = 200_000;
+const ACP_PERMISSION_TIMEOUT_MS = 5 * 60_000;
+const ACP_TURN_TRANSITION_DELAY_MS = 2_000;
+const ACP_EMPTY_TURN_THRESHOLD_MS = 1_000;
 
 function toToolSchemaReference(schema: { name: string; inputSchema: Record<string, unknown> }): Record<string, unknown> {
   return {
@@ -222,20 +227,7 @@ export class AcpExecutor implements TaskCapableExecutor {
     args: Record<string, unknown>
   ): Promise<ExecutionResult> {
     try {
-      // Validate arguments against hardcoded ACP schema
-      const schema = ACP_TOOL_SCHEMAS.find((s) => s.name === operation);
-      if (schema) {
-        const inputSchema = schema.inputSchema ?? { type: 'object', properties: {} };
-        const result = validateArgs(args, inputSchema);
-        if (!result.valid) {
-          const errorMessage = `参数校验失败 for '${operation}'\n${formatValidationErrors(result)}`;
-          return {
-            success: false,
-            error: errorMessage,
-            schema: toToolSchemaReference({ name: schema.name, inputSchema }),
-          };
-        }
-      }
+      validateAcpArgs(operation, args);
 
       await this.ensureInitialized(appId, config);
 
@@ -476,10 +468,12 @@ export class AcpExecutor implements TaskCapableExecutor {
     const pending = this.pendingPermissionRequests.get(permissionId);
 
     if (!pending || pending.turnId !== turn.turnId) {
-      throw new AaiError(
-        'INVALID_PARAMS',
-        `No active ACP permission request found for permission '${permissionId}' on turn '${turn.turnId}'.`
-      );
+      // Permission expired or already resolved — return gracefully instead of throwing
+      return {
+        turnId: turn.turnId,
+        accepted: false,
+        reason: turn.done ? 'turn_finished' : 'expired',
+      };
     }
 
     const decision = normalizePermissionDecision(args.decision, pending);
@@ -487,9 +481,13 @@ export class AcpExecutor implements TaskCapableExecutor {
       outcome: decision,
     });
 
-    this.clearPendingPermissionRequest(turn, permissionId);
+    this.removePendingPermissionRequest(turn, permissionId);
     if (!turn.done) {
-      turn.state = 'running';
+      // Only transition back to running if no more permissions are pending
+      if (turn.permissionRequests.length === 0) {
+        turn.state = 'running';
+        this.clearPermissionTimer(turn);
+      }
       turn.message = 'Permission response sent downstream.';
       turn.lastTouchedAt = Date.now();
       this.recordPromptTurnActivity(turn);
@@ -519,7 +517,7 @@ export class AcpExecutor implements TaskCapableExecutor {
       return this.buildTurnCancelResult(turn, true);
     }
 
-    await this.cancelPendingPermissionRequest(turn);
+    await this.cancelAllPendingPermissionRequests(turn);
     await this.sendNotification(appId, 'session/cancel', { sessionId: turn.sessionId });
     this.finishPromptTurn(turn, 'cancelled', undefined, 'cancelled');
     return this.buildTurnCancelResult(turn, true);
@@ -543,6 +541,7 @@ export class AcpExecutor implements TaskCapableExecutor {
       pendingContent: [],
       done: false,
       state: 'running',
+      permissionRequests: [],
       waiters: new Set(),
       lastTouchedAt: Date.now(),
       lastUpdateAt: Date.now(),
@@ -619,7 +618,9 @@ export class AcpExecutor implements TaskCapableExecutor {
       done: turn.done,
       state: turn.state,
       ...(turn.message ? { message: turn.message } : {}),
-      ...(turn.permissionRequest ? { permissionRequest: { ...turn.permissionRequest } } : {}),
+      ...(turn.permissionRequests?.length > 0
+        ? { permissionRequests: turn.permissionRequests.map((r) => ({ ...r })) }
+        : {}),
       ...(turn.stopReason !== undefined ? { stopReason: turn.stopReason } : {}),
       ...(turn.error ? { error: { ...turn.error } } : {}),
       content,
@@ -656,6 +657,21 @@ export class AcpExecutor implements TaskCapableExecutor {
     }
 
     const stopReason = extractStopReason(result);
+    const durationMs = turn.startedAt ? Date.now() - turn.startedAt : 0;
+
+    // Detect empty turns: completed instantly with no output → likely downstream didn't process the prompt
+    if (
+      stopReason === 'end_turn' &&
+      durationMs < ACP_EMPTY_TURN_THRESHOLD_MS &&
+      turn.outputText.length === 0
+    ) {
+      this.finishPromptTurn(turn, 'failed', {
+        code: 'empty_turn',
+        message: `Turn completed in ${durationMs}ms with no output. The downstream agent may not have processed the prompt (e.g. still cleaning up a previous cancellation).`,
+      });
+      return;
+    }
+
     const finalState = mapStopReasonToGatewayTurnState(stopReason);
     this.finishPromptTurn(turn, finalState, undefined, stopReason);
   }
@@ -865,16 +881,16 @@ export class AcpExecutor implements TaskCapableExecutor {
     }
 
     pending.turnId = turn.turnId;
-    this.clearPendingPermissionRequest(turn);
     this.pendingPermissionRequests.set(pending.permissionId, pending);
-    turn.permissionRequest = toGatewayPermissionRequest(pending);
+    turn.permissionRequests.push(toGatewayPermissionRequest(pending));
     turn.state = 'waiting_permission';
-    turn.message = 'Waiting for user permission.';
+    turn.message = `Waiting for ${turn.permissionRequests.length} permission(s).`;
     turn.lastTouchedAt = Date.now();
     if (turn.inactivityTimer) {
       clearTimeout(turn.inactivityTimer);
       turn.inactivityTimer = undefined;
     }
+    this.startPermissionTimer(turn);
     this.notifyPromptTurnWaiters(turn);
   }
 
@@ -975,6 +991,7 @@ export class AcpExecutor implements TaskCapableExecutor {
     turn.error = error;
     turn.stopReason = stopReason ?? null;
     turn.lastTouchedAt = Date.now();
+    turn.finishedAsCancelOrTimeout = state === 'cancelled' || state === 'failed';
     if (turn.inactivityTimer) {
       clearTimeout(turn.inactivityTimer);
       turn.inactivityTimer = undefined;
@@ -983,7 +1000,8 @@ export class AcpExecutor implements TaskCapableExecutor {
       clearTimeout(turn.drainTimer);
       turn.drainTimer = undefined;
     }
-    this.clearPendingPermissionRequest(turn);
+    this.clearPermissionTimer(turn);
+    this.clearAllPendingPermissionRequests(turn);
 
     if (releaseSessionBinding) {
       this.releaseTurnSessionBinding(turn, advanceQueue);
@@ -1074,8 +1092,9 @@ export class AcpExecutor implements TaskCapableExecutor {
     if (turn.drainTimer) {
       clearTimeout(turn.drainTimer);
     }
+    this.clearPermissionTimer(turn);
 
-    this.clearPendingPermissionRequest(turn);
+    this.clearAllPendingPermissionRequests(turn);
 
     if (this.activeTurnIdsBySession.get(turn.sessionId) === turn.turnId) {
       this.activeTurnIdsBySession.delete(turn.sessionId);
@@ -1187,7 +1206,12 @@ export class AcpExecutor implements TaskCapableExecutor {
     if (this.activeTurnIdsBySession.get(turn.sessionId) === turn.turnId) {
       this.activeTurnIdsBySession.delete(turn.sessionId);
       if (advanceQueue) {
-        this.launchNextPromptTurn(turn.sessionId);
+        // Delay launching the next turn after cancel/timeout to let downstream finish cleanup
+        if (turn.finishedAsCancelOrTimeout) {
+          setTimeout(() => this.launchNextPromptTurn(turn.sessionId), ACP_TURN_TRANSITION_DELAY_MS);
+        } else {
+          this.launchNextPromptTurn(turn.sessionId);
+        }
       }
       return;
     }
@@ -1244,35 +1268,70 @@ export class AcpExecutor implements TaskCapableExecutor {
     turn.trackedMessageIds.clear();
   }
 
-  private clearPendingPermissionRequest(turn: PromptTurnState, permissionId?: string): void {
-    const targetPermissionId = permissionId ?? turn.permissionRequest?.permissionId;
-    if (!targetPermissionId) {
-      turn.permissionRequest = undefined;
-      return;
-    }
-
-    this.pendingPermissionRequests.delete(targetPermissionId);
-    if (turn.permissionRequest?.permissionId === targetPermissionId) {
-      turn.permissionRequest = undefined;
-    }
+  private removePendingPermissionRequest(turn: PromptTurnState, permissionId: string): void {
+    this.pendingPermissionRequests.delete(permissionId);
+    turn.permissionRequests = turn.permissionRequests.filter((r) => r.permissionId !== permissionId);
   }
 
-  private async cancelPendingPermissionRequest(turn: PromptTurnState): Promise<void> {
-    const permissionId = turn.permissionRequest?.permissionId;
-    if (!permissionId) {
+  private clearAllPendingPermissionRequests(turn: PromptTurnState): void {
+    for (const req of turn.permissionRequests ?? []) {
+      this.pendingPermissionRequests.delete(req.permissionId);
+    }
+    turn.permissionRequests = [];
+  }
+
+  private async cancelAllPendingPermissionRequests(turn: PromptTurnState): Promise<void> {
+    const requests = [...(turn.permissionRequests ?? [])];
+    for (const req of requests) {
+      const pending = this.pendingPermissionRequests.get(req.permissionId);
+      if (pending) {
+        await this.sendJsonRpcResult(pending.appId, pending.downstreamRequestId, {
+          outcome: { outcome: 'cancelled' },
+        });
+      }
+    }
+    this.clearAllPendingPermissionRequests(turn);
+  }
+
+  private startPermissionTimer(turn: PromptTurnState): void {
+    // Only start the timer once per waiting_permission phase
+    if (turn.permissionTimer) {
       return;
     }
 
-    const pending = this.pendingPermissionRequests.get(permissionId);
-    if (!pending) {
-      turn.permissionRequest = undefined;
-      return;
-    }
+    turn.permissionTimer = setTimeout(() => {
+      turn.permissionTimer = undefined;
+      const liveTurn = this.promptTurns.get(turn.turnId);
+      if (!liveTurn || liveTurn.done || liveTurn.state !== 'waiting_permission') {
+        return;
+      }
 
-    await this.sendJsonRpcResult(pending.appId, pending.downstreamRequestId, {
-      outcome: { outcome: 'cancelled' },
-    });
-    this.clearPendingPermissionRequest(turn, permissionId);
+      logger.warn(
+        {
+          sessionId: liveTurn.sessionId,
+          turnId: liveTurn.turnId,
+          pendingCount: liveTurn.permissionRequests.length,
+          timeoutMs: ACP_PERMISSION_TIMEOUT_MS,
+        },
+        'ACP permission request(s) timed out'
+      );
+
+      void this.cancelAllPendingPermissionRequests(liveTurn).then(() => {
+        if (!liveTurn.done) {
+          this.finishPromptTurn(liveTurn, 'failed', {
+            code: 'permission_timeout',
+            message: `Permission request(s) not resolved within ${ACP_PERMISSION_TIMEOUT_MS}ms.`,
+          });
+        }
+      });
+    }, ACP_PERMISSION_TIMEOUT_MS);
+  }
+
+  private clearPermissionTimer(turn: PromptTurnState): void {
+    if (turn.permissionTimer) {
+      clearTimeout(turn.permissionTimer);
+      turn.permissionTimer = undefined;
+    }
   }
 
   private async sendNotification(

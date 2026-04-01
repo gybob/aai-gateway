@@ -122,44 +122,47 @@ export const ACP_TOOL_SCHEMAS: ToolSchema[] = [
             additionalProperties: true,
           },
         },
-        permissionRequest: {
-          type: ['object', 'null'],
+        permissionRequests: {
+          type: 'array',
           description:
-            'Present only when state=waiting_permission. Ask the user to choose one option, then call turn/respondPermission.',
-          required: ['permissionId', 'title', 'options'],
-          properties: {
-            permissionId: {
-              type: 'string',
-              description: 'Opaque gateway permission request ID.',
-            },
-            title: {
-              type: 'string',
-              description: 'Short title describing what the downstream agent wants to do.',
-            },
-            description: {
-              type: 'string',
-              description: 'Optional user-facing detail for the permission request.',
-            },
-            options: {
-              type: 'array',
-              items: {
-                type: 'object',
-                required: ['id', 'label'],
-                properties: {
-                  id: {
-                    type: 'string',
-                    description: 'Option ID to pass back in turn/respondPermission.decision.optionId.',
+            'Present only when state=waiting_permission. Each entry is a separate permission request from the downstream agent. Respond to each via turn/respondPermission.',
+          items: {
+            type: 'object',
+            required: ['permissionId', 'title', 'options'],
+            properties: {
+              permissionId: {
+                type: 'string',
+                description: 'Opaque gateway permission request ID.',
+              },
+              title: {
+                type: 'string',
+                description: 'Short title describing what the downstream agent wants to do.',
+              },
+              description: {
+                type: 'string',
+                description: 'Optional user-facing detail for the permission request.',
+              },
+              options: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  required: ['id', 'label'],
+                  properties: {
+                    id: {
+                      type: 'string',
+                      description: 'Option ID to pass back in turn/respondPermission.decision.optionId.',
+                    },
+                    label: {
+                      type: 'string',
+                      description: 'User-facing permission option label.',
+                    },
                   },
-                  label: {
-                    type: 'string',
-                    description: 'User-facing permission option label.',
-                  },
+                  additionalProperties: false,
                 },
-                additionalProperties: false,
               },
             },
+            additionalProperties: false,
           },
-          additionalProperties: false,
         },
         stopReason: {
           type: ['string', 'null'],
@@ -231,7 +234,12 @@ export const ACP_TOOL_SCHEMAS: ToolSchema[] = [
         accepted: {
           type: 'boolean',
           description:
-            'True when the permission response was accepted by the gateway and forwarded downstream.',
+            'True when the permission response was accepted by the gateway and forwarded downstream. False if the permission expired or the turn already finished.',
+        },
+        reason: {
+          type: 'string',
+          enum: ['expired', 'turn_finished'],
+          description: 'Present when accepted=false. Indicates why the permission response was not forwarded.',
         },
       },
       additionalProperties: false,

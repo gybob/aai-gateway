@@ -6,25 +6,31 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { generateAppGuideMarkdown, generateGuideToolSummary } from './guides/app-guide-generator.js';
 import { AcpExecutor } from './executors/acp.js';
 import { appId, descriptor } from './discovery/descriptors/codex-agent.js';
-import { buildGatewayToolDefinitions } from './mcp/server.js';
+import { AaiGatewayServer, buildGatewayToolDefinitions } from './mcp/server.js';
 import { importMcpServer } from './mcp/importer.js';
 
 describe('ACP guide metadata', () => {
-  it('includes ACP tool descriptions and schemas in the generated app guide', async () => {
+  it('renders ACP app guides with exec instructions and examples but without schemas', async () => {
     const executor = new AcpExecutor();
     const capabilities = await executor.loadAppCapabilities(appId, descriptor.access.config);
     const guide = generateAppGuideMarkdown(appId, descriptor, capabilities);
 
+    expect(guide).toContain('This is only an operation guide for tools in this app. To perform the actual operation, you must call `aai:exec`.');
+    expect(guide).toContain('The `aai:exec` tool accepts three parameters: `app`, `tool`, and `args`.');
+    expect(guide).toContain(`set \`app\` to "${appId}"`);
     expect(guide).not.toContain('No description provided.');
     expect(guide).toContain('### session/new');
     expect(guide).toContain('### turn/start');
     expect(guide).toContain('### turn/respondPermission');
     expect(guide).toContain('Create a new ACP session');
     expect(guide).toContain('### turn/cancel');
-    expect(guide).toContain('"inputSchema"');
+    expect(guide).not.toContain('"inputSchema"');
     expect(guide).not.toContain('## Schema Lookup');
-    expect(guide).toContain('## Examples');
-    expect(guide).toContain('aai:exec');
+    expect(guide).not.toContain('## Examples');
+    expect(guide).toContain("Example `aai:exec` call:");
+    expect(guide).toContain('"tool": "aai:exec"');
+    expect(guide).toContain('"tool": "session/new"');
+    expect(guide).toContain('"tool": "turn/start"');
     expect(guide).not.toContain('Protocol:');
   });
 
@@ -32,6 +38,180 @@ describe('ACP guide metadata', () => {
     expect(generateGuideToolSummary(appId, descriptor)).toBe(
       `Codex. ${descriptor.exposure.summary} Guide tool, no arguments.`
     );
+  });
+
+  it('renders MCP app guides with execution instructions before schemas', () => {
+    const guide = generateAppGuideMarkdown(
+      'brave-search',
+      {
+        app: {
+          name: {
+            default: 'Brave Search',
+          },
+        },
+        access: {
+          protocol: 'mcp',
+        },
+        exposure: {
+          summary: 'Use this MCP for Brave web search.',
+        },
+      } as any,
+      {
+        title: 'MCP Tools',
+        tools: [
+          {
+            name: 'search',
+            description: 'Run a web search using Brave Search.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                query: {
+                  type: 'string',
+                },
+              },
+              required: ['query'],
+            },
+          },
+        ],
+      }
+    );
+
+    expect(guide).toContain('This is only an operation guide for tools in this app. To perform the actual operation, you must call `aai:exec`.');
+    expect(guide).toContain('The `aai:exec` tool accepts three parameters: `app`, `tool`, and `args`.');
+    expect(guide).toContain('set `app` to "brave-search"');
+    expect(guide).toContain('set `tool` to one of the tool names below');
+    expect(guide).not.toContain('- App ID:');
+    expect(guide).not.toContain('- Summary:');
+    expect(guide).not.toContain('## Examples');
+    expect(guide).toContain('### search');
+    expect(guide).toContain('"inputSchema"');
+  });
+});
+
+describe('Gateway guide formatting', () => {
+  it('renders mcp:import with exec instructions and complete examples', async () => {
+    const server = new AaiGatewayServer();
+    const result = await (server as any).handleGatewayToolGuide('mcp:import');
+    const guide = result.content[0]?.text ?? '';
+
+    expect(guide).toContain('This is only an operation guide for `mcp:import`. To perform the actual operation, you must call `aai:exec`.');
+    expect(guide).toContain('The `aai:exec` tool accepts three parameters: `app`, `tool`, and `args`.');
+    expect(guide).toContain('leave `app` empty, set `tool` to `"mcp:import"`');
+    expect(guide).toContain('The examples below are complete `aai:exec` calls.');
+    expect(guide).toContain('"tool": "aai:exec"');
+    expect(guide).not.toContain('## Schema');
+    expect(guide).toContain('## Parameters');
+    expect(guide).toContain('is a sensitive secrets file.');
+    expect(guide).toContain('Do not read, summarize, or repeat its contents.');
+    expect(guide).toContain('Never ask the user to send API keys, tokens, or any other secret values in chat.');
+    expect(guide).toContain('Provide a configuration example such as `BRAVE_API_KEY=your_api_key_here`');
+    expect(guide).toContain('Only after the user has obtained the required values, open');
+    expect(guide).toContain('The file may be shown to the user, but you must not read, summarize, or repeat its contents.');
+  });
+
+  it('renders skill:import with the same exec guidance format', async () => {
+    const server = new AaiGatewayServer();
+    const result = await (server as any).handleGatewayToolGuide('skill:import');
+    const guide = result.content[0]?.text ?? '';
+
+    expect(guide).toContain('This is only an operation guide for `skill:import`. To perform the actual operation, you must call `aai:exec`.');
+    expect(guide).toContain('The `aai:exec` tool accepts three parameters: `app`, `tool`, and `args`.');
+    expect(guide).toContain('leave `app` empty, set `tool` to "skill:import"');
+    expect(guide).toContain('## Examples');
+    expect(guide).toContain('"tool": "aai:exec"');
+    expect(guide).not.toContain('## Schema');
+  });
+});
+
+describe('App policy and agent overrides', () => {
+  function createCaller(id: string) {
+    return {
+      id,
+      name: id,
+      transport: 'mcp',
+      type: 'codex',
+    } as const;
+  }
+
+  function createApp(appId: string, source: 'mcp-import' | 'skill-import' = 'mcp-import') {
+    return {
+      appId,
+      source,
+      descriptor: {
+        schemaVersion: '2.0',
+        version: '1.0.0',
+        app: {
+          name: {
+            default: appId,
+          },
+        },
+        access: {
+          protocol: 'mcp',
+        },
+        exposure: {
+          summary: `Summary for ${appId}`,
+        },
+      },
+    } as any;
+  }
+
+  it('lists importer-only apps for every agent and allows other agents to enable them', async () => {
+    const previousHome = process.env.AAI_HOME;
+    process.env.AAI_HOME = join(tmpdir(), `aai-gateway-policy-${Date.now()}`);
+
+    try {
+      const server = new AaiGatewayServer();
+      (server as any).appRegistry.set('brave-search', createApp('brave-search'));
+
+      const importer = createCaller('agent-importer');
+      const otherAgent = createCaller('agent-other');
+
+      const { saveAppPolicyState } = await import('./storage/agent-state.js');
+      await saveAppPolicyState('brave-search', {
+        defaultEnabled: 'importer-only',
+        importerAgentId: importer.id,
+        updatedAt: new Date().toISOString(),
+      });
+
+      const importerTools = await server.listToolsForCaller(importer);
+      expect(importerTools.map((tool) => tool.name)).toContain('app:brave-search');
+
+      const otherToolsBefore = await server.listToolsForCaller(otherAgent);
+      expect(otherToolsBefore.map((tool) => tool.name)).not.toContain('app:brave-search');
+
+      const otherListBefore = await (server as any).handleListAllApps(otherAgent);
+      expect(otherListBefore.structuredContent).toEqual({
+        apps: [
+          expect.objectContaining({
+            app: 'brave-search',
+            enabled: false,
+            removable: true,
+          }),
+        ],
+      });
+
+      await (server as any).handleEnableApp({ app: 'brave-search' }, otherAgent);
+
+      const otherToolsAfter = await server.listToolsForCaller(otherAgent);
+      expect(otherToolsAfter.map((tool) => tool.name)).toContain('app:brave-search');
+
+      const otherListAfter = await (server as any).handleListAllApps(otherAgent);
+      expect(otherListAfter.structuredContent).toEqual({
+        apps: [
+          expect.objectContaining({
+            app: 'brave-search',
+            enabled: true,
+            removable: true,
+          }),
+        ],
+      });
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.AAI_HOME;
+      } else {
+        process.env.AAI_HOME = previousHome;
+      }
+    }
   });
 });
 
@@ -81,6 +261,7 @@ describe('ACP prompt polling aggregation', () => {
       pendingContent: [],
       done: false,
       state: 'running',
+      permissionRequests: [],
       waiters: new Set(),
       lastTouchedAt: Date.now(),
       lastUpdateAt: Date.now(),
@@ -326,18 +507,20 @@ describe('ACP prompt polling aggregation', () => {
       sessionId: 'session-perm',
       done: false,
       state: 'waiting_permission',
-      message: 'Waiting for user permission.',
+      message: 'Waiting for 1 permission(s).',
       content: [],
-      permissionRequest: {
-        title: 'Delete file',
-        description: 'Delete /repo/tmp.txt',
-        options: [
-          { id: 'allow_once', label: 'Allow once' },
-          { id: 'reject_once', label: 'Reject' },
-        ],
-      },
+      permissionRequests: [
+        {
+          title: 'Delete file',
+          description: 'Delete /repo/tmp.txt',
+          options: [
+            { id: 'allow_once', label: 'Allow once' },
+            { id: 'reject_once', label: 'Reject' },
+          ],
+        },
+      ],
     });
-    expect((result.permissionRequest as { permissionId: string }).permissionId).toBeTruthy();
+    expect((result.permissionRequests as { permissionId: string }[])[0].permissionId).toBeTruthy();
   });
 
   it('forwards turn/respondPermission to the downstream request and resumes the turn', async () => {
@@ -351,11 +534,13 @@ describe('ACP prompt polling aggregation', () => {
     const permissionId = 'perm-1';
 
     turn.state = 'waiting_permission';
-    turn.permissionRequest = {
-      permissionId,
-      title: 'Delete file',
-      options: [{ id: 'allow_once', label: 'Allow once' }],
-    };
+    turn.permissionRequests = [
+      {
+        permissionId,
+        title: 'Delete file',
+        options: [{ id: 'allow_once', label: 'Allow once' }],
+      },
+    ];
 
     executor.promptTurns.set(turn.turnId, turn);
     executor.pendingPermissionRequests.set(permissionId, {
@@ -385,7 +570,7 @@ describe('ACP prompt polling aggregation', () => {
       outcome: { outcome: 'selected', optionId: 'allow_once' },
     });
     expect(turn.state).toBe('running');
-    expect(turn.permissionRequest).toBeUndefined();
+    expect(turn.permissionRequests).toEqual([]);
   });
 
   it('fails a turn after prolonged downstream inactivity', async () => {
@@ -486,6 +671,9 @@ describe('ACP prompt polling aggregation', () => {
     });
 
     executor.completePromptTurn(activeTurn.turnId, { stopReason: 'cancelled' });
+
+    // After cancel/timeout, there's a 2s cooldown delay before launching the next turn
+    vi.advanceTimersByTime(2_000);
 
     expect(executor.activeTurnIdsBySession.get(activeTurn.sessionId)).toBe(queuedTurn.turnId);
     expect(queuedTurn.state).toBe('running');
