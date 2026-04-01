@@ -1,5 +1,3 @@
-import { rm } from 'node:fs/promises';
-
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
@@ -22,16 +20,13 @@ import { logger } from '../utils/logger.js';
 import { AAI_GATEWAY_NAME, AAI_GATEWAY_VERSION } from '../version.js';
 
 import { generateSkillCreateGuide } from '../guides/skill-create-guide.js';
-import { writeAppProxySkill, type SkillImportMode } from '../guides/skill-stub-generator.js';
+import { type SkillImportMode } from '../guides/skill-stub-generator.js';
 import {
   buildMcpImportConfig,
   buildSkillImportSource,
-  deleteImportedMcpHeaders,
   discoverMcpImport,
   EXPOSURE_LIMITS,
   IMPORT_LIMITS,
-  importMcpServer,
-  importSkill,
   normalizeSummaryInput,
   validateImportHeaders,
 } from './importer.js';
@@ -45,18 +40,11 @@ import type { CallerContext } from '../types/caller.js';
 import { createMcpCallerContext } from '../utils/caller-context.js';
 import { getDotenvPath } from '../utils/dotenv.js';
 import {
-  deleteAppPolicyState,
   disableAppForAgent,
   enableAppForAgent,
   loadAppPolicyState,
-  removeAppFromAllAgents,
-  saveAgentState,
-  saveAppPolicyState,
   upsertAgentState,
 } from '../storage/agent-state.js';
-import { getManagedAppDir } from '../storage/paths.js';
-import { getMcpRegistry } from '../storage/mcp-registry.js';
-import { getSkillRegistry } from '../storage/skill-registry.js';
 import {
   BackgroundTaskManager,
   DiscoveryBackgroundTask,
@@ -65,6 +53,7 @@ import {
   AppRegistry,
   ExecutionCoordinator,
   GuideService,
+  ImportService,
 } from '../core/index.js';
 
 interface GatewayToolDefinition {
@@ -85,6 +74,7 @@ export class AaiGatewayServer {
   private readonly backgroundTasks = new BackgroundTaskManager();
   private executionCoordinator!: ExecutionCoordinator;
   private readonly guideService = new GuideService();
+  private importService!: ImportService;
 
   constructor(options?: DiscoveryOptions) {
     this.options = options ?? {};
@@ -106,6 +96,7 @@ export class AaiGatewayServer {
 
     // Initialize core services
     this.executionCoordinator = new ExecutionCoordinator(this.secureStorage, this.consentManager);
+    this.importService = new ImportService(this.secureStorage, this.appRegistry);
 
     // Initialize MCP executor with secure storage for headers
     getMcpExecutor(this.secureStorage);
@@ -441,31 +432,23 @@ export class AaiGatewayServer {
         };
       }
 
-      const result = await importMcpServer(getMcpExecutor(), this.secureStorage, {
-        name: options.name,
-        config: options.config,
-        headers: options.headers,
-        summary: options.metadata.summary,
-      });
-      await saveAppPolicyState(result.entry.appId, {
-        defaultEnabled: options.metadata.enableScope === 'current' ? 'importer-only' : 'all',
-        importerAgentId: caller.id,
-        updatedAt: new Date().toISOString(),
-      });
-
-      this.appRegistry.set(result.entry.appId, {
-        appId: result.entry.appId,
-        descriptor: result.descriptor,
-        source: 'mcp-import',
-        location: result.entry.descriptorPath,
-      });
+      const result = await this.importService.importMcp(
+        {
+          name: options.name,
+          config: options.config,
+          headers: options.headers,
+          summary: options.metadata.summary,
+          enableScope: options.metadata.enableScope,
+        },
+        caller
+      );
 
       logger.info(
         {
           tool: 'mcp:import',
           phase: 'import',
-          appId: result.entry.appId,
-          descriptorPath: result.entry.descriptorPath,
+          appId: result.appId,
+          descriptorPath: result.managedPath,
           toolCount: result.tools.length,
         },
         'MCP import completed'
@@ -489,19 +472,14 @@ export class AaiGatewayServer {
             type: 'text',
             text: [
               `Imported MCP app: ${result.descriptor.app.name.default}`,
-              `App ID: ${result.entry.appId}`,
-              `App tool prefix: app:${result.entry.appId}`,
-              `Descriptor: ${result.entry.descriptorPath}`,
+              `App ID: ${result.appId}`,
+              `App tool prefix: app:${result.appId}`,
+              `Descriptor: ${result.managedPath}`,
               `Summary: ${result.descriptor.exposure.summary}`,
               `Default enabled for: ${options.metadata.enableScope === 'current' ? 'importing agent only' : 'all agents'}`,
-              ...(result.warnings ?? []),
               '✓ 新工具已可用，Agent 无需重启即可感知。',
               '',
-              this.guideService.generateAppGuide(
-                result.entry.appId,
-                result.descriptor,
-                capabilities
-              ),
+              this.guideService.generateAppGuide(result.appId, result.descriptor, capabilities),
             ].join('\n'),
           },
         ],
@@ -539,48 +517,13 @@ export class AaiGatewayServer {
         'Skill import request started'
       );
 
-      const result = await importSkill({
-        path: options.path,
-      });
-      await saveAppPolicyState(result.appId, {
-        defaultEnabled: 'importer-only',
-        importerAgentId: caller.id,
-        updatedAt: new Date().toISOString(),
-      });
-
-      const agentState = await upsertAgentState({
-        agentId: caller.id,
-        callerName: caller.name,
-        agentType: caller.type,
-        skillDir: caller.skillDir,
-      });
-
-      let stubPath: string | undefined;
-      if (options.importMode === 'auto') {
-        if (!agentState.skillDir) {
-          throw new AaiError(
-            'INVALID_REQUEST',
-            'Current agent does not expose a skills directory. Import the skill in manual mode or configure AAI_GATEWAY_SKILL_DIR.'
-          );
-        }
-        stubPath = await writeAppProxySkill({
-          skillsDir: agentState.skillDir,
-          name: result.descriptor.app.name.default,
-          appId: result.appId,
-          summary: result.descriptor.exposure.summary,
-          mode: 'auto',
-        });
-        agentState.generatedStubs[result.appId] = stubPath;
-        agentState.updatedAt = new Date().toISOString();
-        await saveAgentState(agentState);
-      }
-
-      this.appRegistry.set(result.appId, {
-        appId: result.appId,
-        descriptor: result.descriptor,
-        source: 'skill-import',
-        location: result.managedPath,
-      });
+      const result = await this.importService.importSkill(
+        {
+          path: options.path,
+          importMode: options.importMode,
+        },
+        caller
+      );
 
       logger.info(
         {
@@ -627,7 +570,6 @@ export class AaiGatewayServer {
               `Summary: ${result.descriptor.exposure.summary}`,
               'Default enabled for: importing agent only',
               `Current-agent trigger mode: ${options.importMode}`,
-              ...(stubPath ? [`Generated proxy skill: ${stubPath}`] : []),
               '✓ 新工具已可用，Agent 无需重启即可感知。',
               '',
               this.guideService.generateAppGuide(result.appId, result.descriptor, capabilities),
@@ -793,17 +735,7 @@ export class AaiGatewayServer {
       );
     }
 
-    if (app.source === 'mcp-import') {
-      await getMcpRegistry().delete(appId);
-      await deleteImportedMcpHeaders(this.secureStorage, appId);
-    } else {
-      await getSkillRegistry().delete(appId);
-    }
-
-    await deleteAppPolicyState(appId);
-    await removeAppFromAllAgents(appId);
-    await rm(getManagedAppDir(appId), { recursive: true, force: true });
-    this.appRegistry.delete(appId);
+    await this.importService.removeApp(appId);
     await this.notifyToolsListChanged();
 
     const payload = {
