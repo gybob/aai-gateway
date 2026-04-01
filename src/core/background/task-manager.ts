@@ -3,7 +3,7 @@
  *
  * Provides a unified interface for background tasks that run during AAI Gateway lifetime.
  * Tasks can:
- * - Run once at startup
+ * - Run once at startup (potentially with dependencies on other tasks)
  * - Run periodically at a specified interval
  * - Be gracefully stopped
  */
@@ -12,6 +12,7 @@ import { logger } from '../../utils/logger.js';
 
 export interface BackgroundTask {
   readonly name: string;
+  readonly dependencies?: string[];
   start(): Promise<void>;
   stop(): void;
 }
@@ -27,7 +28,10 @@ export class BackgroundTaskManager {
       return;
     }
     this.tasks.set(task.name, task);
-    logger.debug({ task: task.name }, 'Background task registered');
+    logger.debug(
+      { task: task.name, dependencies: task.dependencies },
+      'Background task registered'
+    );
   }
 
   async startAll(): Promise<void> {
@@ -37,9 +41,15 @@ export class BackgroundTaskManager {
     }
     this.started = true;
 
-    logger.info({ count: this.tasks.size }, 'Starting all background tasks');
+    const executionOrder = this.resolveDependencies();
+    logger.info({ count: this.tasks.size, order: executionOrder }, 'Starting all background tasks');
 
-    for (const [name, task] of this.tasks) {
+    for (const name of executionOrder) {
+      const task = this.tasks.get(name);
+      if (!task) {
+        continue;
+      }
+
       try {
         await task.start();
         logger.info({ task: name }, 'Background task started');
@@ -49,6 +59,35 @@ export class BackgroundTaskManager {
     }
   }
 
+  private resolveDependencies(): string[] {
+    const visited = new Set<string>();
+    const result: string[] = [];
+
+    const visit = (name: string) => {
+      if (visited.has(name)) {
+        return;
+      }
+      visited.add(name);
+
+      const task = this.tasks.get(name);
+      if (task?.dependencies) {
+        for (const dep of task.dependencies) {
+          if (this.tasks.has(dep)) {
+            visit(dep);
+          }
+        }
+      }
+
+      result.push(name);
+    };
+
+    for (const name of this.tasks.keys()) {
+      visit(name);
+    }
+
+    return result;
+  }
+
   stopAll(): void {
     if (!this.started) {
       return;
@@ -56,9 +95,8 @@ export class BackgroundTaskManager {
 
     logger.info({ count: this.tasks.size }, 'Stopping all background tasks');
 
-    for (const [name, interval] of this.intervals) {
+    for (const [, interval] of this.intervals) {
       clearInterval(interval);
-      logger.debug({ task: name }, 'Background task interval cleared');
     }
     this.intervals.clear();
 

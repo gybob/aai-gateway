@@ -13,28 +13,14 @@ import { createConsentDialog } from '../consent/dialog/index.js';
 import { ConsentManager } from '../consent/manager.js';
 import { createDiscoveryManager, type DiscoveryOptions } from '../discovery/index.js';
 import { AaiError } from '../errors/errors.js';
-import { getAcpExecutor } from '../executors/acp.js';
-import { legacyExecuteCli as executeCli, getCliExecutor } from '../executors/cli.js';
 import { getMcpExecutor } from '../executors/mcp.js';
-import type { Executor } from '../executors/interface.js';
-import { legacyExecuteSkill as executeSkill, getSkillExecutor } from '../executors/skill.js';
 import { createSecureStorage, type SecureStorage } from '../storage/secure-storage/index.js';
-import type { AaiJson, McpConfig, RuntimeAppRecord } from '../types/aai-json.js';
-import {
-  getLocalizedName,
-  isAcpAgentAccess,
-  isCliAccess,
-  isMcpAccess,
-  isSkillAccess,
-} from '../types/aai-json.js';
+import type { McpConfig, RuntimeAppRecord } from '../types/aai-json.js';
+import { getLocalizedName } from '../types/aai-json.js';
 import { getSystemLocale } from '../utils/locale.js';
 import { logger } from '../utils/logger.js';
 import { AAI_GATEWAY_NAME, AAI_GATEWAY_VERSION } from '../version.js';
 
-import {
-  generateAppGuideMarkdown,
-  generateGuideToolSummary,
-} from '../guides/app-guide-generator.js';
 import { generateSkillCreateGuide } from '../guides/skill-create-guide.js';
 import { writeAppProxySkill, type SkillImportMode } from '../guides/skill-stub-generator.js';
 import {
@@ -46,7 +32,6 @@ import {
   IMPORT_LIMITS,
   importMcpServer,
   importSkill,
-  loadImportedMcpHeaders,
   normalizeSummaryInput,
   validateImportHeaders,
 } from './importer.js';
@@ -56,7 +41,6 @@ import {
   searchDiscoverInputSchema,
   parseSearchDiscoverArguments,
 } from './search-guidance.js';
-import type { ExecutionObserver } from '../executors/events.js';
 import type { CallerContext } from '../types/caller.js';
 import { createMcpCallerContext } from '../utils/caller-context.js';
 import { getDotenvPath } from '../utils/dotenv.js';
@@ -73,9 +57,15 @@ import {
 import { getManagedAppDir } from '../storage/paths.js';
 import { getMcpRegistry } from '../storage/mcp-registry.js';
 import { getSkillRegistry } from '../storage/skill-registry.js';
-import { BackgroundTaskManager, TurnCleanupTask, type BackgroundTask } from '../core/index.js';
-
-const DOWNSTREAM_INACTIVITY_TIMEOUT_MS = 10 * 60_000;
+import {
+  BackgroundTaskManager,
+  DiscoveryBackgroundTask,
+  AcpPrewarmBackgroundTask,
+  TurnCleanupTask,
+  AppRegistry,
+  ExecutionCoordinator,
+  GuideService,
+} from '../core/index.js';
 
 interface GatewayToolDefinition {
   name: string;
@@ -87,12 +77,14 @@ interface GatewayToolDefinition {
 export class AaiGatewayServer {
   private readonly server: Server;
   private readonly options: DiscoveryOptions;
-  private readonly appRegistry = new Map<string, RuntimeAppRecord>();
+  private readonly appRegistry = new AppRegistry();
   private consentManager!: ConsentManager;
   private secureStorage!: SecureStorage;
   private callerContext?: CallerContext;
   private discoveryManager?: import('../discovery/manager.js').DiscoveryManager;
   private readonly backgroundTasks = new BackgroundTaskManager();
+  private executionCoordinator!: ExecutionCoordinator;
+  private readonly guideService = new GuideService();
 
   constructor(options?: DiscoveryOptions) {
     this.options = options ?? {};
@@ -112,6 +104,9 @@ export class AaiGatewayServer {
     this.secureStorage = createSecureStorage();
     this.consentManager = new ConsentManager(this.secureStorage, createConsentDialog());
 
+    // Initialize core services
+    this.executionCoordinator = new ExecutionCoordinator(this.secureStorage, this.consentManager);
+
     // Initialize MCP executor with secure storage for headers
     getMcpExecutor(this.secureStorage);
 
@@ -119,10 +114,12 @@ export class AaiGatewayServer {
     const { manager } = createDiscoveryManager();
     this.discoveryManager = manager;
 
-    // Register background tasks
+    // Register background tasks (order matters for dependencies)
+    // Discovery must run first, then AcpPrewarm depends on it
     this.backgroundTasks.register(
-      new StartupBackgroundTask(this.appRegistry, this.discoveryManager, this.options)
+      new DiscoveryBackgroundTask(this.appRegistry, this.discoveryManager, this.options)
     );
+    this.backgroundTasks.register(new AcpPrewarmBackgroundTask(this.appRegistry));
     this.backgroundTasks.register(new TurnCleanupTask());
 
     // Start all background tasks (non-blocking)
@@ -145,7 +142,7 @@ export class AaiGatewayServer {
     return [
       ...visibleApps.map((app) => ({
         name: `app:${app.appId}`,
-        description: generateGuideToolSummary(app.appId, app.descriptor),
+        description: this.guideService.generateToolSummary(app.appId, app.descriptor),
         inputSchema: { type: 'object', properties: {} },
       })),
       ...buildGatewayToolDefinitions().map((tool) => ({
@@ -262,7 +259,7 @@ export class AaiGatewayServer {
         inputSchema: Record<string, unknown>;
       }> = visibleApps.map((app) => ({
         name: `app:${app.appId}`,
-        description: generateGuideToolSummary(app.appId, app.descriptor),
+        description: this.guideService.generateToolSummary(app.appId, app.descriptor),
         inputSchema: { type: 'object', properties: {} },
       }));
 
@@ -344,14 +341,14 @@ export class AaiGatewayServer {
 
     const { descriptor } = app;
     const access = descriptor.access;
-    const executor = this.getExecutor(access.protocol);
+    const executor = this.executionCoordinator.getExecutor(access.protocol);
     const capabilities = await executor.loadAppCapabilities(appId, access.config as any);
 
     return {
       content: [
         {
           type: 'text',
-          text: generateAppGuideMarkdown(appId, descriptor, capabilities),
+          text: this.guideService.generateAppGuide(appId, descriptor, capabilities),
         },
       ],
     };
@@ -500,7 +497,11 @@ export class AaiGatewayServer {
               ...(result.warnings ?? []),
               '✓ 新工具已可用，Agent 无需重启即可感知。',
               '',
-              generateAppGuideMarkdown(result.entry.appId, result.descriptor, capabilities),
+              this.guideService.generateAppGuide(
+                result.entry.appId,
+                result.descriptor,
+                capabilities
+              ),
             ].join('\n'),
           },
         ],
@@ -594,7 +595,7 @@ export class AaiGatewayServer {
       // Notify clients that the tool list has changed (hot-reload)
       await this.notifyToolsListChanged();
 
-      const executor = this.getExecutor(result.descriptor.access.protocol);
+      const executor = this.executionCoordinator.getExecutor(result.descriptor.access.protocol);
       let capabilities;
       try {
         capabilities = await executor.loadAppCapabilities(
@@ -629,7 +630,7 @@ export class AaiGatewayServer {
               ...(stubPath ? [`Generated proxy skill: ${stubPath}`] : []),
               '✓ 新工具已可用，Agent 无需重启即可感知。',
               '',
-              generateAppGuideMarkdown(result.appId, result.descriptor, capabilities),
+              this.guideService.generateAppGuide(result.appId, result.descriptor, capabilities),
             ].join('\n'),
           },
         ],
@@ -865,7 +866,7 @@ export class AaiGatewayServer {
     );
 
     try {
-      const result = await this.executeAppWithInactivityTimeout(
+      const result = await this.executionCoordinator.executeWithInactivityTimeout(
         resolved.appId,
         resolved.descriptor,
         toolName,
@@ -965,162 +966,6 @@ export class AaiGatewayServer {
     throw new AaiError('UNKNOWN_APP', `App not found: ${appIdOrUrl}`);
   }
 
-  /**
-   * Get executor instance for a protocol
-   */
-  private getExecutor(protocol: string): Executor {
-    switch (protocol) {
-      case 'mcp':
-        return getMcpExecutor(this.secureStorage);
-      case 'skill':
-        return getSkillExecutor();
-      case 'acp-agent':
-        return getAcpExecutor();
-      case 'cli':
-        return getCliExecutor();
-      default:
-        throw new AaiError(
-          'NOT_IMPLEMENTED',
-          `Protocol '${protocol}' does not support app capabilities`
-        );
-    }
-  }
-
-  private async executeApp(
-    appId: string,
-    descriptor: AaiJson,
-    toolName: string,
-    args: Record<string, unknown>,
-    observer?: import('../executors/events.js').ExecutionObserver
-  ): Promise<unknown> {
-    const access = descriptor.access;
-
-    if (isMcpAccess(access)) {
-      // MCP executor handles schema validation internally
-      const executor = getMcpExecutor();
-      const headers = await loadImportedMcpHeaders(this.secureStorage, appId);
-      return executor.callTool(
-        {
-          appId,
-          config: access.config,
-          headers,
-        },
-        toolName,
-        args,
-        observer
-      );
-    }
-
-    if (isSkillAccess(access)) {
-      return executeSkill(access.config as any, toolName, args);
-    }
-
-    if (isAcpAgentAccess(access)) {
-      // ACP executor handles schema validation internally
-      const executor = getAcpExecutor();
-      if (observer && executor.executeWithObserver) {
-        return executor.executeWithObserver(appId, access.config, toolName, args, observer);
-      }
-      return executor.execute(appId, access.config, toolName, args);
-    }
-
-    if (isCliAccess(access)) {
-      return executeCli(access.config, toolName, args);
-    }
-
-    throw new AaiError('NOT_IMPLEMENTED', `Unsupported protocol ${JSON.stringify(access)}`);
-  }
-
-  private async executeAppWithInactivityTimeout(
-    appId: string,
-    descriptor: AaiJson,
-    toolName: string,
-    args: Record<string, unknown>,
-    observer?: ExecutionObserver
-  ): Promise<unknown> {
-    const timeoutMs = this.getDownstreamInactivityTimeoutMs();
-
-    return new Promise((resolve, reject) => {
-      let completed = false;
-      let timer: NodeJS.Timeout | undefined;
-
-      const finish = (callback: () => void) => {
-        if (completed) {
-          return;
-        }
-        completed = true;
-        if (timer) {
-          clearTimeout(timer);
-        }
-        callback();
-      };
-
-      const scheduleTimeout = () => {
-        if (timer) {
-          clearTimeout(timer);
-        }
-        timer = setTimeout(() => {
-          const error = new AaiError(
-            'TIMEOUT',
-            `Downstream '${appId}' timed out after ${timeoutMs}ms without any activity`
-          );
-          void this.cleanupTimedOutExecution(appId, descriptor).finally(() => {
-            finish(() => reject(error));
-          });
-        }, timeoutMs);
-      };
-
-      const activityObserver = this.wrapExecutionObserver(observer, scheduleTimeout);
-      scheduleTimeout();
-
-      this.executeApp(appId, descriptor, toolName, args, activityObserver).then(
-        (result) => finish(() => resolve(result)),
-        (error) => finish(() => reject(error))
-      );
-    });
-  }
-
-  private getDownstreamInactivityTimeoutMs(): number {
-    return DOWNSTREAM_INACTIVITY_TIMEOUT_MS;
-  }
-
-  private wrapExecutionObserver(
-    observer: ExecutionObserver | undefined,
-    onActivity: () => void
-  ): ExecutionObserver {
-    return {
-      onMessage: async (event) => {
-        onActivity();
-        await observer?.onMessage?.(event);
-      },
-      onProgress: async (event) => {
-        onActivity();
-        await observer?.onProgress?.(event);
-      },
-      onTaskStatus: async (event) => {
-        onActivity();
-        await observer?.onTaskStatus?.(event);
-      },
-    };
-  }
-
-  private async cleanupTimedOutExecution(appId: string, descriptor: AaiJson): Promise<void> {
-    const access = descriptor.access;
-
-    try {
-      if (isMcpAccess(access)) {
-        await getMcpExecutor().close(appId);
-        return;
-      }
-
-      if (isAcpAgentAccess(access)) {
-        await getAcpExecutor().disconnect(appId);
-      }
-    } catch (err) {
-      logger.warn({ appId, err }, 'Failed to clean up timed out downstream execution');
-    }
-  }
-
   private toCallToolResult(result: unknown): CallToolResult {
     if (result && typeof result === 'object' && !Array.isArray(result)) {
       return {
@@ -1149,58 +994,6 @@ export class AaiGatewayServer {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
     logger.info('AAI Gateway started (stdio)');
-  }
-}
-
-class StartupBackgroundTask implements BackgroundTask {
-  readonly name = 'startup';
-
-  constructor(
-    private readonly appRegistry: Map<string, RuntimeAppRecord>,
-    private readonly discoveryManager: import('../discovery/manager.js').DiscoveryManager,
-    private readonly options: DiscoveryOptions | undefined
-  ) {}
-
-  async start(): Promise<void> {
-    // Step 1: Discovery (must complete before prewarm)
-    try {
-      const discoveredApps = await this.discoveryManager.scanAll(this.options);
-      for (const app of discoveredApps) {
-        this.appRegistry.set(app.appId, app);
-      }
-      logger.info({ count: discoveredApps.length }, 'Discovery completed');
-    } catch (err) {
-      logger.error({ err }, 'Discovery failed');
-      return; // Don't try to prewarm if discovery failed
-    }
-
-    // Step 2: Pre-warm ACP agents (after discovery completes)
-    await this.prewarmAcpAgents();
-  }
-
-  stop(): void {}
-
-  private async prewarmAcpAgents(): Promise<void> {
-    const { getAcpExecutor } = await import('../executors/acp.js');
-    const acpApps = Array.from(this.appRegistry.values()).filter(
-      (app) => app.descriptor.access.protocol === 'acp-agent'
-    );
-
-    if (acpApps.length === 0) return;
-
-    logger.info({ count: acpApps.length }, 'Pre-warming ACP agents');
-
-    for (const app of acpApps) {
-      const config = app.descriptor.access.config as import('../types/index.js').AcpAgentConfig;
-      void getAcpExecutor()
-        .connect(app.appId, config)
-        .then(() => {
-          logger.info({ appId: app.appId }, 'ACP agent pre-warm completed');
-        })
-        .catch((err) => {
-          logger.warn({ appId: app.appId, err }, 'ACP agent pre-warm failed (will retry lazily)');
-        });
-    }
   }
 }
 
