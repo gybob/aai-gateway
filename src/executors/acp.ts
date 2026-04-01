@@ -27,12 +27,7 @@ interface PendingRequest {
 
 type AcpContentBlock = Record<string, unknown> & { type: string };
 
-type GatewayTurnState =
-  | 'running'
-  | 'waiting_permission'
-  | 'completed'
-  | 'failed'
-  | 'cancelled';
+type GatewayTurnState = 'running' | 'waiting_permission' | 'completed' | 'failed' | 'cancelled';
 
 interface GatewayTurnError {
   code: string;
@@ -84,6 +79,7 @@ interface PromptTurnState {
   lastUpdateAt: number;
   params: Record<string, unknown>;
   awaitingDownstreamResponse?: boolean;
+  finishedAt?: number;
 }
 
 interface JsonRpcResponse {
@@ -119,13 +115,15 @@ const ACP_INITIALIZE_TIMEOUT_MS = 30000;
 const ACP_SESSION_TIMEOUT_MS = 30000;
 const ACP_POLL_WAIT_MS = 30000;
 const ACP_TURN_INACTIVITY_TIMEOUT_MS = 10 * 60_000;
-const ACP_TURN_TTL_MS = 15 * 60_000;
 const ACP_MAX_OUTPUT_CHARS = 200_000;
 const ACP_PERMISSION_TIMEOUT_MS = 5 * 60_000;
 const ACP_TURN_TRANSITION_DELAY_MS = 2_000;
 const ACP_EMPTY_TURN_THRESHOLD_MS = 1_000;
 
-function toToolSchemaReference(schema: { name: string; inputSchema: Record<string, unknown> }): Record<string, unknown> {
+function toToolSchemaReference(schema: {
+  name: string;
+  inputSchema: Record<string, unknown>;
+}): Record<string, unknown> {
   return {
     name: schema.name,
     inputSchema: schema.inputSchema,
@@ -144,14 +142,10 @@ function validateAcpArgs(tool: string, args: Record<string, unknown>): void {
   const result = validateArgs(args, schema.inputSchema);
   if (!result.valid) {
     const errorMessage = `参数校验失败 for '${tool}'\n${formatValidationErrors(result)}`;
-    throw new AaiError(
-      'INVALID_PARAMS',
-      errorMessage,
-      {
-        schema: toToolSchemaReference(schema),
-        validationErrors: result.errors,
-      }
-    );
+    throw new AaiError('INVALID_PARAMS', errorMessage, {
+      schema: toToolSchemaReference(schema),
+      validationErrors: result.errors,
+    });
   }
 }
 
@@ -171,6 +165,7 @@ export class AcpExecutor implements TaskCapableExecutor {
   private queuedTurnIdsBySession = new Map<string, string[]>();
   private sessionOwners = new Map<string, string>();
   private requestId = 0;
+  private turnCleanupInterval?: NodeJS.Timeout;
 
   constructor(private readonly pollWaitMs = ACP_POLL_WAIT_MS) {}
 
@@ -181,7 +176,6 @@ export class AcpExecutor implements TaskCapableExecutor {
   async disconnect(appId: string): Promise<void> {
     this.stop(appId);
   }
-
 
   /**
    * Load app-level capabilities with full tool schemas
@@ -821,7 +815,10 @@ export class AcpExecutor implements TaskCapableExecutor {
   private dispatchMessage(message: JsonRpcMessage): void {
     if (isJsonRpcRequest(message) && message.method === 'session/request_permission') {
       void this.handlePermissionRequest(message).catch((err) => {
-        logger.warn({ err, method: message.method, id: message.id }, 'Failed to handle ACP request');
+        logger.warn(
+          { err, method: message.method, id: message.id },
+          'Failed to handle ACP request'
+        );
       });
       return;
     }
@@ -987,6 +984,7 @@ export class AcpExecutor implements TaskCapableExecutor {
 
     turn.done = true;
     turn.state = state;
+    turn.finishedAt = Date.now();
     turn.message = undefined;
     turn.error = error;
     turn.stopReason = stopReason ?? null;
@@ -1009,7 +1007,6 @@ export class AcpExecutor implements TaskCapableExecutor {
       this.dequeuePromptTurn(turn.sessionId, turn.turnId);
     }
 
-    this.schedulePromptTurnCleanup(turn);
     logger.info(
       {
         appId: turn.appId,
@@ -1065,16 +1062,6 @@ export class AcpExecutor implements TaskCapableExecutor {
     }
 
     this.queuedTurnIdsBySession.set(sessionId, nextQueued);
-  }
-
-  private schedulePromptTurnCleanup(turn: PromptTurnState): void {
-    if (turn.cleanupTimer) {
-      clearTimeout(turn.cleanupTimer);
-    }
-
-    turn.cleanupTimer = setTimeout(() => {
-      this.removePromptTurn(turn.turnId);
-    }, ACP_TURN_TTL_MS);
   }
 
   private removePromptTurn(turnId: string): void {
@@ -1181,7 +1168,11 @@ export class AcpExecutor implements TaskCapableExecutor {
       }
 
       logger.warn(
-        { sessionId: nextTurn.sessionId, turnId: nextTurn.turnId, timeoutMs: ACP_SESSION_TIMEOUT_MS },
+        {
+          sessionId: nextTurn.sessionId,
+          turnId: nextTurn.turnId,
+          timeoutMs: ACP_SESSION_TIMEOUT_MS,
+        },
         'ACP prompt turn drain window expired; releasing session binding locally'
       );
       nextTurn.awaitingDownstreamResponse = false;
@@ -1249,11 +1240,7 @@ export class AcpExecutor implements TaskCapableExecutor {
     return this.promptTurns.get(activeTurnId);
   }
 
-  private bindMessageIdToTurn(
-    sessionId: string,
-    messageId: string,
-    turn: PromptTurnState
-  ): void {
+  private bindMessageIdToTurn(sessionId: string, messageId: string, turn: PromptTurnState): void {
     const key = buildSessionMessageKey(sessionId, messageId);
     this.trackedTurnIdsBySessionAndMessage.set(key, turn.turnId);
     turn.trackedMessageIds.add(messageId);
@@ -1270,7 +1257,9 @@ export class AcpExecutor implements TaskCapableExecutor {
 
   private removePendingPermissionRequest(turn: PromptTurnState, permissionId: string): void {
     this.pendingPermissionRequests.delete(permissionId);
-    turn.permissionRequests = turn.permissionRequests.filter((r) => r.permissionId !== permissionId);
+    turn.permissionRequests = turn.permissionRequests.filter(
+      (r) => r.permissionId !== permissionId
+    );
   }
 
   private clearAllPendingPermissionRequests(turn: PromptTurnState): void {
@@ -1382,6 +1371,39 @@ export class AcpExecutor implements TaskCapableExecutor {
     state.proc.stdin.write(`${payload}\n`);
   }
 
+  scheduleTurnCleanup(intervalMs: number, retentionMs: number): void {
+    if (this.turnCleanupInterval) {
+      clearInterval(this.turnCleanupInterval);
+    }
+
+    this.turnCleanupInterval = setInterval(() => {
+      this.cleanupFinishedTurns(retentionMs);
+    }, intervalMs);
+
+    logger.info({ intervalMs, retentionMs }, 'Turn cleanup scheduled');
+  }
+
+  unscheduleTurnCleanup(): void {
+    if (this.turnCleanupInterval) {
+      clearInterval(this.turnCleanupInterval);
+      this.turnCleanupInterval = undefined;
+      logger.info('Turn cleanup unscheduled');
+    }
+  }
+
+  cleanupFinishedTurns(retentionMs: number): number {
+    const cutoff = Date.now() - retentionMs;
+    let cleaned = 0;
+
+    for (const [turnId, turn] of this.promptTurns) {
+      if (turn.done && turn.finishedAt && turn.finishedAt < cutoff) {
+        this.removePromptTurn(turnId);
+        cleaned++;
+      }
+    }
+
+    return cleaned;
+  }
 }
 
 function isJsonRpcNotification(message: JsonRpcMessage): message is JsonRpcNotification {
@@ -1445,9 +1467,7 @@ function extractUpdateMessageId(params: unknown): string | undefined {
   return typeof messageId === 'string' && messageId.length > 0 ? messageId : undefined;
 }
 
-function extractTaskStatus(
-  params: unknown
-): {
+function extractTaskStatus(params: unknown): {
   status: 'queued' | 'working' | 'completed' | 'failed' | 'cancelled';
   message?: string;
 } | null {
@@ -1695,10 +1715,7 @@ function mergePromptText(
   };
 }
 
-function appendAccumulatedContentBlock(
-  target: AcpContentBlock[],
-  block: AcpContentBlock
-): boolean {
+function appendAccumulatedContentBlock(target: AcpContentBlock[], block: AcpContentBlock): boolean {
   const last = target[target.length - 1];
 
   if (block.type === 'text' && typeof block.text === 'string' && block.text.length === 0) {
@@ -1750,7 +1767,9 @@ function normalizeContentBlocks(candidates: unknown[]): AcpContentBlock[] {
     return blocks;
   }
 
-  const fragments = Array.from(new Set(candidates.flatMap((candidate) => collectTextFragments(candidate))));
+  const fragments = Array.from(
+    new Set(candidates.flatMap((candidate) => collectTextFragments(candidate)))
+  );
   return fragments.map((text) => ({ type: 'text', text }));
 }
 
@@ -1835,7 +1854,10 @@ function isContentBlock(value: Record<string, unknown>): boolean {
 
 function previewContentBlocks(blocks: AcpContentBlock[]): string | undefined {
   const texts = blocks
-    .filter((block): block is AcpContentBlock & { type: 'text'; text: string } => typeof block.text === 'string')
+    .filter(
+      (block): block is AcpContentBlock & { type: 'text'; text: string } =>
+        typeof block.text === 'string'
+    )
     .map((block) => block.text)
     .join('');
 
@@ -1870,7 +1892,9 @@ function createPendingPermissionRequest(
     'Permission request';
   const description =
     firstNonEmptyText(
-      toolCall ? collectTextFragments(toolCall.content ?? toolCall.rawInput ?? toolCall.rawOutput) : []
+      toolCall
+        ? collectTextFragments(toolCall.content ?? toolCall.rawInput ?? toolCall.rawOutput)
+        : []
     ) ??
     extractStringField(params ?? {}, 'detail') ??
     extractStringField(params ?? {}, 'message');
@@ -1900,7 +1924,12 @@ function normalizePermissionOptions(value: unknown): GatewayPermissionOption[] {
     const option = entry as Record<string, unknown>;
     const id = option.optionId;
     const label = option.name;
-    if (typeof id !== 'string' || id.length === 0 || typeof label !== 'string' || label.length === 0) {
+    if (
+      typeof id !== 'string' ||
+      id.length === 0 ||
+      typeof label !== 'string' ||
+      label.length === 0
+    ) {
       return [];
     }
 
@@ -1912,9 +1941,7 @@ function firstNonEmptyText(texts: string[]): string | undefined {
   return texts.find((text) => text.length > 0);
 }
 
-function toGatewayPermissionRequest(
-  pending: PendingPermissionRequest
-): GatewayPermissionRequest {
+function toGatewayPermissionRequest(pending: PendingPermissionRequest): GatewayPermissionRequest {
   return {
     permissionId: pending.permissionId,
     title: pending.title,
@@ -1928,14 +1955,13 @@ function extractStopReason(result: unknown): string | null {
     return null;
   }
 
-  const raw = (result as { stopReason?: unknown; stop_reason?: unknown }).stopReason ??
+  const raw =
+    (result as { stopReason?: unknown; stop_reason?: unknown }).stopReason ??
     (result as { stopReason?: unknown; stop_reason?: unknown }).stop_reason;
   return typeof raw === 'string' && raw.length > 0 ? raw : null;
 }
 
-function mapStopReasonToGatewayTurnState(
-  stopReason: string | null
-): 'completed' | 'cancelled' {
+function mapStopReasonToGatewayTurnState(stopReason: string | null): 'completed' | 'cancelled' {
   if (!stopReason) {
     return 'completed';
   }

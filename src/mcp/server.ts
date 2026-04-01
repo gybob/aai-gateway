@@ -14,22 +14,12 @@ import { ConsentManager } from '../consent/manager.js';
 import { createDiscoveryManager, type DiscoveryOptions } from '../discovery/index.js';
 import { AaiError } from '../errors/errors.js';
 import { getAcpExecutor } from '../executors/acp.js';
-import {
-  legacyExecuteCli as executeCli,
-  getCliExecutor,
-} from '../executors/cli.js';
+import { legacyExecuteCli as executeCli, getCliExecutor } from '../executors/cli.js';
 import { getMcpExecutor } from '../executors/mcp.js';
 import type { Executor } from '../executors/interface.js';
-import {
-  legacyExecuteSkill as executeSkill,
-  getSkillExecutor,
-} from '../executors/skill.js';
+import { legacyExecuteSkill as executeSkill, getSkillExecutor } from '../executors/skill.js';
 import { createSecureStorage, type SecureStorage } from '../storage/secure-storage/index.js';
-import type {
-  AaiJson,
-  McpConfig,
-  RuntimeAppRecord,
-} from '../types/aai-json.js';
+import type { AaiJson, McpConfig, RuntimeAppRecord } from '../types/aai-json.js';
 import {
   getLocalizedName,
   isAcpAgentAccess,
@@ -83,6 +73,7 @@ import {
 import { getManagedAppDir } from '../storage/paths.js';
 import { getMcpRegistry } from '../storage/mcp-registry.js';
 import { getSkillRegistry } from '../storage/skill-registry.js';
+import { BackgroundTaskManager, TurnCleanupTask, type BackgroundTask } from '../core/index.js';
 
 const DOWNSTREAM_INACTIVITY_TIMEOUT_MS = 10 * 60_000;
 
@@ -101,6 +92,7 @@ export class AaiGatewayServer {
   private secureStorage!: SecureStorage;
   private callerContext?: CallerContext;
   private discoveryManager?: import('../discovery/manager.js').DiscoveryManager;
+  private readonly backgroundTasks = new BackgroundTaskManager();
 
   constructor(options?: DiscoveryOptions) {
     this.options = options ?? {};
@@ -127,30 +119,27 @@ export class AaiGatewayServer {
     const { manager } = createDiscoveryManager();
     this.discoveryManager = manager;
 
-    try {
-      const discoveredApps = await this.discoveryManager.scanAll(this.options);
-      for (const app of discoveredApps) {
-        this.appRegistry.set(app.appId, app);
-      }
-      logger.info({ count: discoveredApps.length }, 'Discovery completed');
-    } catch (err) {
-      logger.error({ err }, 'Discovery failed');
-    }
+    // Register background tasks
+    this.backgroundTasks.register(
+      new StartupBackgroundTask(this.appRegistry, this.discoveryManager, this.options)
+    );
+    this.backgroundTasks.register(new TurnCleanupTask());
 
-    // Eagerly pre-warm ACP agent processes so the first prompt doesn't pay
-    // the full initialization + session-creation penalty (up to 90 s).
-    this.prewarmAcpAgents();
+    // Start all background tasks (non-blocking)
+    await this.backgroundTasks.startAll();
   }
 
   setCallerContext(caller: CallerContext): void {
     this.callerContext = caller;
   }
 
-  async listToolsForCaller(caller: CallerContext): Promise<Array<{
-    name: string;
-    description: string;
-    inputSchema: Record<string, unknown>;
-  }>> {
+  async listToolsForCaller(caller: CallerContext): Promise<
+    Array<{
+      name: string;
+      description: string;
+      inputSchema: Record<string, unknown>;
+    }>
+  > {
     this.setCallerContext(caller);
     const visibleApps = await this.listVisibleApps(caller);
     return [
@@ -190,37 +179,6 @@ export class AaiGatewayServer {
     );
   }
 
-  /**
-   * Pre-initializes all discovered ACP agents in the background so that the
-   * `initialize` + `session/new` handshake has already finished by the time a
-   * prompt request arrives.  Failures are non-fatal; the regular lazy path
-   * will retry when the prompt is actually executed.
-   */
-  private prewarmAcpAgents(): void {
-    const acpApps = Array.from(this.appRegistry.values()).filter(
-      (app) => app.descriptor.access.protocol === 'acp-agent'
-    );
-
-    if (acpApps.length === 0) return;
-
-    logger.info({ count: acpApps.length }, 'Pre-warming ACP agents');
-
-    for (const app of acpApps) {
-      const config = app.descriptor.access.config as import('../types/index.js').AcpAgentConfig;
-      void getAcpExecutor()
-        .connect(app.appId, config)
-        .then(() => {
-          logger.info({ appId: app.appId }, 'ACP agent pre-warm completed');
-        })
-        .catch((err) => {
-          logger.warn(
-            { appId: app.appId, err },
-            'ACP agent pre-warm failed (will retry lazily)'
-          );
-        });
-    }
-  }
-
   private requireCallerContext(transport: CallerContext['transport']): CallerContext {
     if (this.callerContext) {
       return this.callerContext;
@@ -242,10 +200,12 @@ export class AaiGatewayServer {
     return enabledApps.filter((app): app is RuntimeAppRecord => app !== null);
   }
 
-  private async listManageableApps(caller: CallerContext): Promise<Array<{
-    app: RuntimeAppRecord;
-    enabled: boolean;
-  }>> {
+  private async listManageableApps(caller: CallerContext): Promise<
+    Array<{
+      app: RuntimeAppRecord;
+      enabled: boolean;
+    }>
+  > {
     const apps = Array.from(this.appRegistry.values());
     const manageable = await Promise.all(
       apps.map(async (app) => {
@@ -644,7 +604,13 @@ export class AaiGatewayServer {
       } catch {
         capabilities = {
           title: 'Skill',
-          tools: [{ name: 'read', description: 'Read the skill documentation', inputSchema: { type: 'object' as const, properties: {} } }],
+          tools: [
+            {
+              name: 'read',
+              description: 'Read the skill documentation',
+              inputSchema: { type: 'object' as const, properties: {} },
+            },
+          ],
         };
       }
 
@@ -1013,7 +979,10 @@ export class AaiGatewayServer {
       case 'cli':
         return getCliExecutor();
       default:
-        throw new AaiError('NOT_IMPLEMENTED', `Protocol '${protocol}' does not support app capabilities`);
+        throw new AaiError(
+          'NOT_IMPLEMENTED',
+          `Protocol '${protocol}' does not support app capabilities`
+        );
     }
   }
 
@@ -1175,12 +1144,63 @@ export class AaiGatewayServer {
     };
   }
 
-
   async start(): Promise<void> {
     await this.initialize();
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
     logger.info('AAI Gateway started (stdio)');
+  }
+}
+
+class StartupBackgroundTask implements BackgroundTask {
+  readonly name = 'startup';
+
+  constructor(
+    private readonly appRegistry: Map<string, RuntimeAppRecord>,
+    private readonly discoveryManager: import('../discovery/manager.js').DiscoveryManager,
+    private readonly options: DiscoveryOptions | undefined
+  ) {}
+
+  async start(): Promise<void> {
+    // Step 1: Discovery (must complete before prewarm)
+    try {
+      const discoveredApps = await this.discoveryManager.scanAll(this.options);
+      for (const app of discoveredApps) {
+        this.appRegistry.set(app.appId, app);
+      }
+      logger.info({ count: discoveredApps.length }, 'Discovery completed');
+    } catch (err) {
+      logger.error({ err }, 'Discovery failed');
+      return; // Don't try to prewarm if discovery failed
+    }
+
+    // Step 2: Pre-warm ACP agents (after discovery completes)
+    await this.prewarmAcpAgents();
+  }
+
+  stop(): void {}
+
+  private async prewarmAcpAgents(): Promise<void> {
+    const { getAcpExecutor } = await import('../executors/acp.js');
+    const acpApps = Array.from(this.appRegistry.values()).filter(
+      (app) => app.descriptor.access.protocol === 'acp-agent'
+    );
+
+    if (acpApps.length === 0) return;
+
+    logger.info({ count: acpApps.length }, 'Pre-warming ACP agents');
+
+    for (const app of acpApps) {
+      const config = app.descriptor.access.config as import('../types/index.js').AcpAgentConfig;
+      void getAcpExecutor()
+        .connect(app.appId, config)
+        .then(() => {
+          logger.info({ appId: app.appId }, 'ACP agent pre-warm completed');
+        })
+        .catch((err) => {
+          logger.warn({ appId: app.appId, err }, 'ACP agent pre-warm failed (will retry lazily)');
+        });
+    }
   }
 }
 
@@ -1439,7 +1459,10 @@ function parseSkillImportMode(value: unknown): SkillImportMode {
   if (value === 'auto') {
     return 'auto';
   }
-  throw new AaiError('INVALID_REQUEST', "Skill import requires 'mode' to be either 'manual' or 'auto'");
+  throw new AaiError(
+    'INVALID_REQUEST',
+    "Skill import requires 'mode' to be either 'manual' or 'auto'"
+  );
 }
 
 function isStringRecord(value: unknown): value is Record<string, string> {
@@ -1450,10 +1473,7 @@ function isStringRecord(value: unknown): value is Record<string, string> {
   return Object.values(value).every((item) => typeof item === 'string');
 }
 
-function asOptionalStringRecord(
-  value: unknown,
-  field: string
-): Record<string, string> | undefined {
+function asOptionalStringRecord(value: unknown, field: string): Record<string, string> | undefined {
   const normalized = tryParseJsonString(value);
   value = normalized;
 
@@ -1474,10 +1494,7 @@ function tryParseJsonString(value: unknown): unknown {
   }
 
   const trimmed = value.trim();
-  if (
-    trimmed.length === 0 ||
-    (!trimmed.startsWith('[') && !trimmed.startsWith('{'))
-  ) {
+  if (trimmed.length === 0 || (!trimmed.startsWith('[') && !trimmed.startsWith('{'))) {
     return value;
   }
 
@@ -1492,7 +1509,12 @@ function normalizeArgumentsWithSchema(value: unknown, schema: Record<string, unk
   const normalized = parseJsonStringForExpectedType(value, schema);
   const type = schema.type as string | undefined;
 
-  if (type === 'object' && normalized && typeof normalized === 'object' && !Array.isArray(normalized)) {
+  if (
+    type === 'object' &&
+    normalized &&
+    typeof normalized === 'object' &&
+    !Array.isArray(normalized)
+  ) {
     const properties = schema.properties as Record<string, unknown> | undefined;
     const additionalProperties = schema.additionalProperties;
     const result: Record<string, unknown> = {};
@@ -1659,7 +1681,9 @@ function buildMissingEnvVarsResult(err: unknown): CallToolResult {
   };
 }
 
-function summarizeRawImportArgs(args: Record<string, unknown> | undefined): Record<string, unknown> {
+function summarizeRawImportArgs(
+  args: Record<string, unknown> | undefined
+): Record<string, unknown> {
   if (!args) {
     return {};
   }
@@ -1749,8 +1773,7 @@ export function buildGatewayToolDefinitions(): GatewayToolDefinition[] {
         properties: {
           app: {
             type: 'string',
-            description:
-              'Required for app tools, omit or use "gateway" for gateway tools.',
+            description: 'Required for app tools, omit or use "gateway" for gateway tools.',
           },
           tool: {
             type: 'string',
@@ -1767,8 +1790,7 @@ export function buildGatewayToolDefinitions(): GatewayToolDefinition[] {
     },
     {
       name: 'mcp:import',
-      description:
-        'Import an MCP server into AAI Gateway. Guide tool, no arguments.',
+      description: 'Import an MCP server into AAI Gateway. Guide tool, no arguments.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -1849,8 +1871,7 @@ export function buildGatewayToolDefinitions(): GatewayToolDefinition[] {
           {
             command: 'npx',
             args: ['-y', '@modelcontextprotocol/server-filesystem', '/repo'],
-            summary:
-              'Use this MCP for local filesystem operations inside the imported directory.',
+            summary: 'Use this MCP for local filesystem operations inside the imported directory.',
             enableScope: 'current',
           },
         ],
@@ -1859,8 +1880,7 @@ export function buildGatewayToolDefinitions(): GatewayToolDefinition[] {
     },
     {
       name: 'skill:import',
-      description:
-        'Import a skill into AAI Gateway. Guide tool, no arguments.',
+      description: 'Import a skill into AAI Gateway. Guide tool, no arguments.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -1895,8 +1915,7 @@ export function buildGatewayToolDefinitions(): GatewayToolDefinition[] {
     },
     {
       name: 'disableApp',
-      description:
-        'Disable one app for the current agent only.',
+      description: 'Disable one app for the current agent only.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -1910,8 +1929,7 @@ export function buildGatewayToolDefinitions(): GatewayToolDefinition[] {
     },
     {
       name: 'enableApp',
-      description:
-        'Re-enable one app for the current agent only.',
+      description: 'Re-enable one app for the current agent only.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -1925,8 +1943,7 @@ export function buildGatewayToolDefinitions(): GatewayToolDefinition[] {
     },
     {
       name: 'removeApp',
-      description:
-        'Remove one AAI Gateway managed import from all agents.',
+      description: 'Remove one AAI Gateway managed import from all agents.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -1945,8 +1962,7 @@ export function buildGatewayToolDefinitions(): GatewayToolDefinition[] {
     },
     {
       name: 'skill:create',
-      description:
-        'Create an AAI Gateway compatible skill. Guide tool, no arguments.',
+      description: 'Create an AAI Gateway compatible skill. Guide tool, no arguments.',
       inputSchema: {
         type: 'object',
         properties: {},
@@ -1975,7 +1991,6 @@ function buildGuideOnlyInputSchema(): Record<string, unknown> {
 function getGatewayToolDefinition(toolName: string): GatewayToolDefinition | undefined {
   return buildGatewayToolDefinitions().find((tool) => tool.name === toolName);
 }
-
 
 function isGatewayExecutionTool(toolName: string): boolean {
   return (
@@ -2033,12 +2048,7 @@ function generateGatewayToolGuide(tool: {
           ]),
         ]
       : []),
-    ...(notes
-      ? [
-          '',
-          notes,
-        ]
-      : []),
+    ...(notes ? ['', notes] : []),
   ].join('\n');
 }
 

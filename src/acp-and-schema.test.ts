@@ -3,7 +3,10 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { generateAppGuideMarkdown, generateGuideToolSummary } from './guides/app-guide-generator.js';
+import {
+  generateAppGuideMarkdown,
+  generateGuideToolSummary,
+} from './guides/app-guide-generator.js';
 import { AcpExecutor } from './executors/acp.js';
 import { appId, descriptor } from './discovery/descriptors/codex-agent.js';
 import { AaiGatewayServer, buildGatewayToolDefinitions } from './mcp/server.js';
@@ -15,19 +18,23 @@ describe('ACP guide metadata', () => {
     const capabilities = await executor.loadAppCapabilities(appId, descriptor.access.config);
     const guide = generateAppGuideMarkdown(appId, descriptor, capabilities);
 
-    expect(guide).toContain('This is only an operation guide for tools in this app. To perform the actual operation, you must call `aai:exec`.');
-    expect(guide).toContain('The `aai:exec` tool accepts three parameters: `app`, `tool`, and `args`.');
+    expect(guide).toContain(
+      'This is only an operation guide for tools in this app. To perform the actual operation, you must call `aai:exec`.'
+    );
+    expect(guide).toContain(
+      'The `aai:exec` tool accepts three parameters: `app`, `tool`, and `args`.'
+    );
     expect(guide).toContain(`set \`app\` to "${appId}"`);
     expect(guide).not.toContain('No description provided.');
     expect(guide).toContain('### session/new');
     expect(guide).toContain('### turn/start');
     expect(guide).toContain('### turn/respondPermission');
-    expect(guide).toContain('Create a new ACP session');
+    expect(guide).toContain('Create a new persistent session');
     expect(guide).toContain('### turn/cancel');
     expect(guide).not.toContain('"inputSchema"');
     expect(guide).not.toContain('## Schema Lookup');
     expect(guide).not.toContain('## Examples');
-    expect(guide).toContain("Example `aai:exec` call:");
+    expect(guide).toContain('Example `aai:exec` call:');
     expect(guide).toContain('"tool": "aai:exec"');
     expect(guide).toContain('"tool": "session/new"');
     expect(guide).toContain('"tool": "turn/start"');
@@ -76,8 +83,12 @@ describe('ACP guide metadata', () => {
       }
     );
 
-    expect(guide).toContain('This is only an operation guide for tools in this app. To perform the actual operation, you must call `aai:exec`.');
-    expect(guide).toContain('The `aai:exec` tool accepts three parameters: `app`, `tool`, and `args`.');
+    expect(guide).toContain(
+      'This is only an operation guide for tools in this app. To perform the actual operation, you must call `aai:exec`.'
+    );
+    expect(guide).toContain(
+      'The `aai:exec` tool accepts three parameters: `app`, `tool`, and `args`.'
+    );
     expect(guide).toContain('set `app` to "brave-search"');
     expect(guide).toContain('set `tool` to one of the tool names below');
     expect(guide).not.toContain('- App ID:');
@@ -94,8 +105,12 @@ describe('Gateway guide formatting', () => {
     const result = await (server as any).handleGatewayToolGuide('mcp:import');
     const guide = result.content[0]?.text ?? '';
 
-    expect(guide).toContain('This is only an operation guide for `mcp:import`. To perform the actual operation, you must call `aai:exec`.');
-    expect(guide).toContain('The `aai:exec` tool accepts three parameters: `app`, `tool`, and `args`.');
+    expect(guide).toContain(
+      'This is only an operation guide for `mcp:import`. To perform the actual operation, you must call `aai:exec`.'
+    );
+    expect(guide).toContain(
+      'The `aai:exec` tool accepts three parameters: `app`, `tool`, and `args`.'
+    );
     expect(guide).toContain('leave `app` empty, set `tool` to `"mcp:import"`');
     expect(guide).toContain('The examples below are complete `aai:exec` calls.');
     expect(guide).toContain('"tool": "aai:exec"');
@@ -103,10 +118,16 @@ describe('Gateway guide formatting', () => {
     expect(guide).toContain('## Parameters');
     expect(guide).toContain('is a sensitive secrets file.');
     expect(guide).toContain('Do not read, summarize, or repeat its contents.');
-    expect(guide).toContain('Never ask the user to send API keys, tokens, or any other secret values in chat.');
-    expect(guide).toContain('Provide a configuration example such as `BRAVE_API_KEY=your_api_key_here`');
+    expect(guide).toContain(
+      'Never ask the user to send API keys, tokens, or any other secret values in chat.'
+    );
+    expect(guide).toContain(
+      'Provide a configuration example such as `BRAVE_API_KEY=your_api_key_here`'
+    );
     expect(guide).toContain('Only after the user has obtained the required values, open');
-    expect(guide).toContain('The file may be shown to the user, but you must not read, summarize, or repeat its contents.');
+    expect(guide).toContain(
+      'The file may be shown to the user, but you must not read, summarize, or repeat its contents.'
+    );
   });
 
   it('renders skill:import with the same exec guidance format', async () => {
@@ -114,8 +135,12 @@ describe('Gateway guide formatting', () => {
     const result = await (server as any).handleGatewayToolGuide('skill:import');
     const guide = result.content[0]?.text ?? '';
 
-    expect(guide).toContain('This is only an operation guide for `skill:import`. To perform the actual operation, you must call `aai:exec`.');
-    expect(guide).toContain('The `aai:exec` tool accepts three parameters: `app`, `tool`, and `args`.');
+    expect(guide).toContain(
+      'This is only an operation guide for `skill:import`. To perform the actual operation, you must call `aai:exec`.'
+    );
+    expect(guide).toContain(
+      'The `aai:exec` tool accepts three parameters: `app`, `tool`, and `args`.'
+    );
     expect(guide).toContain('leave `app` empty, set `tool` to "skill:import"');
     expect(guide).toContain('## Examples');
     expect(guide).toContain('"tool": "aai:exec"');
@@ -218,12 +243,7 @@ describe('App policy and agent overrides', () => {
 describe('ACP executor validation', () => {
   it('returns a clear schema reference when session/new params are invalid', async () => {
     const executor = new AcpExecutor();
-    const result = await executor.execute(
-      appId,
-      descriptor.access.config,
-      'session/new',
-      {}
-    );
+    const result = await executor.execute(appId, descriptor.access.config, 'session/new', {});
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("参数校验失败 for 'session/new'");
@@ -236,7 +256,7 @@ describe('ACP executor validation', () => {
         properties: {
           cwd: {
             type: 'string',
-            description: 'Absolute working directory for the ACP session.',
+            description: 'Absolute working directory for the session.',
           },
         },
       },
@@ -605,11 +625,9 @@ describe('ACP prompt polling aggregation', () => {
       },
       content: [],
     });
-    expect(executor.sendNotification).toHaveBeenCalledWith(
-      appId,
-      'session/cancel',
-      { sessionId: 'session-5' }
-    );
+    expect(executor.sendNotification).toHaveBeenCalledWith(appId, 'session/cancel', {
+      sessionId: 'session-5',
+    });
   });
 
   it('keeps late updates isolated from the next queued turn after local inactivity failure', async () => {

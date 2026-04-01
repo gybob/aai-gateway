@@ -4,14 +4,14 @@ export const ACP_TOOL_SCHEMAS: ToolSchema[] = [
   {
     name: 'session/new',
     description:
-      'Create a new ACP session and return a reusable sessionId plus downstream promptCapabilities. Sessions are generally tied to the working directory; if you switch to a different directory, create a new sessionId.',
+      'Create a new persistent session with the agent and get its capabilities. Sessions are tied to the working directory; if you switch directories, create a new session.',
     inputSchema: {
       type: 'object',
       required: ['cwd'],
       properties: {
         cwd: {
           type: 'string',
-          description: 'Absolute working directory for the ACP session.',
+          description: 'Absolute working directory for the session.',
         },
       },
     },
@@ -21,12 +21,11 @@ export const ACP_TOOL_SCHEMAS: ToolSchema[] = [
       properties: {
         sessionId: {
           type: 'string',
-          description: 'Reusable ACP session ID returned by the downstream agent.',
+          description: 'Persistent session ID for subsequent operations.',
         },
         promptCapabilities: {
           type: 'object',
-          description:
-            'Downstream prompt capability declaration. Use this to decide which content block types turn/start.prompt may contain.',
+          description: 'Declares what content block types this agent accepts in subsequent turns.',
           additionalProperties: true,
         },
       },
@@ -36,7 +35,7 @@ export const ACP_TOOL_SCHEMAS: ToolSchema[] = [
   {
     name: 'turn/start',
     description:
-      'Start a new turn on an explicit sessionId. The prompt content must match the promptCapabilities returned by session/new. This returns immediately with a turnId; call turn/poll to read output or permission requests.',
+      'Start a new turn on an existing session. Send a prompt and get a turnId for polling results. Use turn/poll to read the response.',
     inputSchema: {
       type: 'object',
       required: ['sessionId', 'prompt'],
@@ -48,7 +47,7 @@ export const ACP_TOOL_SCHEMAS: ToolSchema[] = [
         prompt: {
           type: 'array',
           description:
-            'ACP content blocks for this turn, for example [{"type":"text","text":"..."}]. Allowed block types are determined by session/new.promptCapabilities.',
+            'Content blocks for this turn, e.g. [{"type":"text","text":"..."}]. Types must match the session capabilities.',
         },
       },
     },
@@ -58,16 +57,16 @@ export const ACP_TOOL_SCHEMAS: ToolSchema[] = [
       properties: {
         turnId: {
           type: 'string',
-          description: 'Gateway-managed turn ID used for turn/poll, turn/respondPermission, and turn/cancel.',
+          description: 'Gateway-managed turn ID for polling and cancellation.',
         },
         sessionId: {
           type: 'string',
-          description: 'The ACP session ID this turn belongs to.',
+          description: 'The session this turn belongs to.',
         },
         state: {
           type: 'string',
           enum: ['running'],
-          description: 'Initial gateway turn state after the turn has been accepted.',
+          description: 'Initial state indicating the turn was accepted.',
         },
       },
       additionalProperties: false,
@@ -76,7 +75,7 @@ export const ACP_TOOL_SCHEMAS: ToolSchema[] = [
   {
     name: 'turn/poll',
     description:
-      'Poll a turn by turnId. This waits up to 30 seconds and returns unread incremental content plus the gateway-defined turn state. If done=true, stop polling.',
+      'Poll a turn for incremental output. Waits up to 30 seconds for new content. Returns done=true when the turn finishes.',
     inputSchema: {
       type: 'object',
       required: ['turnId'],
@@ -97,26 +96,25 @@ export const ACP_TOOL_SCHEMAS: ToolSchema[] = [
         },
         sessionId: {
           type: 'string',
-          description: 'ACP session ID that owns this turn.',
+          description: 'Session ID that owns this turn.',
         },
         done: {
           type: 'boolean',
-          description: 'When true, the turn has finished and polling should stop.',
+          description: 'When true, the turn has finished. Stop polling.',
         },
         state: {
           type: 'string',
           enum: ['running', 'waiting_permission', 'completed', 'failed', 'cancelled'],
-          description:
-            'Gateway-defined turn lifecycle state. This is not the downstream tool/task status reported in session/update.',
+          description: 'Turn lifecycle state managed by the gateway.',
         },
         message: {
           type: 'string',
-          description: 'Optional human-readable explanation of the current gateway turn state.',
+          description: 'Human-readable explanation of the current state.',
         },
         content: {
           type: 'array',
           description:
-            'Unread incremental ACP content blocks produced since the last turn/poll call. Empty means there is no new content yet.',
+            'New incremental content blocks produced since the last poll. Empty if no new content yet.',
           items: {
             type: 'object',
             additionalProperties: true,
@@ -125,18 +123,18 @@ export const ACP_TOOL_SCHEMAS: ToolSchema[] = [
         permissionRequests: {
           type: 'array',
           description:
-            'Present only when state=waiting_permission. Each entry is a separate permission request from the downstream agent. Respond to each via turn/respondPermission.',
+            'Present only when state=waiting_permission. Permission requests from the agent. Respond to each via turn/respondPermission.',
           items: {
             type: 'object',
             required: ['permissionId', 'title', 'options'],
             properties: {
               permissionId: {
                 type: 'string',
-                description: 'Opaque gateway permission request ID.',
+                description: 'Opaque permission request ID.',
               },
               title: {
                 type: 'string',
-                description: 'Short title describing what the downstream agent wants to do.',
+                description: 'Short title describing what the agent wants to do.',
               },
               description: {
                 type: 'string',
@@ -150,7 +148,7 @@ export const ACP_TOOL_SCHEMAS: ToolSchema[] = [
                   properties: {
                     id: {
                       type: 'string',
-                      description: 'Option ID to pass back in turn/respondPermission.decision.optionId.',
+                      description: 'Option ID to pass in turn/respondPermission.decision.optionId.',
                     },
                     label: {
                       type: 'string',
@@ -166,8 +164,7 @@ export const ACP_TOOL_SCHEMAS: ToolSchema[] = [
         },
         stopReason: {
           type: ['string', 'null'],
-          description:
-            'Downstream ACP stopReason returned by session/prompt when the turn has completed.',
+          description: 'Why the turn stopped. Present when done=true.',
         },
         error: {
           type: ['object', 'null'],
@@ -190,7 +187,7 @@ export const ACP_TOOL_SCHEMAS: ToolSchema[] = [
   {
     name: 'turn/respondPermission',
     description:
-      'Respond to a downstream ACP session/request_permission request that was surfaced by turn/poll. Use the permissionId and one of the listed option IDs, or cancel the request.',
+      'Respond to a permission request that was surfaced during polling. Use the permissionId and one of the listed option IDs.',
     inputSchema: {
       type: 'object',
       required: ['turnId', 'permissionId', 'decision'],
@@ -201,7 +198,7 @@ export const ACP_TOOL_SCHEMAS: ToolSchema[] = [
         },
         permissionId: {
           type: 'string',
-          description: 'The opaque permission request ID returned by turn/poll.',
+          description: 'The permission request ID returned by turn/poll.',
         },
         decision: {
           type: 'object',
@@ -210,13 +207,12 @@ export const ACP_TOOL_SCHEMAS: ToolSchema[] = [
             type: {
               type: 'string',
               enum: ['select', 'cancel'],
-              description:
-                'Use select to choose one of the supplied permission options, or cancel to reject the request and stop waiting.',
+              description: 'Use select to choose an option, or cancel to reject the request.',
             },
             optionId: {
               type: 'string',
               description:
-                'Required when decision.type=select. Must match one of permissionRequest.options[].id from turn/poll.',
+                'Required when type=select. Must match one of the permissionRequest.options[].id.',
             },
           },
           additionalProperties: false,
@@ -234,12 +230,12 @@ export const ACP_TOOL_SCHEMAS: ToolSchema[] = [
         accepted: {
           type: 'boolean',
           description:
-            'True when the permission response was accepted by the gateway and forwarded downstream. False if the permission expired or the turn already finished.',
+            'True when the response was accepted and forwarded. False if the permission expired or the turn finished.',
         },
         reason: {
           type: 'string',
           enum: ['expired', 'turn_finished'],
-          description: 'Present when accepted=false. Indicates why the permission response was not forwarded.',
+          description: 'Present when accepted=false. Why the response was not forwarded.',
         },
       },
       additionalProperties: false,
@@ -248,7 +244,7 @@ export const ACP_TOOL_SCHEMAS: ToolSchema[] = [
   {
     name: 'turn/cancel',
     description:
-      'Cancel a queued or running turn. Queued turns are cancelled locally; running turns are cancelled downstream via session/cancel.',
+      'Cancel a queued or running turn. Queued turns are cancelled immediately; running turns are cancelled by the agent.',
     inputSchema: {
       type: 'object',
       required: ['turnId'],
@@ -268,7 +264,7 @@ export const ACP_TOOL_SCHEMAS: ToolSchema[] = [
         },
         accepted: {
           type: 'boolean',
-          description: 'True when the cancellation request was accepted by the gateway.',
+          description: 'True when the cancellation was accepted.',
         },
       },
       additionalProperties: false,
