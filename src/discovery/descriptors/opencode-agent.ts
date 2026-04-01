@@ -1,6 +1,6 @@
 import type { AaiJson } from '../../types/aai-json.js';
 
-export const appId = 'acp-opencode';
+export const appId = 'opencode';
 
 export const descriptor: AaiJson = {
   schemaVersion: '2.0',
@@ -23,7 +23,6 @@ export const descriptor: AaiJson = {
     },
   },
   exposure: {
-    keywords: ['code', 'agent', 'development'],
-    summary: 'ACP agent for code editing, analysis, and development tasks.',
+    summary: 'AI assistant for editing files, running commands, and automating development tasks.',
   },
 };

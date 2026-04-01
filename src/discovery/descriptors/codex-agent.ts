@@ -1,6 +1,6 @@
 import type { AaiJson } from '../../types/aai-json.js';
 
-export const appId = 'acp-codex';
+export const appId = 'codex';
 
 export const descriptor: AaiJson = {
   schemaVersion: '2.0',
@@ -26,7 +26,6 @@ export const descriptor: AaiJson = {
     },
   },
   exposure: {
-    keywords: ['code', 'openai', 'agent'],
-    summary: 'Codex agent connected through the ACP adapter.',
+    summary: 'AI assistant powered by OpenAI for code generation and editing tasks.',
   },
 };

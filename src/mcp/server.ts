@@ -1697,7 +1697,7 @@ export function buildGatewayToolDefinitions(): GatewayToolDefinition[] {
     {
       name: SEARCH_DISCOVER_TOOL_NAME,
       description:
-        'Search for MCP servers or skills when the user needs a new capability. Guide tool, no arguments.',
+        'Guide for searching new tools. Teaches how to find tools, where to search, what to collect, and how to present results. Required when searching for tools or skills.',
       inputSchema: searchDiscoverInputSchema,
       listInputSchema: buildGuideOnlyInputSchema(),
     },

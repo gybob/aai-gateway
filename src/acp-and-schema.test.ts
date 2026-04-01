@@ -745,7 +745,7 @@ describe('Gateway progressive disclosure schemas', () => {
       'Import a skill into AAI Gateway. Guide tool, no arguments.'
     );
     expect(byName.get('search:discover')?.description).toBe(
-      'Search for MCP servers or skills when the user needs a new capability. Guide tool, no arguments.'
+      'Guide for searching new tools. Teaches how to find tools, where to search, what to collect, and how to present results. Required when searching for tools or skills.'
     );
     expect(byName.get('mcp:import')?.listInputSchema).toMatchObject({
       description: 'No arguments.',

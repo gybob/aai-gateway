@@ -1,6 +1,6 @@
 import type { AaiJson } from '../../types/aai-json.js';
 
-export const appId = 'acp-claude';
+export const appId = 'claude';
 
 export const descriptor: AaiJson = {
   schemaVersion: '2.0',
@@ -26,7 +26,6 @@ export const descriptor: AaiJson = {
     },
   },
   exposure: {
-    keywords: ['code', 'anthropic', 'agent'],
-    summary: 'Claude Code agent connected through the ACP adapter.',
+    summary: 'AI assistant for code editing, analysis, and development tasks.',
   },
 };
