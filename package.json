@@ -1,6 +1,6 @@
 {
   "name": "aai-gateway",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "type": "module",
   "main": "dist/index.js",
   "files": [
@@ -13,7 +13,8 @@
   },
   "scripts": {
     "dev": "vite-node src/index.ts",
-    "build": "tsc && vite build && chmod +x dist/cli.js",
+    "build": "tsc && vite build && npm run fix-perms",
+    "fix-perms": "node -e \"if(process.platform!='win32')require('child_process').execSync('chmod +x dist/cli.js')\"",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts",
     "lint:fix": "eslint src --ext .ts --fix",
