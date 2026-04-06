@@ -1,3 +1,7 @@
+[English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md) | [한국어](README.ko.md)
+
+---
+
 # AAI Gateway — One MCP to Rule Them All
 
 **Install MCP servers and skills once, share across all your AI agents. No restart. No context explosion. Just ask.**
@@ -13,23 +17,23 @@
 
 As the MCP ecosystem grows, every AI agent user hits the same wall:
 
-| Pain Point | What Happens |
-|---|---|
-| **Context explosion** | 10 MCP servers × 5 tools each = 50 full tool schemas injected into every prompt, burning thousands of tokens before the model even starts thinking |
-| **Duplicate config** | Claude Code, Codex, OpenCode — configure the same MCP server three times, keep them in sync manually |
-| **Restart required** | Add a new MCP? Restart your agent. Every. Single. Time. |
-| **Finding tools is hard** | Search GitHub, read READMEs, copy JSON configs, debug connection errors — all before you can even try a tool |
+| Pain Point                | What Happens                                                                                                                                       |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Context explosion**     | 10 MCP servers × 5 tools each = 50 full tool schemas injected into every prompt, burning thousands of tokens before the model even starts thinking |
+| **Duplicate config**      | Claude Code, Codex, OpenCode — configure the same MCP server three times, keep them in sync manually                                               |
+| **Restart required**      | Add a new MCP? Restart your agent. Every. Single. Time.                                                                                            |
+| **Finding tools is hard** | Search GitHub, read READMEs, copy JSON configs, debug connection errors — all before you can even try a tool                                       |
 
 ## The Solution
 
 AAI Gateway sits between your AI agents and all your tools. One MCP connection replaces dozens.
 
-| | Without AAI Gateway | With AAI Gateway |
-|---|---|---|
+|                  | Without AAI Gateway             | With AAI Gateway                                                  |
+| ---------------- | ------------------------------- | ----------------------------------------------------------------- |
 | **Context cost** | 50 tool schemas in every prompt | 10 one-line summaries (~200 chars each), details loaded on demand |
-| **Config** | Configure each MCP per agent | Import once, all agents share instantly |
-| **New tools** | Restart agent after install | Hot-reload, available immediately |
-| **Discovery** | Manual search + copy config | `"Find me a filesystem MCP"` → installed in seconds |
+| **Config**       | Configure each MCP per agent    | Import once, all agents share instantly                           |
+| **New tools**    | Restart agent after install     | Hot-reload, available immediately                                 |
+| **Discovery**    | Manual search + copy config     | `"Find me a filesystem MCP"` → installed in seconds               |
 
 ---
 
@@ -38,16 +42,19 @@ AAI Gateway sits between your AI agents and all your tools. One MCP connection r
 ### 1. Add AAI Gateway to your agent
 
 **Claude Code**
+
 ```bash
 claude mcp add --scope user --transport stdio aai-gateway -- npx -y aai-gateway
 ```
 
 **Codex**
+
 ```bash
 codex mcp add aai-gateway -- npx -y aai-gateway
 ```
 
 **OpenCode** — add to `~/.config/opencode/opencode.json`:
+
 ```json
 {
   "mcp": {
@@ -112,16 +119,19 @@ Describe what you need, and AAI Gateway finds it for you. It searches trusted so
 Paste any standard MCP config and ask your agent to import it through AAI Gateway.
 
 **stdio MCP:**
+
 ```json
 { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"] }
 ```
 
 **Remote (Streamable HTTP):**
+
 ```json
 { "url": "https://example.com/mcp" }
 ```
 
 **Remote (SSE):**
+
 ```json
 { "url": "https://example.com/sse", "transport": "sse" }
 ```
@@ -163,17 +173,17 @@ No manual import needed — install the app, and AAI Gateway finds it.
 
 ## Built-in Tools
 
-| Tool | Description |
-|---|---|
-| `listAllAaiApps` | List all apps managed by AAI Gateway |
-| `enableApp` | Enable an app for the current agent |
-| `disableApp` | Disable an app for the current agent |
-| `removeApp` | Remove an app from the system |
-| `aai:exec` | Execute a specific tool from a managed app (`app` + `tool` + `args`) |
-| `mcp:import` | Import an MCP server |
-| `skill:import` | Import a skill package |
-| `skill:create` | Create a new skill |
-| `search:discover` | Search for new tools or skills with natural language |
+| Tool              | Description                                                          |
+| ----------------- | -------------------------------------------------------------------- |
+| `listAllAaiApps`  | List all apps managed by AAI Gateway                                 |
+| `enableApp`       | Enable an app for the current agent                                  |
+| `disableApp`      | Disable an app for the current agent                                 |
+| `removeApp`       | Remove an app from the system                                        |
+| `aai:exec`        | Execute a specific tool from a managed app (`app` + `tool` + `args`) |
+| `mcp:import`      | Import an MCP server                                                 |
+| `skill:import`    | Import a skill package                                               |
+| `skill:create`    | Create a new skill                                                   |
+| `search:discover` | Search for new tools or skills with natural language                 |
 
 Plus a **`guide:<app-id>`** tool for each imported app — no parameters, just returns the full operation guide when called.
 
@@ -218,15 +228,19 @@ Plus a **`guide:<app-id>`** tool for each imported app — no parameters, just r
 ## Use Cases
 
 ### "I have 15 MCPs and my context is exploding"
+
 AAI Gateway's two-stage disclosure cuts context token usage by 90%+. Your agent sees short summaries, not 15 full tool schemas.
 
 ### "I use Claude Code AND OpenCode"
+
 Import once through AAI Gateway. Both agents see the same tools immediately. Add Codex tomorrow — it gets them too, zero extra config.
 
 ### "I want to write code while drinking tea"
+
 Set up ACP agents. Use any agent (even on your phone) to instruct Claude Code or Codex to write, test, and commit code on your workstation.
 
 ### "I don't know which MCP to use"
+
 Just describe what you need: `"I need something to query PostgreSQL"`. AAI Gateway searches trusted registries and handles the entire installation.
 
 ---
@@ -263,22 +277,9 @@ Want to bundle your descriptor with AAI Gateway by default? [Open a PR](../../pu
 
 ---
 
-## Roadmap
-
-- [ ] Remote skill auto-update — detect and pull skill updates from source
-- [ ] MCP marketplace integration — browse and install from within the agent
-- [ ] Multi-machine sync — share your tool config across devices
-- [ ] Plugin system for custom discovery sources
-
----
-
 ## Contributing
 
 Contributions are welcome! AAI Gateway is under active development.
 
 - [Open an issue](../../issues) to report bugs or suggest features
 - [Submit a PR](../../pulls) to contribute code or new app descriptors
-
-## License
-
-[MIT](./LICENSE)
