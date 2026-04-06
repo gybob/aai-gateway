@@ -9,8 +9,10 @@ import {
 } from './guides/app-guide-generator.js';
 import { AcpExecutor } from './executors/acp.js';
 import { appId, descriptor } from './discovery/descriptors/codex-agent.js';
-import { AaiGatewayServer, buildGatewayToolDefinitions } from './mcp/server.js';
-import { importMcpServer } from './mcp/importer.js';
+import { AaiGatewayServer } from './mcp/server.js';
+import { buildGatewayToolDefinitions } from './core/tool-definitions.js';
+import { Gateway } from './core/gateway.js';
+import { importMcpServer } from './core/importer.js';
 
 describe('ACP guide metadata', () => {
   it('renders ACP app guides with exec instructions and examples but without schemas', async () => {
@@ -19,7 +21,7 @@ describe('ACP guide metadata', () => {
     const guide = generateAppGuideMarkdown(appId, descriptor, capabilities);
 
     expect(guide).toContain(
-      'This is only an operation guide for tools in this app. To perform the actual operation, you must call `aai:exec`.'
+      'To execute tools in this app, you must call the `aai:exec` tool (another tool in this same MCP server).'
     );
     expect(guide).toContain(
       'The `aai:exec` tool accepts three parameters: `app`, `tool`, and `args`.'
@@ -42,7 +44,7 @@ describe('ACP guide metadata', () => {
 
   it('uses concise guide tool summaries focused on app purpose', () => {
     expect(generateGuideToolSummary(appId, descriptor)).toBe(
-      `Codex. ${descriptor.exposure.summary} Guide tool, no arguments.`
+      `Codex — ${descriptor.exposure.summary} Call this to see available tools and usage.`
     );
   });
 
@@ -83,7 +85,7 @@ describe('ACP guide metadata', () => {
     );
 
     expect(guide).toContain(
-      'This is only an operation guide for tools in this app. To perform the actual operation, you must call `aai:exec`.'
+      'To execute tools in this app, you must call the `aai:exec` tool (another tool in this same MCP server).'
     );
     expect(guide).toContain(
       'The `aai:exec` tool accepts three parameters: `app`, `tool`, and `args`.'
@@ -100,42 +102,34 @@ describe('ACP guide metadata', () => {
 
 describe('Gateway guide formatting', () => {
   it('renders mcp:import with exec instructions and complete examples', async () => {
-    const server = new AaiGatewayServer();
-    const result = await (server as any).handleGatewayToolGuide('mcp:import');
-    const guide = result.content[0]?.text ?? '';
+    const gateway = new Gateway();
+    const result = gateway.handleGatewayToolGuide('mcp:import');
+    const guide = result.text;
 
     expect(guide).toContain(
-      'This is only an operation guide for `mcp:import`. To perform the actual operation, you must call `aai:exec`.'
+      'To perform the actual import, you must call the `aai:exec` tool (another tool in this same MCP server).'
     );
     expect(guide).toContain(
       'The `aai:exec` tool accepts three parameters: `app`, `tool`, and `args`.'
     );
     expect(guide).toContain('leave `app` empty, set `tool` to `"mcp:import"`');
-    expect(guide).toContain('The examples below are complete `aai:exec` calls.');
+    expect(guide).toContain('Phase 1 — inspect:');
     expect(guide).toContain('"tool": "aai:exec"');
     expect(guide).not.toContain('## Schema');
     expect(guide).toContain('## Parameters');
-    expect(guide).toContain('is a sensitive secrets file.');
-    expect(guide).toContain('Do not read, summarize, or repeat its contents.');
-    expect(guide).toContain(
-      'Never ask the user to send API keys, tokens, or any other secret values in chat.'
-    );
-    expect(guide).toContain(
-      'Provide a configuration example such as `BRAVE_API_KEY=your_api_key_here`'
-    );
-    expect(guide).toContain('Only after the user has obtained the required values, open');
-    expect(guide).toContain(
-      'The file may be shown to the user, but you must not read, summarize, or repeat its contents.'
-    );
+    expect(guide).toContain('## Environment variables & API keys');
+    expect(guide).toContain('${VAR_NAME} placeholders');
+    expect(guide).toContain('Open the env file for the user');
+    expect(guide).toContain('Never ask the user to send API keys, tokens, or secrets in chat.');
   });
 
   it('renders skill:import with the same exec guidance format', async () => {
-    const server = new AaiGatewayServer();
-    const result = await (server as any).handleGatewayToolGuide('skill:import');
-    const guide = result.content[0]?.text ?? '';
+    const gateway = new Gateway();
+    const result = gateway.handleGatewayToolGuide('skill:import');
+    const guide = result.text;
 
     expect(guide).toContain(
-      'This is only an operation guide for `skill:import`. To perform the actual operation, you must call `aai:exec`.'
+      'To perform the actual operation, you must call the `aai:exec` tool (another tool in this same MCP server).'
     );
     expect(guide).toContain(
       'The `aai:exec` tool accepts three parameters: `app`, `tool`, and `args`.'
@@ -184,8 +178,8 @@ describe('App policy and agent overrides', () => {
     process.env.AAI_HOME = join(tmpdir(), `aai-gateway-policy-${Date.now()}`);
 
     try {
-      const server = new AaiGatewayServer();
-      (server as any).appRegistry.set('brave-search', createApp('brave-search'));
+      const gateway = new Gateway();
+      (gateway as any).appRegistry.set('brave-search', createApp('brave-search'));
 
       const importer = createCaller('agent-importer');
       const otherAgent = createCaller('agent-other');
@@ -197,13 +191,13 @@ describe('App policy and agent overrides', () => {
         updatedAt: new Date().toISOString(),
       });
 
-      const importerTools = await server.listToolsForCaller(importer);
+      const importerTools = await gateway.listTools(importer);
       expect(importerTools.map((tool) => tool.name)).toContain('app:brave-search');
 
-      const otherToolsBefore = await server.listToolsForCaller(otherAgent);
+      const otherToolsBefore = await gateway.listTools(otherAgent);
       expect(otherToolsBefore.map((tool) => tool.name)).not.toContain('app:brave-search');
 
-      const otherListBefore = await (server as any).handleListAllApps(otherAgent);
+      const otherListBefore = await gateway.handleListAllApps(otherAgent);
       expect(otherListBefore.structuredContent).toEqual({
         apps: [
           expect.objectContaining({
@@ -214,12 +208,12 @@ describe('App policy and agent overrides', () => {
         ],
       });
 
-      await (server as any).handleEnableApp({ app: 'brave-search' }, otherAgent);
+      await gateway.handleEnableApp({ app: 'brave-search' }, otherAgent);
 
-      const otherToolsAfter = await server.listToolsForCaller(otherAgent);
+      const otherToolsAfter = await gateway.listTools(otherAgent);
       expect(otherToolsAfter.map((tool) => tool.name)).toContain('app:brave-search');
 
-      const otherListAfter = await (server as any).handleListAllApps(otherAgent);
+      const otherListAfter = await gateway.handleListAllApps(otherAgent);
       expect(otherListAfter.structuredContent).toEqual({
         apps: [
           expect.objectContaining({
@@ -701,21 +695,23 @@ describe('Gateway progressive disclosure schemas', () => {
   it('uses lightweight tools/list schemas for large gateway tools', () => {
     const tools = buildGatewayToolDefinitions();
 
-    for (const name of ['mcp:import', 'skill:import', 'search:discover']) {
+    for (const name of ['mcp:import', 'skill:import']) {
       const tool = tools.find((entry) => entry.name === name);
 
       expect(tool).toBeDefined();
       expect(tool?.listInputSchema).toBeDefined();
       expect(tool?.listInputSchema).not.toEqual(tool?.inputSchema);
-      expect((tool?.listInputSchema as Record<string, unknown>).description).toContain(
-        'No arguments.'
-      );
       expect(tool?.listInputSchema).toMatchObject({
         type: 'object',
         properties: {},
         additionalProperties: false,
       });
     }
+
+    // search:discover has no args — inputSchema and listInputSchema are identical
+    const searchTool = tools.find((entry) => entry.name === 'search:discover');
+    expect(searchTool).toBeDefined();
+    expect(searchTool?.listInputSchema).toBeDefined();
   });
 
   it('exposes enable/disable built-ins and removes remote discover', () => {
@@ -735,20 +731,17 @@ describe('Gateway progressive disclosure schemas', () => {
     const byName = new Map(tools.map((tool) => [tool.name, tool]));
 
     expect(byName.get('aai:exec')?.description).toBe(
-      'Execute a tool. Read the guide first (e.g. app:*, mcp:import) — it contains the full schema.'
+      'Execute any AAI tool action. Read the guide first (call app:*, mcp:import, skill:import, or search:discover) — it contains the required schema and parameters.'
     );
     expect(byName.get('mcp:import')?.description).toBe(
-      'Import an MCP server into AAI Gateway. Guide tool, no arguments.'
+      'Import an MCP server as a new app. Call this first to get the import guide, then use aai:exec to perform the import. Never ask the user for API keys or secrets in chat.'
     );
     expect(byName.get('skill:import')?.description).toBe(
-      'Import a skill into AAI Gateway. Guide tool, no arguments.'
+      'Import a local skill as a new app. Call this first to get the import guide, then use aai:exec to perform the import.'
     );
     expect(byName.get('search:discover')?.description).toBe(
-      'Guide for searching new tools. Teaches how to find tools, where to search, what to collect, and how to present results. Required when searching for tools or skills.'
+      'Find and install new tools. Call this when the user wants to search for, discover, or add MCP servers or skills.'
     );
-    expect(byName.get('mcp:import')?.listInputSchema).toMatchObject({
-      description: 'No arguments.',
-    });
   });
 
   it('returns a short warning when MCP import includes plaintext sensitive values', async () => {
@@ -759,11 +752,6 @@ describe('Gateway progressive disclosure schemas', () => {
         {
           listTools: vi.fn().mockResolvedValue([]),
           getServerInfo: vi.fn().mockResolvedValue({ name: 'Example MCP' }),
-        } as any,
-        {
-          get: vi.fn().mockResolvedValue(null),
-          set: vi.fn().mockResolvedValue(undefined),
-          delete: vi.fn().mockResolvedValue(undefined),
         } as any,
         {
           config: {

@@ -17,7 +17,7 @@ export function getDotenvPath(): string {
 }
 
 /**
- * Load environment variables from ~/.aai/.env file
+ * Load environment variables from ~/.aai-gateway/.env file
  */
 export async function loadDotenv(): Promise<DotenvResult> {
   const dotenvPath = getDotenvPath();
@@ -69,7 +69,7 @@ export function substituteEnvVars(str: string, env: Record<string, string>): str
     const value = env[varName];
     if (value === undefined) {
       throw new Error(
-        `Environment variable \${${varName}} is not defined in ~/.aai/.env`
+        `Environment variable \${${varName}} is not defined in ~/.aai-gateway/.env`
       );
     }
     return value;

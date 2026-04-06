@@ -20,6 +20,7 @@ export interface McpRemoteConfig {
   transport: 'streamable-http' | 'sse';
   url: string;
   timeout?: number;
+  headers?: Record<string, string>;
 }
 
 export type McpConfig = McpStdioConfig | McpRemoteConfig;

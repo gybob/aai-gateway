@@ -1,8 +1,5 @@
 /**
  * Central type exports for AAI Gateway
- *
- * This module consolidates all type definitions into a single entry point
- * for easier imports and better module organization.
  */
 
 // AAI descriptor types
@@ -17,11 +14,9 @@ export type {
   SkillUrlConfig,
   SkillConfig,
   AcpAgentConfig,
-  CliConfig,
   McpAccess,
   SkillAccess,
   AcpAgentAccess,
-  CliAccess,
   Access,
   Exposure,
   AaiJson,
@@ -40,16 +35,7 @@ export type {
   SkillExecutorDetail,
   AcpExecutorConfig,
   AcpExecutorDetail,
-  CliExecutorConfig,
-  CliExecutorDetail,
 } from './executor.js';
-
-// Discovery types
-export type {
-  DiscoveryOptions,
-  DiscoverySource,
-  DiscoveryCacheEntry,
-} from './discovery.js';
 
 // Storage types
 export type {
@@ -58,18 +44,9 @@ export type {
   CacheEntry,
 } from './storage.js';
 
-// CLI types
-export type {
-  Command,
-  CommandOptions,
-  ArgumentDef,
-  ParsedArguments,
-} from './cli.js';
-
 // Error types (re-export)
 export type {
   AaiErrorCode,
-  ConsentRequiredData,
 } from '../errors/errors.js';
 
 // Utility functions from aai-json
@@ -78,7 +55,6 @@ export {
   isMcpAccess,
   isSkillAccess,
   isAcpAgentAccess,
-  isCliAccess,
   isSkillPathConfig,
   isMcpStdioConfig,
 } from './aai-json.js';

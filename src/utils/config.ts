@@ -6,11 +6,10 @@ import type { LogLevel } from './logger.js';
 
 export interface AaiConfig {
   logLevel?: LogLevel;
-  toolApproval?: boolean;
 }
 
 export function getAaiHomeDir(): string {
-  return process.env.AAI_HOME || join(homedir(), '.aai');
+  return process.env.AAI_HOME || join(homedir(), '.aai-gateway');
 }
 
 export function getAaiConfigPath(): string {
@@ -24,7 +23,6 @@ export function loadAaiConfig(): AaiConfig {
   if (!existsSync(configPath)) {
     const defaultConfig: AaiConfig = {
       logLevel: 'info',
-      toolApproval: false,
     };
     ensureAaiHomeDir(homeDir);
     writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2), 'utf-8');
@@ -36,28 +34,14 @@ export function loadAaiConfig(): AaiConfig {
     const parsed = JSON.parse(raw) as Partial<AaiConfig>;
 
     const hasLogLevel = 'logLevel' in parsed && parsed.logLevel !== undefined;
-    const hasToolApproval = 'toolApproval' in parsed && parsed.toolApproval !== undefined;
-
-    const updated = { ...parsed };
-    let needsWrite = false;
 
     if (!hasLogLevel) {
-      updated.logLevel = 'info';
-      needsWrite = true;
-    }
-
-    if (!hasToolApproval) {
-      updated.toolApproval = false;
-      needsWrite = true;
-    }
-
-    if (needsWrite) {
+      const updated = { ...parsed, logLevel: 'info' };
       writeFileSync(configPath, JSON.stringify(updated, null, 2), 'utf-8');
     }
 
     return {
       logLevel: normalizeLogLevel(parsed.logLevel),
-      toolApproval: parsed.toolApproval ?? false,
     };
   } catch {
     return {};
@@ -67,6 +51,10 @@ export function loadAaiConfig(): AaiConfig {
 function ensureAaiHomeDir(homeDir: string): void {
   if (!existsSync(homeDir)) {
     mkdirSync(homeDir, { recursive: true });
+  }
+  const envPath = join(homeDir, '.env');
+  if (!existsSync(envPath)) {
+    writeFileSync(envPath, '# Store sensitive values here (API keys, tokens, etc.)\n# Reference them in MCP configs with ${VAR_NAME} placeholders.\n', 'utf-8');
   }
 }
 

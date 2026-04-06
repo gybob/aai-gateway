@@ -1,26 +1,19 @@
 /**
  * Execution Coordinator
  *
- * Handles execution routing to appropriate executors, consent checking,
+ * Handles execution routing to appropriate executors
  * and inactivity timeout management.
  */
 
-import type { AaiJson, RuntimeAppRecord } from '../types/aai-json.js';
-import { getLocalizedName } from '../types/aai-json.js';
-import { getSystemLocale } from '../utils/locale.js';
+import type { AaiJson } from '../types/aai-json.js';
 import { logger } from '../utils/logger.js';
 import { getAcpExecutor } from '../executors/acp.js';
-import { getCliExecutor } from '../executors/cli.js';
 import { getMcpExecutor } from '../executors/mcp.js';
-import { legacyExecuteCli as executeCli } from '../executors/cli.js';
 import { legacyExecuteSkill as executeSkill } from '../executors/skill.js';
 import { getSkillExecutor } from '../executors/skill.js';
 import type { Executor } from '../executors/interface.js';
 import type { ExecutionObserver } from '../executors/events.js';
-import type { ConsentManager } from '../consent/manager.js';
-import { isAcpAgentAccess, isCliAccess, isMcpAccess, isSkillAccess } from '../types/aai-json.js';
-import { loadImportedMcpHeaders } from '../mcp/importer.js';
-import type { SecureStorage } from '../storage/secure-storage/index.js';
+import { isAcpAgentAccess, isMcpAccess, isSkillAccess } from '../types/aai-json.js';
 
 const DOWNSTREAM_INACTIVITY_TIMEOUT_MS = 10 * 60_000;
 
@@ -31,31 +24,6 @@ export interface ExecutionRequest {
 }
 
 export class ExecutionCoordinator {
-  constructor(
-    private readonly secureStorage: SecureStorage,
-    private readonly consentManager: ConsentManager
-  ) {}
-
-  async checkConsent(
-    appRecord: RuntimeAppRecord,
-    toolName: string,
-    caller: { name: string; version?: string }
-  ): Promise<void> {
-    const locale = getSystemLocale();
-    const appName = getLocalizedName(appRecord.descriptor.app.name, locale);
-
-    await this.consentManager.checkAndPrompt(
-      appRecord.appId,
-      appName,
-      {
-        name: toolName,
-        description: `${appRecord.descriptor.access.protocol} operation`,
-        parameters: {},
-      },
-      { name: caller.name, version: caller.version }
-    );
-  }
-
   async execute(
     appId: string,
     descriptor: AaiJson,
@@ -67,17 +35,7 @@ export class ExecutionCoordinator {
 
     if (isMcpAccess(access)) {
       const executor = getMcpExecutor();
-      const headers = await loadImportedMcpHeaders(this.secureStorage, appId);
-      return executor.callTool(
-        {
-          appId,
-          config: access.config,
-          headers,
-        },
-        toolName,
-        args,
-        observer
-      );
+      return executor.callTool({ appId, config: access.config }, toolName, args, observer);
     }
 
     if (isSkillAccess(access)) {
@@ -90,10 +48,6 @@ export class ExecutionCoordinator {
         return executor.executeWithObserver(appId, access.config, toolName, args, observer);
       }
       return executor.execute(appId, access.config, toolName, args);
-    }
-
-    if (isCliAccess(access)) {
-      return executeCli(access.config, toolName, args);
     }
 
     throw new Error(`Unsupported protocol ${JSON.stringify(access)}`);
@@ -113,20 +67,14 @@ export class ExecutionCoordinator {
       let timer: NodeJS.Timeout | undefined;
 
       const finish = (callback: () => void) => {
-        if (completed) {
-          return;
-        }
+        if (completed) return;
         completed = true;
-        if (timer) {
-          clearTimeout(timer);
-        }
+        if (timer) clearTimeout(timer);
         callback();
       };
 
       const scheduleTimeout = () => {
-        if (timer) {
-          clearTimeout(timer);
-        }
+        if (timer) clearTimeout(timer);
         timer = setTimeout(() => {
           const error = new Error(
             `Downstream '${appId}' timed out after ${timeoutMs}ms without any activity`
@@ -155,8 +103,6 @@ export class ExecutionCoordinator {
         return getSkillExecutor();
       case 'acp-agent':
         return getAcpExecutor();
-      case 'cli':
-        return getCliExecutor();
       default:
         throw new Error(`Protocol '${protocol}' does not support app capabilities`);
     }
@@ -184,13 +130,11 @@ export class ExecutionCoordinator {
 
   private async cleanupTimedOutExecution(appId: string, descriptor: AaiJson): Promise<void> {
     const access = descriptor.access;
-
     try {
       if (isMcpAccess(access)) {
         await getMcpExecutor().close(appId);
         return;
       }
-
       if (isAcpAgentAccess(access)) {
         await getAcpExecutor().disconnect(appId);
       }

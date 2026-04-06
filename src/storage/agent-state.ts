@@ -8,9 +8,7 @@ export interface AgentState {
   agentId: string;
   agentType?: string;
   callerName: string;
-  skillDir?: string;
   appOverrides: Record<string, 'enabled' | 'disabled'>;
-  generatedStubs: Record<string, string>;
   updatedAt: string;
 }
 
@@ -61,16 +59,13 @@ export async function upsertAgentState(input: {
   agentId: string;
   callerName: string;
   agentType?: string;
-  skillDir?: string;
 }): Promise<AgentState> {
   const existing = await loadAgentState(input.agentId);
   const next: AgentState = {
     agentId: input.agentId,
     callerName: input.callerName,
     agentType: input.agentType ?? existing?.agentType,
-    skillDir: input.skillDir ?? existing?.skillDir,
     appOverrides: existing?.appOverrides ?? {},
-    generatedStubs: existing?.generatedStubs ?? {},
     updatedAt: new Date().toISOString(),
   };
   await saveAgentState(next);
@@ -82,18 +77,10 @@ export async function disableAppForAgent(agentId: string, appId: string): Promis
     agentId,
     callerName: agentId,
     appOverrides: {},
-    generatedStubs: {},
     updatedAt: new Date().toISOString(),
   };
 
   state.appOverrides[appId] = 'disabled';
-
-  const stubPath = state.generatedStubs[appId];
-  if (stubPath) {
-    await rm(dirname(stubPath), { recursive: true, force: true });
-    delete state.generatedStubs[appId];
-  }
-
   state.updatedAt = new Date().toISOString();
   await saveAgentState(state);
   return state;
@@ -106,7 +93,6 @@ export async function enableAppForAgent(agentId: string, appId: string): Promise
       agentId,
       callerName: agentId,
       appOverrides: { [appId]: 'enabled' },
-      generatedStubs: {},
       updatedAt: new Date().toISOString(),
     };
     await saveAgentState(next);
@@ -150,30 +136,14 @@ export async function removeAppFromAllAgents(appId: string): Promise<void> {
   }
 
   for (const entry of entries) {
-    if (!entry.endsWith('.json')) {
-      continue;
-    }
+    if (!entry.endsWith('.json')) continue;
 
     const agentId = entry.slice(0, -'.json'.length);
     const state = await loadAgentState(agentId);
-    if (!state) {
-      continue;
-    }
+    if (!state) continue;
 
-    let changed = false;
     if (state.appOverrides[appId]) {
       delete state.appOverrides[appId];
-      changed = true;
-    }
-
-    const stubPath = state.generatedStubs[appId];
-    if (stubPath) {
-      await rm(dirname(stubPath), { recursive: true, force: true });
-      delete state.generatedStubs[appId];
-      changed = true;
-    }
-
-    if (changed) {
       state.updatedAt = new Date().toISOString();
       await saveAgentState(state);
     }

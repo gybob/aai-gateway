@@ -12,7 +12,7 @@ import { getSystemLocale } from '../utils/locale.js';
 // Templates
 // ============================================================================
 
-const TEMPLATE_GUIDE_TOOL_SUMMARY = `{{LOCALIZED_NAME}}. {{SUMMARY}} Guide tool, no arguments.`;
+const TEMPLATE_GUIDE_TOOL_SUMMARY = `{{LOCALIZED_NAME}} — {{SUMMARY}} Call this to see available tools and usage.`;
 
 const TEMPLATE_APP_GUIDE = `# {{LOCALIZED_NAME}}
 
@@ -27,7 +27,8 @@ const TEMPLATE_APP_GUIDE = `# {{LOCALIZED_NAME}}
 
 const TEMPLATE_MCP_APP_GUIDE = `# {{LOCALIZED_NAME}}
 
-This is only an operation guide for tools in this app. To perform the actual operation, you must call \`aai:exec\`.
+> **Important**: Do NOT call \`app:{{LOCAL_ID}}\` directly with arguments. It will only return this guide.
+> To execute tools in this app, you must call the \`aai:exec\` tool (another tool in this same MCP server).
 
 The \`aai:exec\` tool accepts three parameters: \`app\`, \`tool\`, and \`args\`.
 For this app, set \`app\` to "{{LOCAL_ID}}", set \`tool\` to one of the tool names below, and refer to the schema of the selected tool below for \`args\`.
@@ -38,7 +39,8 @@ For this app, set \`app\` to "{{LOCAL_ID}}", set \`tool\` to one of the tool nam
 
 const TEMPLATE_ACP_APP_GUIDE = `# {{LOCALIZED_NAME}}
 
-This is only an operation guide for tools in this app. To perform the actual operation, you must call \`aai:exec\`.
+> **Important**: Do NOT call \`app:{{LOCAL_ID}}\` directly with arguments. It will only return this guide.
+> To execute tools in this app, you must call the \`aai:exec\` tool (another tool in this same MCP server).
 
 The \`aai:exec\` tool accepts three parameters: \`app\`, \`tool\`, and \`args\`.
 For this app, set \`app\` to "{{LOCAL_ID}}", set \`tool\` to one of the tool names below, and use each tool's example below as the reference for \`args\`.

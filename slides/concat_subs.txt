@@ -1,0 +1,6 @@
+file '/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/slides/video_parts_sub/part_1.mp4'
+file '/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/slides/video_parts_sub/part_2.mp4'
+file '/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/slides/video_parts_sub/part_3.mp4'
+file '/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/slides/video_parts_sub/part_4.mp4'
+file '/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/slides/video_parts_sub/part_5.mp4'
+file '/Users/bob/Documents/AIProjects/AgentAppInterface/aai-gateway/slides/video_parts_sub/part_6.mp4'

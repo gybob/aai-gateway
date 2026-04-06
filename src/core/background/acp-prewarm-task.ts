@@ -13,7 +13,7 @@ import type { AppRegistry } from '../app-registry.js';
 
 export class AcpPrewarmBackgroundTask implements BackgroundTask {
   readonly name = 'acp-prewarm';
-  readonly dependencies = ['discovery'];
+  readonly dependencies: string[] = [];
 
   constructor(private readonly appRegistry: AppRegistry) {}
 

@@ -1,0 +1,82 @@
+[
+  {
+    "slide": 1,
+    "title": "安装aai-gateway",
+    "text": "接下来，我们以Claude Code为例，来演示如何安装和使用aai gateway。首先找到aai gateway的github仓库，查看readme文档，找到claude code的安装命令，复制，然后打开命令行工具，粘贴刚刚的命令，回车，然后嗖地一下就安装完了。"
+  },
+  {
+    "slide": 2,
+    "title": "打开claude code",
+    "text": "接下来，我们打开claude code，演示如何使用。假设，我们想安装一个网页搜索工具，可以对claude说：帮我用aai安装一个搜索工具。"
+  },
+  {
+    "slide": 3,
+    "title": "搜索指南",
+    "text": "然后aai会执行search discover工具，这个工具会返回mcp或者skill的搜索指南，搜索指南汇聚了权威、专业的mcp和skill网站。"
+  },
+  {
+    "slide": 4,
+    "title": "搜索结果确认",
+    "text": "很快claude code根据搜索指南搜索到了相关的工具，并且以表格的形式让用户确认安装哪一个。用户确认之后，aai gateway会引导agent自动导入mcp。"
+  },
+  {
+    "slide": 5,
+    "title": "试运行",
+    "text": "导入mcp的过程中会试运行mcp服务，如果发现问题，会引导用户解决。"
+  },
+  {
+    "slide": 6,
+    "title": "配置API KEY",
+    "text": "比如我们安装的这个Brave search，需要提供api key, 我们需要前往Brave Search官网获取。这里我已经提前获取了。aai gateway会贴心地帮你打开aai gateway的环境变量文件，并且给出配置示例，你只需要把你获取的API KEY, 粘贴并配置到打开的文件中，然后保存。"
+  },
+  {
+    "slide": 7,
+    "title": "保存配置",
+    "text": "然后回到命令行，对claude说：我保存好了。"
+  },
+  {
+    "slide": 8,
+    "title": "预导入",
+    "text": "然后重点来了：aai gateway会引导agent执行预导入，预导入不会实际导入，而是会给agent返回brave search这个mcp server的所有工具列表和工具描述，然后让agent总结摘要。"
+  },
+  {
+    "slide": 9,
+    "title": "节省token",
+    "text": "最终aai gateway会将整个brave search mcp server作为单个工具添加到agent的工具列表，并且仅用这个摘要作为这个工具的描述，没有schema，整个摘要不超过200个字符。如果不使用aai-gateway，直接导入brave search，那么整个工具描述和schema将会有两万多字符。aai gateway节省了99%的token使用量。"
+  },
+  {
+    "slide": 10,
+    "title": "安装范围",
+    "text": "aai gateway会让agent和用户确认摘要是否合适，并且确定brave search的安装范围：对当前agent生效，还是对所有安装了aai gateway的agent都生效。如果选择对所有agent生效，那么当前电脑上安装了aai gateway的所有agent都可以立即使用brave search工具。如果只对当前agent生效，后续还是可以打开其他agent，然后对agent说启用brave search来手动生效。"
+  },
+  {
+    "slide": 11,
+    "title": "无需重启",
+    "text": "传统的mcp安装方式，安装完新的mcp工具之后，需要重启claude code，而使用aai gateway安装的mcp，则不需要。"
+  },
+  {
+    "slide": 12,
+    "title": "使用搜索",
+    "text": "我们现在直接使用它来搜索最近的ai相关的新闻。很快，brave search返回了搜索结果。"
+  },
+  {
+    "slide": 13,
+    "title": "安装skill",
+    "text": "接下来，我们再来演示下如何安装skill。我们也可以指定让aai gateway安装某个技能，比如这里我们可以对claude说：用aai工具安装一个openai的ppt制作技能。很快，aai gateway会引导agent完成技能的搜索，让用户确认是否安装。"
+  },
+  {
+    "slide": 14,
+    "title": "技能导入",
+    "text": "确认之后，aai gateway会引导agent执行技能安装，首先aai gateway会下载技能。下载完成之后，会引导agent完成技能的导入，技能会导入到aai gateway指定的目录，而不是claude技能安装目录，这样其他安装了aai gateway的agent都可以直接使用这个技能。后续aai gateway还会新增技能自动更新功能，如果技能有更新，会自动升级。"
+  },
+  {
+    "slide": 15,
+    "title": "制作PPT",
+    "text": "好了，我们现在直接使用，无需重启claude哦。我们让他来制作一个aai gateway的宣传ppt吧。它会先搜索aai gateway的资料，然后读取技能完整文档，制作ppt。让我们稍等片刻。好了，ppt制作完了，让我们看下效果。"
+  },
+  {
+    "slide": 16,
+    "title": "结尾",
+    "text": "效果还不错吧。好了，我们今天就介绍到这里，欢迎大家使用和贡献代码，使用链接在下方评论里哦。"
+  }
+]

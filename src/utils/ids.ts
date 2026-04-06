@@ -10,7 +10,6 @@ export function slugify(value: string): string {
 }
 
 export function deriveAppId(seed: string, fallback = 'app'): string {
-  const slug = slugify(seed) || fallback;
   const hash = createHash('sha1').update(seed).digest('hex').slice(0, 8);
-  return `${slug}-${hash}`;
+  return `${fallback}-${hash}`;
 }

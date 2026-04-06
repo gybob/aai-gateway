@@ -33,7 +33,7 @@ AAI Gateway sits between your AI agents and all your tools. One MCP connection r
 | **Context cost** | 50 tool schemas in every prompt | 10 one-line summaries (~200 chars each), details loaded on demand |
 | **Config**       | Configure each MCP per agent    | Import once, all agents share instantly                           |
 | **New tools**    | Restart agent after install     | Hot-reload, available immediately                                 |
-| **Discovery**    | Manual search + copy config     | `"Find me a filesystem MCP"` → installed in seconds               |
+| **Finding tools** | Manual search + copy config     | `"Find me a filesystem MCP"` → installed in seconds               |
 
 ---
 
@@ -146,7 +146,7 @@ Import local or remote skill packages. AAI Gateway copies them into managed stor
 
 ### Agent Interoperability (ACP)
 
-AAI Gateway auto-detects installed agent tools (Claude Code, Codex, OpenCode) and exposes them as controllable apps. This means:
+AAI Gateway ships with built-in support for popular coding agents (Claude Code, Codex, OpenCode) and exposes them as controllable apps. This means:
 
 - Use **one agent to orchestrate another** — e.g., direct Claude Code to write code while you review from a different tool
 - **Remote work** — instruct your coding agents from your phone while on the go
@@ -159,15 +159,9 @@ One import serves all agents, but you can fine-tune visibility:
 - `removeApp` — uninstall completely
 - `listAllAaiApps` — see everything that's registered
 
-### Auto-Discovery
+### Pre-built ACP Agents
 
-Apps can register themselves by placing an `aai.json` descriptor at a known location. AAI Gateway scans these locations automatically:
-
-- **macOS**: `<App>.app/Contents/Resources/aai.json`
-- **Linux**: `/usr/share`, `/usr/local/share`, `~/.local/share`
-- **Windows**: `Program Files`, `%LOCALAPPDATA%`
-
-No manual import needed — install the app, and AAI Gateway finds it.
+AAI Gateway ships with built-in descriptors for popular coding agents (Claude Code, Codex, OpenCode). These are seeded automatically on startup — no manual import needed.
 
 ---
 
@@ -182,7 +176,7 @@ No manual import needed — install the app, and AAI Gateway finds it.
 | `aai:exec`        | Execute a specific tool from a managed app (`app` + `tool` + `args`) |
 | `mcp:import`      | Import an MCP server                                                 |
 | `skill:import`    | Import a skill package                                               |
-| `skill:create`    | Create a new skill                                                   |
+| `skill:create`    | Create a new skill managed by AAI Gateway                            |
 | `search:discover` | Search for new tools or skills with natural language                 |
 
 Plus a **`guide:<app-id>`** tool for each imported app — no parameters, just returns the full operation guide when called.
@@ -196,31 +190,34 @@ Plus a **`guide:<app-id>`** tool for each imported app — no parameters, just r
 │                      AI Agents                              │
 │           Claude Code  /  Codex  /  OpenCode  / ...         │
 └────────────────────────┬────────────────────────────────────┘
-                         │  Single MCP Connection
+                         │  Single MCP Connection (stdio)
                          ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                      AAI Gateway                            │
-│                                                             │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │            Progressive Disclosure Layer               │  │
-│  │  summary-only exposure → on-demand tool details       │  │
-│  └───────────────────────────────────────────────────────┘  │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │                  App Registry                         │  │
-│  │   MCP Servers · Skills · ACP Agents · CLI Tools      │  │
-│  └───────────────────────────────────────────────────────┘  │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │               Discovery Layer                         │  │
-│  │   Desktop scan · Managed imports · Built-in configs   │  │
-│  └───────────────────────────────────────────────────────┘  │
-└────────────────────────┬────────────────────────────────────┘
-                         │
-            ┌────────────┼────────────┐
-            ▼            ▼            ▼
-     ┌──────────┐ ┌──────────┐ ┌──────────┐
-     │   MCP    │ │  Skills  │ │   ACP    │ ...
-     │ Servers  │ │          │ │  Agents  │
-     └──────────┘ └──────────┘ └──────────┘
+│  MCP Server  (src/mcp/server.ts)                            │
+│  Protocol layer — handles MCP requests/responses            │
+├─────────────────────────────────────────────────────────────┤
+│  Core Gateway  (src/core/gateway.ts)                        │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │  Progressive Disclosure — summaries → on-demand     │    │
+│  │  Per-Agent Visibility — enable / disable / remove   │    │
+│  │  Import — MCP servers, skills, search & discover    │    │
+│  └─────────────────────────────────────────────────────┘    │
+├─────────────────────────────────────────────────────────────┤
+│  Execution  (src/core/execution-coordinator.ts)             │
+│  Route calls to the right executor                          │
+├──────────────────────┬──────────────────────────────────────┤
+│  Storage             │  Seed                                │
+│  ~/.local/share/     │  Pre-built ACP agent descriptors     │
+│  aai-gateway/apps/   │  written on startup (always fresh)   │
+│  <appId>/aai.json    │                                      │
+└──────────────────────┴──────────────┬───────────────────────┘
+                                      │
+                         ┌────────────┼────────────┐
+                         ▼            ▼            ▼
+                  ┌──────────┐ ┌──────────┐ ┌──────────┐
+                  │   MCP    │ │  Skills  │ │   ACP    │
+                  │ Servers  │ │          │ │  Agents  │
+                  └──────────┘ └──────────┘ └──────────┘
 ```
 
 ---
@@ -247,7 +244,7 @@ Just describe what you need: `"I need something to query PostgreSQL"`. AAI Gatew
 
 ## For App Developers: AAI Descriptor
 
-Want your app to be auto-discovered by AAI Gateway? Add an `aai.json` descriptor:
+Want your app to work with AAI Gateway? Create an `aai.json` descriptor:
 
 ```json
 {
@@ -269,11 +266,9 @@ Want your app to be auto-discovered by AAI Gateway? Add an `aai.json` descriptor
 }
 ```
 
-Supported protocols: `mcp`, `skill`, `acp-agent`, `cli`
+Supported protocols: `mcp`, `skill`, `acp-agent`
 
-Place the descriptor at one of the [auto-discovery locations](#auto-discovery), and AAI Gateway picks it up automatically.
-
-Want to bundle your descriptor with AAI Gateway by default? [Open a PR](../../pulls) — see `src/discovery/descriptors/` for examples.
+Import via `mcp:import` or `skill:import`, or bundle as a pre-built descriptor. Want to add a pre-built app? [Open a PR](../../pulls) — see `src/discovery/descriptors/` for examples.
 
 ---
 

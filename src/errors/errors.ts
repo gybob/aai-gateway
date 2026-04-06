@@ -3,7 +3,6 @@ export type AaiErrorCode =
   | 'UNKNOWN_APP'
   | 'UNKNOWN_TOOL'
   | 'INVALID_PARAMS'
-  | 'CONSENT_REQUIRED'
   | 'AUTH_REQUIRED'
   | 'AUTH_DENIED'
   | 'AUTH_EXPIRED'
@@ -17,15 +16,6 @@ export type AaiErrorCode =
   | 'EXECUTION_ERROR'
   | 'PARSE_ERROR'
   | 'DESCRIPTOR_ERROR';
-
-export interface ConsentRequiredData {
-  app_id: string;
-  app_name: string;
-  tool: string;
-  tool_description: string;
-  tool_parameters: object;
-  consent_url: string;
-}
 
 export interface AuthGuidanceRequiredData {
   app_id: string;

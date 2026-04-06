@@ -1,0 +1,32 @@
+[
+  {
+    "slide": 1,
+    "title": "封面",
+    "text": "为什么 OpenClaw 不再原生支持 M C P？难道真的是 M C P 已死，C L I 当立？A A I Gateway 说，小孩才做选择，我全都要。用一个 M C P 集成所有 M C P 和 Skill，无上下文浪费，无需重启，一句话安装。更绝的是，搭配 A C P 协议，你的龙虾们可以直接操控 Claude Code、Codex 这些编码工具。什么意思呢？就是你在陪家人逛街的时候，手机上让龙虾帮你写代码、跑测试、提 P R，美其名曰陪伴家人，实际上在摸鱼搞开发。"
+  },
+  {
+    "slide": 2,
+    "title": "痛点",
+    "text": "先说说 M C P 到底惹了谁。第一，上下文爆炸。有人扒过数据，GitHub 官方 M C P 一个就定义了 93 个工具，吃掉 55000 个 token。你挂 10 个 M C P Server，几轮对话上下文直接爆掉。第二，重复配置。Claude Code、Codex、OpenCode，同一个 M C P 配三遍，还得手动同步。第三，装个新 M C P 就得重启 Agent，每次都是。第四，找工具太麻烦，搜 GitHub、读 README、拷 J SON、调连接，折腾半天才能试用一个工具。难怪大家想跑路。"
+  },
+  {
+    "slide": 3,
+    "title": "Token浪费",
+    "text": "来算一笔账你就明白了。M C P 的机制是，每轮对话都要把所有工具的完整 Schema 发给模型。一个工具大概 120 个 token，50 个工具就是 6000。聊 15 轮下来，9 万个 token 就这么没了。实测数据更狠，M C P 比 C L I 贵 10 到 32 倍。关键是什么？这些工具里大部分你这轮根本用不上，但 token 已经花出去了。这就是所有人喊 M C P 已死的根本原因。"
+  },
+  {
+    "slide": 4,
+    "title": "解决方案",
+    "text": "但抛弃 M C P 就对了吗？C L I 也不是万能的，自定义工具照样要写文档，照样吃 token。A A I Gateway 的思路是，不站队，直接解决问题。以前 50 个完整 Schema 每轮全塞进去，现在只要 10 条短摘要，用到哪个加载哪个。以前每个 Agent 各配一遍，现在导入一次全部共享。装新工具不用重启，热加载秒生效。找工具？跟 Agent 说一句话就能搜索安装。上下文省 90% 以上。"
+  },
+  {
+    "slide": 5,
+    "title": "核心机制",
+    "text": "怎么做到的？核心就四个字：按需披露。A A I Gateway 把工具暴露拆成两个阶段。阶段一，Agent 只看到一句话摘要。比如 claude 是代码助手，brave-search 是网页搜索，slides 是做 P P T。每个就一行，50 个字符都不到，没有参数 Schema。阶段二，Agent 说我要用 brave-search，这时候才加载完整信息。6 个工具、所有参数、用法示例，一次性返回，然后通过统一接口执行。传统方式这 6 个工具的 Schema 每轮都得全量注入，A A I Gateway 只需一行摘要，用到才展开。思路和 Cloudflare 的 Code Mode 异曲同工，但 A A I Gateway 是通用方案，什么 M C P Server 都能接。"
+  },
+  {
+    "slide": 6,
+    "title": "架构",
+    "text": "看一下整体架构。最上层是你的 AI Agent，Claude Code、Codex、OpenCode，各种龙虾都行，它们通过一个 M C P 连接接入 A A I Gateway。Gateway 内部三层：最上面是渐进式披露层，控制什么时候暴露什么信息；中间是应用注册表，M C P Server、Skill、A C P Agent 全都统一管理；最下面是发现层，桌面扫描、在线导入、内置配置都在这。而且 A A I Gateway 会自动检测你装了哪些编码 Agent，通过 A C P 协议暴露出来。这意味着你可以用任何一个 Agent 去指挥另一个 Agent 干活。比如手机上用龙虾聊天，让它操控电脑上的 Claude Code 写代码、跑测试。陪老婆旅游和 996 终于可以兼得了。当然，被发现了后果自负。"
+  }
+]
