@@ -185,40 +185,7 @@ Plus a **`guide:<app-id>`** tool for each imported app — no parameters, just r
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      AI Agents                              │
-│           Claude Code  /  Codex  /  OpenCode  / ...         │
-└────────────────────────┬────────────────────────────────────┘
-                         │  Single MCP Connection (stdio)
-                         ▼
-┌─────────────────────────────────────────────────────────────┐
-│  MCP Server  (src/mcp/server.ts)                            │
-│  Protocol layer — handles MCP requests/responses            │
-├─────────────────────────────────────────────────────────────┤
-│  Core Gateway  (src/core/gateway.ts)                        │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │  Progressive Disclosure — summaries → on-demand     │    │
-│  │  Per-Agent Visibility — enable / disable / remove   │    │
-│  │  Import — MCP servers, skills, search & discover    │    │
-│  └─────────────────────────────────────────────────────┘    │
-├─────────────────────────────────────────────────────────────┤
-│  Execution  (src/core/execution-coordinator.ts)             │
-│  Route calls to the right executor                          │
-├──────────────────────┬──────────────────────────────────────┤
-│  Storage             │  Seed                                │
-│  ~/.local/share/     │  Pre-built ACP agent descriptors     │
-│  aai-gateway/apps/   │  written on startup (always fresh)   │
-│  <appId>/aai.json    │                                      │
-└──────────────────────┴──────────────┬───────────────────────┘
-                                      │
-                         ┌────────────┼────────────┐
-                         ▼            ▼            ▼
-                  ┌──────────┐ ┌──────────┐ ┌──────────┐
-                  │   MCP    │ │  Skills  │ │   ACP    │
-                  │ Servers  │ │          │ │  Agents  │
-                  └──────────┘ └──────────┘ └──────────┘
-```
+![Architecture](images/architecture.png)
 
 ---
 

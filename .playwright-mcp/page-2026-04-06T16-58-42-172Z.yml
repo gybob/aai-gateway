@@ -1,0 +1,550 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - link "Skip to content":
+      - /url: "#main-content"
+    - generic [ref=e3]:
+      - link "DEV Community Home" [ref=e4] [cursor=pointer]:
+        - /url: /
+        - img "DEV Community" [ref=e5]
+      - search [ref=e7]:
+        - generic [ref=e9]:
+          - textbox "Find related posts..." [ref=e10]
+          - button "Search" [ref=e11] [cursor=pointer]:
+            - img
+          - link "Powered by Algolia" [ref=e12] [cursor=pointer]:
+            - /url: https://www.algolia.com/developers/?utm_source=devto&utm_medium=referral
+            - text: Powered by Algolia
+            - img [ref=e13]
+      - generic [ref=e15]:
+        - link "Create Post" [ref=e17] [cursor=pointer]:
+          - /url: /new
+        - link "Notifications" [ref=e18] [cursor=pointer]:
+          - /url: /notifications
+          - img "Notifications" [ref=e19]
+        - button "Navigation menu" [ref=e22] [cursor=pointer]
+  - generic [ref=e26]:
+    - complementary "Article actions" [ref=e27]:
+      - generic [ref=e29]:
+        - button "reaction-drawer-trigger" [ref=e31] [cursor=pointer]:
+          - img [ref=e33]
+          - generic: Add reaction
+        - button "Jump to Comments" [ref=e38] [cursor=pointer]:
+          - img [ref=e40]
+          - generic: Jump to Comments
+        - button "Add to reading list" [ref=e44] [cursor=pointer]:
+          - img [ref=e46]
+          - generic: Save
+        - button "Boost" [ref=e50] [cursor=pointer]:
+          - img [ref=e52]
+          - generic: Boost
+        - button "Share post options" [ref=e55] [cursor=pointer]:
+          - img
+    - main [ref=e56]:
+      - article [ref=e58]:
+        - generic [ref=e60]:
+          - generic [ref=e61]:
+            - generic [ref=e62]:
+              - link "Edit" [ref=e63] [cursor=pointer]:
+                - /url: /gybobdev/aai-gateway-one-mcp-server-to-connect-ai-agents-to-all-your-apps-5fh7/edit
+              - link "Manage" [ref=e64] [cursor=pointer]:
+                - /url: /gybobdev/aai-gateway-one-mcp-server-to-connect-ai-agents-to-all-your-apps-5fh7/manage
+              - link "Stats" [ref=e65] [cursor=pointer]:
+                - /url: /gybobdev/aai-gateway-one-mcp-server-to-connect-ai-agents-to-all-your-apps-5fh7/stats
+            - generic [ref=e66]:
+              - link "Bob Gu" [ref=e68] [cursor=pointer]:
+                - /url: /gybobdev
+                - img "Bob Gu" [ref=e69]
+              - generic [ref=e70]:
+                - link "Bob Gu" [ref=e71] [cursor=pointer]:
+                  - /url: /gybobdev
+                - paragraph [ref=e72]:
+                  - text: Posted on
+                  - time [ref=e73]: 3月9日
+                  - text: • Edited on
+                  - time [ref=e74]: 4月7日
+          - 'heading "AAI Gateway: One MCP Server to Connect AI Agents to All Your Apps" [level=1] [ref=e76]'
+          - generic [ref=e77]:
+            - link "# mcp" [ref=e78] [cursor=pointer]:
+              - /url: /t/mcp
+              - generic [ref=e79]: "#"
+              - text: mcp
+            - link "# claudecode" [ref=e80] [cursor=pointer]:
+              - /url: /t/claudecode
+              - generic [ref=e81]: "#"
+              - text: claudecode
+            - link "# web" [ref=e82] [cursor=pointer]:
+              - /url: /t/web
+              - generic [ref=e83]: "#"
+              - text: web
+            - link "# aai" [ref=e84] [cursor=pointer]:
+              - /url: /t/aai
+              - generic [ref=e85]: "#"
+              - text: aai
+        - generic [ref=e87]:
+          - heading "The Problem" [level=2] [ref=e88]:
+            - link:
+              - /url: "#the-problem"
+            - text: The Problem
+          - paragraph [ref=e89]: "As the MCP ecosystem grows, every AI agent user hits the same wall:"
+          - table [ref=e91]:
+            - rowgroup [ref=e92]:
+              - row "Pain Point What Happens" [ref=e93]:
+                - columnheader "Pain Point" [ref=e94]
+                - columnheader "What Happens" [ref=e95]
+            - rowgroup [ref=e96]:
+              - row "Context explosion 10 MCP servers × 5 tools each = 50 full tool schemas injected into every prompt, burning thousands of tokens before the model even starts thinking" [ref=e97]:
+                - cell "Context explosion" [ref=e98]:
+                  - strong [ref=e99]: Context explosion
+                - cell "10 MCP servers × 5 tools each = 50 full tool schemas injected into every prompt, burning thousands of tokens before the model even starts thinking" [ref=e100]
+              - row "Duplicate config Claude Code, Codex, OpenCode — configure the same MCP server three times, keep them in sync manually" [ref=e101]:
+                - cell "Duplicate config" [ref=e102]:
+                  - strong [ref=e103]: Duplicate config
+                - cell "Claude Code, Codex, OpenCode — configure the same MCP server three times, keep them in sync manually" [ref=e104]
+              - row "Restart required Add a new MCP? Restart your agent. Every. Single. Time." [ref=e105]:
+                - cell "Restart required" [ref=e106]:
+                  - strong [ref=e107]: Restart required
+                - cell "Add a new MCP? Restart your agent. Every. Single. Time." [ref=e108]
+              - row "Finding tools is hard Search GitHub, read READMEs, copy JSON configs, debug connection errors — all before you can even try a tool" [ref=e109]:
+                - cell "Finding tools is hard" [ref=e110]:
+                  - strong [ref=e111]: Finding tools is hard
+                - cell "Search GitHub, read READMEs, copy JSON configs, debug connection errors — all before you can even try a tool" [ref=e112]
+          - heading "The Solution" [level=2] [ref=e113]:
+            - link:
+              - /url: "#the-solution"
+            - text: The Solution
+          - paragraph [ref=e114]: AAI Gateway sits between your AI agents and all your tools. One MCP connection replaces dozens.
+          - table [ref=e116]:
+            - rowgroup [ref=e117]:
+              - row "Without AAI Gateway With AAI Gateway" [ref=e118]:
+                - columnheader [ref=e119]
+                - columnheader "Without AAI Gateway" [ref=e120]
+                - columnheader "With AAI Gateway" [ref=e121]
+            - rowgroup [ref=e122]:
+              - row "Context cost 50 tool schemas in every prompt 10 one-line summaries (~200 chars each), details loaded on demand" [ref=e123]:
+                - cell "Context cost" [ref=e124]:
+                  - strong [ref=e125]: Context cost
+                - cell "50 tool schemas in every prompt" [ref=e126]
+                - cell "10 one-line summaries (~200 chars each), details loaded on demand" [ref=e127]
+              - row "Config Configure each MCP per agent Import once, all agents share instantly" [ref=e128]:
+                - cell "Config" [ref=e129]:
+                  - strong [ref=e130]: Config
+                - cell "Configure each MCP per agent" [ref=e131]
+                - cell "Import once, all agents share instantly" [ref=e132]
+              - row "New tools Restart agent after install Hot-reload, available immediately" [ref=e133]:
+                - cell "New tools" [ref=e134]:
+                  - strong [ref=e135]: New tools
+                - cell "Restart agent after install" [ref=e136]
+                - cell "Hot-reload, available immediately" [ref=e137]
+              - row "Finding tools Manual search + copy config \"Find me a filesystem MCP\" → installed in seconds" [ref=e138]:
+                - cell "Finding tools" [ref=e139]:
+                  - strong [ref=e140]: Finding tools
+                - cell "Manual search + copy config" [ref=e141]
+                - cell "\"Find me a filesystem MCP\" → installed in seconds" [ref=e142]:
+                  - code [ref=e143]: "\"Find me a filesystem MCP\""
+                  - text: → installed in seconds
+          - separator [ref=e144]
+          - heading "Quick Start (30 seconds)" [level=2] [ref=e145]:
+            - link:
+              - /url: "#quick-start-30-seconds"
+            - text: Quick Start (30 seconds)
+          - heading "1. Add AAI Gateway to your agent" [level=3] [ref=e146]:
+            - link:
+              - /url: "#1-add-aai-gateway-to-your-agent"
+            - text: 1. Add AAI Gateway to your agent
+          - paragraph [ref=e147]:
+            - strong [ref=e148]: Claude Code
+          - code [ref=e151]: claude mcp add --scope user --transport stdio aai-gateway -- npx -y aai-gateway
+          - paragraph [ref=e152]:
+            - strong [ref=e153]: Codex
+          - code [ref=e156]: codex mcp add aai-gateway -- npx -y aai-gateway
+          - paragraph [ref=e157]:
+            - strong [ref=e158]: OpenCode
+            - text: — add to
+            - code [ref=e159]: ~/.config/opencode/opencode.json
+            - text: ":"
+          - code [ref=e162]: "{ \"mcp\": { \"aai-gateway\": { \"type\": \"local\", \"command\": [\"npx\", \"-y\", \"aai-gateway\"], \"enabled\": true } } }"
+          - heading "2. Start using it" [level=3] [ref=e163]:
+            - link:
+              - /url: "#2-start-using-it"
+            - text: 2. Start using it
+          - paragraph [ref=e164]: "Just talk to your AI agent:"
+          - blockquote [ref=e165]:
+            - paragraph [ref=e166]: "\"Help me search for a filesystem MCP and install it\""
+            - paragraph [ref=e167]:
+              - text: "\"Import this MCP:"
+              - code [ref=e168]: npx -y @anthropic-ai/mcp-server-fetch
+              - text: "\""
+            - paragraph [ref=e169]: "\"What tools do I have installed?\""
+          - paragraph [ref=e170]: That's it. No config files to edit, no agent restarts needed.
+          - separator [ref=e171]
+          - 'heading "How It Works: Two-Stage Disclosure" [level=2] [ref=e172]':
+            - link:
+              - /url: "#how-it-works-twostage-disclosure"
+            - text: "How It Works: Two-Stage Disclosure"
+          - paragraph [ref=e173]:
+            - text: This is the core innovation. Instead of dumping all tool schemas into the prompt, AAI Gateway uses
+            - strong [ref=e174]: progressive disclosure
+            - text: ":"
+          - code [ref=e177]: "┌─────────────────────────────────────────────────────────────────────┐ │ Stage 1 — What the agent sees in its tool list │ │ │ │ guide:filesystem \"Read/write local files and directories\" │ ~50 chars │ guide:github \"Manage GitHub repos, issues, and PRs\" │ ~50 chars │ guide:slack \"Send messages and manage Slack channels\" │ ~50 chars │ ... (one line per app, no parameter schemas) │ ├─────────────────────────────────────────────────────────────────────┤ │ Stage 2 — Agent decides to use filesystem │ │ │ │ → Calls guide:filesystem │ │ ← Gets full tool list + parameter schemas + usage examples │ │ → Executes via aai:exec { app, tool, args } │ └─────────────────────────────────────────────────────────────────────┘"
+          - paragraph [ref=e178]:
+            - strong [ref=e179]: The math
+            - text: ": 10 MCP servers with 5 tools each ="
+            - strong [ref=e180]: 50 full schemas
+            - text: in traditional setup. With AAI Gateway =
+            - strong [ref=e181]: 10 short summaries
+            - text: + details loaded only when needed. Context savings of
+            - strong [ref=e182]: 90%+
+            - text: .
+          - separator [ref=e183]
+          - heading "Key Features" [level=2] [ref=e184]:
+            - link:
+              - /url: "#key-features"
+            - text: Key Features
+          - heading "Search & Install with Natural Language" [level=3] [ref=e185]:
+            - link:
+              - /url: "#search-amp-install-with-natural-language"
+            - text: Search & Install with Natural Language
+          - paragraph [ref=e186]: Describe what you need, and AAI Gateway finds it for you. It searches trusted sources (official MCP registries, curated lists), presents options, and handles the entire import flow.
+          - blockquote [ref=e187]:
+            - paragraph [ref=e188]: "\"Find me an MCP for database queries\" → search → select → imported → ready"
+          - heading "Import Any MCP Server" [level=3] [ref=e189]:
+            - link:
+              - /url: "#import-any-mcp-server"
+            - text: Import Any MCP Server
+          - paragraph [ref=e190]: Paste any standard MCP config and ask your agent to import it through AAI Gateway.
+          - paragraph [ref=e191]:
+            - strong [ref=e192]: "stdio MCP:"
+          - code [ref=e195]: "{ \"command\": \"npx\", \"args\": [\"-y\", \"@modelcontextprotocol/server-filesystem\", \"/tmp\"] }"
+          - paragraph [ref=e196]:
+            - strong [ref=e197]: "Remote (Streamable HTTP):"
+          - code [ref=e200]: "{ \"url\": \"https://example.com/mcp\" }"
+          - paragraph [ref=e201]:
+            - strong [ref=e202]: "Remote (SSE):"
+          - code [ref=e205]: "{ \"url\": \"https://example.com/sse\", \"transport\": \"sse\" }"
+          - heading "Import Skills" [level=3] [ref=e206]:
+            - link:
+              - /url: "#import-skills"
+            - text: Import Skills
+          - paragraph [ref=e207]: "Import local or remote skill packages. AAI Gateway copies them into managed storage and exposes them as tools. Future updates: automatic skill updates from remote sources."
+          - heading "Agent Interoperability (ACP)" [level=3] [ref=e208]:
+            - link:
+              - /url: "#agent-interoperability-acp"
+            - text: Agent Interoperability (ACP)
+          - paragraph [ref=e209]: "AAI Gateway ships with built-in support for popular coding agents (Claude Code, Codex, OpenCode) and exposes them as controllable apps. This means:"
+          - list [ref=e210]:
+            - listitem [ref=e211]:
+              - text: Use
+              - strong [ref=e212]: one agent to orchestrate another
+              - text: — e.g., direct Claude Code to write code while you review from a different tool
+            - listitem [ref=e213]:
+              - strong [ref=e214]: Remote work
+              - text: — instruct your coding agents from your phone while on the go
+          - heading "Per-Agent Control" [level=3] [ref=e215]:
+            - link:
+              - /url: "#peragent-control"
+            - text: Per-Agent Control
+          - paragraph [ref=e216]: "One import serves all agents, but you can fine-tune visibility:"
+          - list [ref=e217]:
+            - listitem [ref=e218]:
+              - code [ref=e219]: enableApp
+              - text: /
+              - code [ref=e220]: disableApp
+              - text: — toggle tools per agent
+            - listitem [ref=e221]:
+              - code [ref=e222]: removeApp
+              - text: — uninstall completely
+            - listitem [ref=e223]:
+              - code [ref=e224]: listAllAaiApps
+              - text: — see everything that's registered
+          - separator [ref=e225]
+          - heading "Built-in Tools" [level=2] [ref=e226]:
+            - link:
+              - /url: "#builtin-tools"
+            - text: Built-in Tools
+          - table [ref=e228]:
+            - rowgroup [ref=e229]:
+              - row "Tool Description" [ref=e230]:
+                - columnheader "Tool" [ref=e231]
+                - columnheader "Description" [ref=e232]
+            - rowgroup [ref=e233]:
+              - row "listAllAaiApps List all apps managed by AAI Gateway" [ref=e234]:
+                - cell "listAllAaiApps" [ref=e235]:
+                  - code [ref=e236]: listAllAaiApps
+                - cell "List all apps managed by AAI Gateway" [ref=e237]
+              - row "enableApp Enable an app for the current agent" [ref=e238]:
+                - cell "enableApp" [ref=e239]:
+                  - code [ref=e240]: enableApp
+                - cell "Enable an app for the current agent" [ref=e241]
+              - row "disableApp Disable an app for the current agent" [ref=e242]:
+                - cell "disableApp" [ref=e243]:
+                  - code [ref=e244]: disableApp
+                - cell "Disable an app for the current agent" [ref=e245]
+              - row "removeApp Remove an app from the system" [ref=e246]:
+                - cell "removeApp" [ref=e247]:
+                  - code [ref=e248]: removeApp
+                - cell "Remove an app from the system" [ref=e249]
+              - row "aai:exec Execute a specific tool from a managed app" [ref=e250]:
+                - cell "aai:exec" [ref=e251]:
+                  - code [ref=e252]: aai:exec
+                - cell "Execute a specific tool from a managed app" [ref=e253]
+              - row "mcp:import Import an MCP server" [ref=e254]:
+                - cell "mcp:import" [ref=e255]:
+                  - code [ref=e256]: mcp:import
+                - cell "Import an MCP server" [ref=e257]
+              - row "skill:import Import a skill package" [ref=e258]:
+                - cell "skill:import" [ref=e259]:
+                  - code [ref=e260]: skill:import
+                - cell "Import a skill package" [ref=e261]
+              - row "skill:create Create a new skill managed by AAI Gateway" [ref=e262]:
+                - cell "skill:create" [ref=e263]:
+                  - code [ref=e264]: skill:create
+                - cell "Create a new skill managed by AAI Gateway" [ref=e265]
+              - row "search:discover Search for new tools or skills with natural language" [ref=e266]:
+                - cell "search:discover" [ref=e267]:
+                  - code [ref=e268]: search:discover
+                - cell "Search for new tools or skills with natural language" [ref=e269]
+          - paragraph [ref=e270]:
+            - text: Plus a
+            - strong [ref=e271]:
+              - code [ref=e272]: guide:<app-id>
+            - text: tool for each imported app — no parameters, just returns the full operation guide when called.
+          - separator [ref=e273]
+          - heading "Architecture" [level=2] [ref=e274]:
+            - link:
+              - /url: "#architecture"
+            - text: Architecture
+          - code [ref=e277]: ┌─────────────────────────────────────────────────────────────┐ │ AI Agents │ │ Claude Code / Codex / OpenCode / ... │ └────────────────────────┬────────────────────────────────────┘ │ Single MCP Connection (stdio) ▼ ┌─────────────────────────────────────────────────────────────┐ │ MCP Server — Protocol layer │ ├─────────────────────────────────────────────────────────────┤ │ Core Gateway │ │ ┌─────────────────────────────────────────────────────┐ │ │ │ Progressive Disclosure — summaries → on-demand │ │ │ │ Per-Agent Visibility — enable / disable / remove │ │ │ │ Import — MCP servers, skills, search & discover │ │ │ └─────────────────────────────────────────────────────┘ │ ├─────────────────────────────────────────────────────────────┤ │ Execution — Route calls to the right executor │ ├──────────────────────┬──────────────────────────────────────┤ │ Storage │ Seed │ │ ~/.local/share/ │ Pre-built ACP agent descriptors │ │ aai-gateway/apps/ │ written on startup (always fresh) │ └──────────────────────┴──────────────────────────────────────┘
+          - separator [ref=e278]
+          - heading "Use Cases" [level=2] [ref=e279]:
+            - link:
+              - /url: "#use-cases"
+            - text: Use Cases
+          - heading "\"I have 15 MCPs and my context is exploding\"" [level=3] [ref=e280]:
+            - link:
+              - /url: "#i-have-15-mcps-and-my-context-is-exploding"
+            - text: "\"I have 15 MCPs and my context is exploding\""
+          - paragraph [ref=e281]: AAI Gateway's two-stage disclosure cuts context token usage by 90%+. Your agent sees short summaries, not 15 full tool schemas.
+          - heading "\"I use Claude Code AND OpenCode\"" [level=3] [ref=e282]:
+            - link:
+              - /url: "#i-use-claude-code-and-opencode"
+            - text: "\"I use Claude Code AND OpenCode\""
+          - paragraph [ref=e283]: Import once through AAI Gateway. Both agents see the same tools immediately. Add Codex tomorrow — it gets them too, zero extra config.
+          - heading "\"I want to write code while drinking tea\"" [level=3] [ref=e284]:
+            - link:
+              - /url: "#i-want-to-write-code-while-drinking-tea"
+            - text: "\"I want to write code while drinking tea\""
+          - paragraph [ref=e285]: Set up ACP agents. Use any agent (even on your phone) to instruct Claude Code or Codex to write, test, and commit code on your workstation.
+          - heading "\"I don't know which MCP to use\"" [level=3] [ref=e286]:
+            - link:
+              - /url: "#i-dont-know-which-mcp-to-use"
+            - text: "\"I don't know which MCP to use\""
+          - paragraph [ref=e287]:
+            - text: "Just describe what you need:"
+            - code [ref=e288]: "\"I need something to query PostgreSQL\""
+            - text: . AAI Gateway searches trusted registries and handles the entire installation.
+          - separator [ref=e289]
+          - 'heading "For App Developers: AAI Descriptor" [level=2] [ref=e290]':
+            - link:
+              - /url: "#for-app-developers-aai-descriptor"
+            - text: "For App Developers: AAI Descriptor"
+          - paragraph [ref=e291]:
+            - text: Want your app to work with AAI Gateway? Create an
+            - code [ref=e292]: aai.json
+            - text: "descriptor:"
+          - code [ref=e295]: "{ \"schemaVersion\": \"2.0\", \"version\": \"1.0.0\", \"app\": { \"name\": { \"default\": \"My App\" } }, \"access\": { \"protocol\": \"mcp\", \"config\": { \"command\": \"my-app-mcp\", \"args\": [\"--stdio\"] } }, \"exposure\": { \"summary\": \"Use this when the user wants to do X with My App.\" } }"
+          - paragraph [ref=e296]:
+            - text: "Supported protocols:"
+            - code [ref=e297]: mcp
+            - text: ","
+            - code [ref=e298]: skill
+            - text: ","
+            - code [ref=e299]: acp-agent
+          - separator [ref=e300]
+          - heading "Contributing" [level=2] [ref=e301]:
+            - link:
+              - /url: "#contributing"
+            - text: Contributing
+          - paragraph [ref=e302]: Contributions are welcome! AAI Gateway is under active development.
+          - list [ref=e303]:
+            - listitem [ref=e304]:
+              - link "Open an issue" [ref=e305] [cursor=pointer]:
+                - /url: https://github.com/gybob/aai-gateway/issues
+              - text: to report bugs or suggest features
+            - listitem [ref=e306]:
+              - link "Submit a PR" [ref=e307] [cursor=pointer]:
+                - /url: https://github.com/gybob/aai-gateway/pulls
+              - text: to contribute code or new app descriptors
+          - separator [ref=e308]
+          - paragraph [ref=e309]:
+            - strong [ref=e310]: "Links:"
+          - list [ref=e311]:
+            - listitem [ref=e312]:
+              - link "GitHub" [ref=e313] [cursor=pointer]:
+                - /url: https://github.com/gybob/aai-gateway
+            - listitem [ref=e314]:
+              - link "AAI Protocol Spec" [ref=e315] [cursor=pointer]:
+                - /url: https://github.com/gybob/aai-protocol
+            - listitem [ref=e316]:
+              - link "npm" [ref=e317] [cursor=pointer]:
+                - /url: https://www.npmjs.com/package/aai-gateway
+        - generic [ref=e318]:
+          - generic [ref=e319]:
+            - generic [ref=e320]:
+              - heading "Top comments (0)" [level=2] [ref=e321]
+              - button "Sort comments" [ref=e322] [cursor=pointer]:
+                - img
+            - generic [ref=e325] [cursor=pointer]: Subscribe
+          - generic [ref=e327]:
+            - img "pic" [ref=e329]
+            - textbox "Add a comment to the discussion" [ref=e332]:
+              - /placeholder: Add to the discussion
+          - navigation "Conduct controls" [ref=e334]:
+            - link "Code of Conduct" [ref=e335] [cursor=pointer]:
+              - /url: /code-of-conduct
+            - text: •
+            - link "Report abuse" [ref=e336] [cursor=pointer]:
+              - /url: /report-abuse
+    - complementary "Author details" [ref=e339]:
+      - generic [ref=e340]:
+        - generic [ref=e341]:
+          - link "Bob Gu" [ref=e343] [cursor=pointer]:
+            - /url: /gybobdev
+            - generic [ref=e345]: Bob Gu
+          - 'button "Follow user: Bob Gu" [ref=e347] [cursor=pointer]': Follow
+          - list [ref=e349]:
+            - listitem [ref=e350]:
+              - generic [ref=e351]: Joined
+              - time [ref=e353]: 2026年3月9日
+        - generic [ref=e354]:
+          - heading "Trending on DEV Community Hot" [level=3] [ref=e356]:
+            - text: Trending on
+            - link "DEV Community" [ref=e357] [cursor=pointer]:
+              - /url: https://dev.to
+            - img "Hot" [ref=e358]
+          - generic [ref=e362]:
+            - 'link "Giorgi Kobaidze profile image 365 Days of Building in Public, Perfectly Reflected By My Badges #devchallenge #wecoded #dei #career" [ref=e363] [cursor=pointer]':
+              - /url: /georgekobaidze/365-days-of-building-in-public-perfectly-reflected-by-my-badges-2h5f
+              - img "Giorgi Kobaidze profile image" [ref=e365]
+              - generic [ref=e366]:
+                - text: 365 Days of Building in Public, Perfectly Reflected By My Badges
+                - generic [ref=e367]:
+                  - generic [ref=e368]: "#devchallenge"
+                  - generic [ref=e369]: "#wecoded"
+                  - generic [ref=e370]: "#dei"
+                  - generic [ref=e371]: "#career"
+            - 'link "Ryan Swift profile image 3 Takeaways from All Things AI: 80/20 Rule, Non-Deterministic Humans, and Why We''re Still Early #ai #discuss #mlh #opensource" [ref=e372] [cursor=pointer]':
+              - /url: /thisisryanswift/3-takeaways-from-all-things-ai-8020-rule-non-deterministic-humans-and-why-were-still-early-2mln
+              - img "Ryan Swift profile image" [ref=e374]
+              - generic [ref=e375]:
+                - text: "3 Takeaways from All Things AI: 80/20 Rule, Non-Deterministic Humans, and Why We're Still Early"
+                - generic [ref=e376]:
+                  - generic [ref=e377]: "#ai"
+                  - generic [ref=e378]: "#discuss"
+                  - generic [ref=e379]: "#mlh"
+                  - generic [ref=e380]: "#opensource"
+            - 'link "Alexander Leonhard profile image The Integration Tax: Walled-Garden Agent Strategies Won''t Scale (MxN vs. M+N) #ai #agents #programming #discuss" [ref=e381] [cursor=pointer]':
+              - /url: /testinat0r/the-integration-tax-walled-garden-agent-strategies-wont-scale-mxn-vs-mn-g5f
+              - img "Alexander Leonhard profile image" [ref=e383]
+              - generic [ref=e384]:
+                - text: "The Integration Tax: Walled-Garden Agent Strategies Won't Scale (MxN vs. M+N)"
+                - generic [ref=e385]:
+                  - generic [ref=e386]: "#ai"
+                  - generic [ref=e387]: "#agents"
+                  - generic [ref=e388]: "#programming"
+                  - generic [ref=e389]: "#discuss"
+  - contentinfo [ref=e391]:
+    - generic [ref=e392]:
+      - generic [ref=e394]:
+        - paragraph [ref=e395]: 💎 DEV Diamond Sponsors
+        - paragraph [ref=e396]: Thank you to our Diamond Sponsors for supporting the DEV Community
+        - generic [ref=e397]:
+          - generic [ref=e398]:
+            - link "Google AI - Official AI Model and Platform Partner" [ref=e399] [cursor=pointer]:
+              - /url: https://aistudio.google.com/?utm_source=partner&utm_medium=partner&utm_campaign=FY25-Global-DEVpartnership-sponsorship-AIS&utm_content=-&utm_term=-&bb=146443
+              - img "Google AI - Official AI Model and Platform Partner" [ref=e400]
+            - paragraph [ref=e401]: Google AI is the official AI Model and Platform Partner of DEV
+          - generic [ref=e402]:
+            - link "Neon - Official Database Partner" [ref=e403] [cursor=pointer]:
+              - /url: https://neon.tech/?ref=devto&bb=146443
+              - img "Neon - Official Database Partner" [ref=e404]
+            - paragraph [ref=e405]: Neon is the official database partner of DEV
+          - generic [ref=e406]:
+            - link "Algolia - Official Search Partner" [ref=e407] [cursor=pointer]:
+              - /url: https://www.algolia.com/developers/?utm_source=devto&utm_medium=referral&bb=146443
+              - img "Algolia - Official Search Partner" [ref=e408]
+            - paragraph [ref=e409]: Algolia is the official search partner of DEV
+      - paragraph [ref=e410]:
+        - link "DEV Community Home" [ref=e411] [cursor=pointer]:
+          - /url: /
+          - text: DEV Community
+        - text: — A space to discuss and keep up software development and manage your software career
+      - list [ref=e412]:
+        - listitem [ref=e413]:
+          - link "Home" [ref=e414] [cursor=pointer]:
+            - /url: /
+        - listitem [ref=e416]:
+          - link "DEV++" [ref=e417] [cursor=pointer]:
+            - /url: /++
+        - listitem [ref=e419]:
+          - link "Videos" [ref=e420] [cursor=pointer]:
+            - /url: /videos
+        - listitem [ref=e422]:
+          - link "DEV Education Tracks" [ref=e423] [cursor=pointer]:
+            - /url: /deved
+        - listitem [ref=e425]:
+          - link "DEV Challenges" [ref=e426] [cursor=pointer]:
+            - /url: /challenges
+        - listitem [ref=e428]:
+          - link "DEV Help" [ref=e429] [cursor=pointer]:
+            - /url: /help
+        - listitem [ref=e431]:
+          - link "Advertise on DEV" [ref=e432] [cursor=pointer]:
+            - /url: /advertise
+        - listitem [ref=e434]:
+          - link "Organization Accounts" [ref=e435] [cursor=pointer]:
+            - /url: /organizations
+        - listitem [ref=e437]:
+          - link "DEV Showcase" [ref=e438] [cursor=pointer]:
+            - /url: /showcase
+        - listitem [ref=e440]:
+          - link "About" [ref=e441] [cursor=pointer]:
+            - /url: /about
+        - listitem [ref=e443]:
+          - link "Contact" [ref=e444] [cursor=pointer]:
+            - /url: /contact
+        - listitem [ref=e446]:
+          - link "Free Postgres Database" [ref=e447] [cursor=pointer]:
+            - /url: /free-postgres-database-tier
+        - listitem [ref=e449]:
+          - link "Forem Shop" [ref=e450] [cursor=pointer]:
+            - /url: https://shop.forem.com/
+        - listitem [ref=e452]:
+          - link "MLH" [ref=e453] [cursor=pointer]:
+            - /url: https://mlh.io/
+      - list [ref=e454]:
+        - listitem [ref=e455]:
+          - link "Code of Conduct" [ref=e456] [cursor=pointer]:
+            - /url: /code-of-conduct
+        - listitem [ref=e458]:
+          - link "Privacy Policy" [ref=e459] [cursor=pointer]:
+            - /url: /privacy
+        - listitem [ref=e461]:
+          - link "Terms of Use" [ref=e462] [cursor=pointer]:
+            - /url: /terms
+      - generic [ref=e463]:
+        - paragraph [ref=e464]:
+          - text: Built on
+          - link "Forem" [ref=e465] [cursor=pointer]:
+            - /url: https://www.forem.com
+          - text: — the
+          - link "open source" [ref=e466] [cursor=pointer]:
+            - /url: https://dev.to/t/opensource
+          - text: software that powers
+          - link "DEV" [ref=e467] [cursor=pointer]:
+            - /url: https://dev.to
+          - text: and other inclusive communities.
+        - paragraph [ref=e468]:
+          - text: Made with love and
+          - link "Ruby on Rails" [ref=e469] [cursor=pointer]:
+            - /url: https://dev.to/t/rails
+          - text: . DEV Community © 2016 - 2026.
