@@ -66,7 +66,7 @@ async function resolveCommandPath(command: string): Promise<string | null> {
   try {
     const query = process.platform === 'win32' ? `where ${command}` : `which ${command}`;
     const { stdout } = await execAsync(query);
-    return stdout.trim().split('\n')[0] || null;
+    return stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)[0] || null;
   } catch {
     return null;
   }

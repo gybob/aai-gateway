@@ -13,6 +13,8 @@ import type { DesktopDiscovery, DiscoveryOptions } from './interface.js';
 
 const execAsync = promisify(exec);
 
+const DISCOVERY_TIMEOUT_MS = 10000;
+
 export class WindowsDiscovery implements DesktopDiscovery {
   async scan(_options?: DiscoveryOptions): Promise<RuntimeAppRecord[]> {
     const paths = await this.findDescriptorPaths();
@@ -45,17 +47,19 @@ export class WindowsDiscovery implements DesktopDiscovery {
     const programFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
     const localAppData = process.env.LOCALAPPDATA || '';
 
+    let stdout = '';
     try {
-      const { stdout } = await execAsync(
-        `powershell -Command "Get-ChildItem -Path '${programFiles}','${programFilesX86}','${localAppData}' -Filter aai.json -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName"`
-      );
-      return stdout
-        .split('\n')
-        .map((entry) => entry.trim())
-        .filter(Boolean);
+      ({ stdout } = await execAsync(
+        `powershell -NoProfile -NonInteractive -Command "Get-ChildItem -Path '${programFiles}','${programFilesX86}','${localAppData}' -Filter aai.json -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName"`,
+        { timeout: DISCOVERY_TIMEOUT_MS }
+      ));
     } catch (err) {
+      stdout = (err as { stdout?: string }).stdout ?? '';
       logger.warn({ err }, 'Failed to scan Windows descriptors');
-      return [];
     }
+    return stdout
+      .split('\n')
+      .map((entry) => entry.trim())
+      .filter(Boolean);
   }
 }
