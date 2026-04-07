@@ -489,14 +489,33 @@ function isLikelyPackageReference(value: string): boolean {
 
 function simplifyImportedName(value: string): string {
   const trimmed = value.trim();
-  const withoutScope = trimmed.startsWith('@') ? trimmed.split('/').slice(1).join('/') : trimmed;
+  // Strip version suffix: @playwright/mcp@latest → @playwright/mcp
+  const withoutVersion = trimmed.replace(/@[^/]*$/, '');
+
+  let scopeName: string | undefined;
+  let withoutScope: string;
+  if (withoutVersion.startsWith('@')) {
+    const parts = withoutVersion.split('/');
+    scopeName = parts[0].slice(1); // "playwright"
+    withoutScope = parts.slice(1).join('/');
+  } else {
+    withoutScope = withoutVersion;
+  }
+
   const lastSegment = withoutScope.split('/').filter(Boolean).pop() ?? withoutScope;
   const normalized = lastSegment
     .replace(/^modelcontextprotocol-/, '')
     .replace(/^mcp-server-/, 'server-')
     .replace(/^mcp-/, '');
 
-  return slugify(normalized) || 'mcp';
+  const slug = slugify(normalized);
+
+  // If the result is too generic (e.g. "mcp" from @playwright/mcp), use scope name instead
+  if ((!slug || slug === 'mcp' || slug === 'app') && scopeName) {
+    return slugify(scopeName) || 'mcp';
+  }
+
+  return slug || 'mcp';
 }
 
 function normalizeImportedAppName(name: string | undefined): string | undefined {

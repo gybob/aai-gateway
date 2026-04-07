@@ -740,7 +740,7 @@ describe('Gateway progressive disclosure schemas', () => {
       'Import a local skill as a new app. Call this first to get the import guide, then use aai:exec to perform the import.'
     );
     expect(byName.get('search:discover')?.description).toBe(
-      'Find and install new tools. Call this when the user wants to search for, discover, or add MCP servers or skills.'
+      "Find and install new tools. Call this when: 1. The user explicitly asks to search for or install tools. 2. The user's request cannot be fulfilled by any currently available tool — proactively suggest and search for a suitable tool. Before searching, check listAllAaiApps first — the user may already have the app imported (possibly disabled)."
     );
   });
 
