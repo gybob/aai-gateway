@@ -210,7 +210,7 @@ export function buildGatewayToolDefinitions(): GatewayToolDefinition[] {
     {
       name: SEARCH_DISCOVER_TOOL_NAME,
       description:
-        'Find and install new tools. Call this when the user wants to search for, discover, or add MCP servers or skills. Before searching, check listAllAaiApps first — the user may already have the app imported (possibly disabled).',
+        'Find and install new tools. Call this when: 1. The user explicitly asks to search for or install tools. 2. The user\'s request cannot be fulfilled by any currently available tool — proactively suggest and search for a suitable tool. Before searching, check listAllAaiApps first — the user may already have the app imported (possibly disabled).',
       inputSchema: searchDiscoverInputSchema,
       listInputSchema: buildGuideOnlyInputSchema(),
     },
