@@ -36,15 +36,15 @@ AAI Gateway: each Agent App needs only **fewer than 50 tokens for a summary**, w
 
 Traditional: search GitHub → read READMEs → copy JSON configs → debug connections → restart Agent.
 
-AAI Gateway: **say one sentence, Agent auto-searches, installs, and it's ready**.
+AAI Gateway: **tell your Agent "use AAI to search for xxx" — auto-searches, installs, ready to use**.
 
-> "I want to make a company introduction PPT"
+> "Use AAI to search for a browser automation tool"
 >
-> → Agent finds PPT skill missing → auto-searches and installs PPT Skill → guides you through creation, no restart needed
+> → Search → finds Playwright MCP → Agent summarizes a one-line Agent App summary → install → ready to use, no restart needed
 
-> "Help me scrape this webpage"
+> "Use AAI to search for a PPT creation skill"
 >
-> → Agent finds web scraping tool missing → auto-searches and installs the MCP → scrapes directly, no restart needed
+> → Search → finds PPT Skill → uses skill description as Agent App summary → install → ready to use, no restart needed
 
 ### Duplicate Config
 
