@@ -42,7 +42,7 @@ export class BackgroundTaskManager {
     this.started = true;
 
     const executionOrder = this.resolveDependencies();
-    logger.info({ count: this.tasks.size, order: executionOrder }, 'Starting all background tasks');
+    logger.debug({ count: this.tasks.size, order: executionOrder }, 'Starting all background tasks');
 
     for (const name of executionOrder) {
       const task = this.tasks.get(name);
@@ -52,7 +52,7 @@ export class BackgroundTaskManager {
 
       try {
         await task.start();
-        logger.info({ task: name }, 'Background task started');
+        logger.debug({ task: name }, 'Background task started');
       } catch (err) {
         logger.error({ task: name, err }, 'Background task failed to start');
       }
@@ -93,7 +93,7 @@ export class BackgroundTaskManager {
       return;
     }
 
-    logger.info({ count: this.tasks.size }, 'Stopping all background tasks');
+    logger.debug({ count: this.tasks.size }, 'Stopping all background tasks');
 
     for (const [, interval] of this.intervals) {
       clearInterval(interval);
@@ -110,7 +110,7 @@ export class BackgroundTaskManager {
     }
 
     this.started = false;
-    logger.info('All background tasks stopped');
+    logger.debug('All background tasks stopped');
   }
 
   schedulePeriodic(taskName: string, intervalMs: number, fn: () => void): void {

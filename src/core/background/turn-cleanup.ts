@@ -16,7 +16,7 @@ export class TurnCleanupTask implements BackgroundTask {
   readonly name = 'turn-cleanup';
 
   async start(): Promise<void> {
-    logger.info(
+    logger.debug(
       {
         retentionDays: TURN_RETENTION_MS / (24 * 60 * 60 * 1000),
         intervalHours: CLEANUP_INTERVAL_MS / (60 * 60 * 1000),
@@ -42,7 +42,7 @@ export class TurnCleanupTask implements BackgroundTask {
     ) {
       executor.unscheduleTurnCleanup();
     }
-    logger.info({ task: this.name }, 'Turn cleanup task stopped');
+    logger.debug({ task: this.name }, 'Turn cleanup task stopped');
   }
 
   private run(): void {

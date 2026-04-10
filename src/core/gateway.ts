@@ -193,17 +193,6 @@ export class Gateway {
     const resolved = await this.resolveApp(appIdOrUrl, caller);
     const startedAt = Date.now();
 
-    logger.info(
-      {
-        requestId,
-        app: resolved.appId,
-        protocol: resolved.descriptor.access.protocol,
-        tool: toolName,
-        args: summarizeExecArgs(args),
-      },
-      'aai:exec received'
-    );
-
     try {
       const result = await this.executionCoordinator.executeWithInactivityTimeout(
         resolved.appId,
@@ -215,9 +204,9 @@ export class Gateway {
         {
           requestId,
           app: resolved.appId,
-          protocol: resolved.descriptor.access.protocol,
           tool: toolName,
           durationMs: Date.now() - startedAt,
+          args: summarizeExecArgs(args),
           result: summarizeExecResult(result),
         },
         'aai:exec completed'
@@ -228,7 +217,6 @@ export class Gateway {
         {
           requestId,
           app: resolved.appId,
-          protocol: resolved.descriptor.access.protocol,
           tool: toolName,
           durationMs: Date.now() - startedAt,
           err,
