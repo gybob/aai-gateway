@@ -28,6 +28,7 @@ export class AaiGatewayServer {
   private readonly server: Server;
   private readonly gateway = new Gateway();
   private callerContext?: CallerContext;
+  private stopGenerationWatcher?: () => void;
 
   constructor() {
     this.server = new Server(
@@ -44,6 +45,9 @@ export class AaiGatewayServer {
 
   async initialize(): Promise<void> {
     await this.gateway.initialize();
+    this.stopGenerationWatcher = await this.gateway.startGenerationWatcher(() => {
+      void this.notifyToolsListChanged();
+    });
   }
 
   async start(): Promise<void> {
@@ -51,6 +55,11 @@ export class AaiGatewayServer {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
     logger.info('AAI Gateway started (stdio)');
+
+    // Clean up watcher when the server closes
+    this.server.onclose = () => {
+      this.stopGenerationWatcher?.();
+    };
   }
 
   // ============================================================
@@ -98,6 +107,7 @@ export class AaiGatewayServer {
           caller
         );
         if (TOOLS_CHANGING_OPERATIONS.has(payload.tool) && !result.isError) {
+          await this.gateway.bumpGeneration();
           await this.notifyToolsListChanged();
         }
         return this.toCallToolResult(result);
@@ -128,14 +138,17 @@ export class AaiGatewayServer {
             break;
           case 'disableApp':
             result = await this.gateway.handleDisableApp(toolArgs, caller);
+            await this.gateway.bumpGeneration();
             await this.notifyToolsListChanged();
             break;
           case 'enableApp':
             result = await this.gateway.handleEnableApp(toolArgs, caller);
+            await this.gateway.bumpGeneration();
             await this.notifyToolsListChanged();
             break;
           case 'removeApp':
             result = await this.gateway.handleRemoveApp(toolArgs, caller);
+            await this.gateway.bumpGeneration();
             await this.notifyToolsListChanged();
             break;
           default:

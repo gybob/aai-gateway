@@ -37,3 +37,16 @@ slides/
 # Temporary files
 tmp/
 temp/
+
+# Playwright MCP snapshots
+.playwright-mcp/
+
+# Media assets
+*.mp4
+*.png
+*.jpeg
+*.jpg
+
+# Misc generated files
+articles/
+server.json

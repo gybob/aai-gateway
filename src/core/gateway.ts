@@ -51,6 +51,7 @@ import { BackgroundTaskManager } from './background/task-manager.js';
 import { AcpPrewarmBackgroundTask } from './background/acp-prewarm-task.js';
 import { TurnCleanupTask } from './background/turn-cleanup.js';
 import { deriveCallerId } from '../storage/agent-state.js';
+import { bumpGeneration, readGeneration, watchGeneration } from '../storage/generation.js';
 
 // ============================================================
 // Result types (protocol-agnostic)
@@ -516,12 +517,37 @@ export class Gateway {
   }
 
   // ============================================================
-  // Notification hook (called by server after state changes)
+  // Cross-process app registry sync
   // ============================================================
 
-  get toolsChanged(): boolean {
-    // marker for server to check; or use callback
-    return false;
+  /**
+   * Bump the shared generation file so other gateway processes
+   * detect the change and reload their app registries.
+   */
+  async bumpGeneration(): Promise<void> {
+    await bumpGeneration();
+  }
+
+  /**
+   * Reload the app registry from disk.
+   */
+  async reloadApps(): Promise<void> {
+    await this.appRegistry.loadFromDiscovery(() => loadManagedDescriptors());
+  }
+
+  /**
+   * Start watching the generation file for changes made by other processes.
+   * When a change is detected, reloads the app registry and calls `onToolsChanged`.
+   * Returns a cleanup function.
+   */
+  async startGenerationWatcher(onToolsChanged: () => void): Promise<() => void> {
+    const initialGen = await readGeneration();
+    return watchGeneration(initialGen, (newGen) => {
+      logger.info({ generation: newGen }, 'External app registry change detected, reloading');
+      void this.reloadApps().then(() => {
+        onToolsChanged();
+      });
+    });
   }
 
   // ============================================================
