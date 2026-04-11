@@ -286,7 +286,7 @@ function generateSkillImportGuide(tool: GatewayToolDefinition): string {
     tool: 'aai:exec',
     args: {
       tool: 'skill:import',
-      args: { path: '/absolute/path/to/skill-directory' },
+      args: { path: '/absolute/path/to/skill-directory', enableScope: 'all' },
     },
   };
 
@@ -298,7 +298,7 @@ function generateSkillImportGuide(tool: GatewayToolDefinition): string {
     '',
     '## Global vs Project-Level Skills',
     '',
-    '`skill:import` imports a skill **globally** — it becomes visible across all projects and all agents.',
+    '`skill:import` imports a skill **globally** — it becomes visible across all projects.',
     'Use this for skills that are not tied to any specific project (e.g. a universal code review workflow).',
     '',
     'For **project-level** skills that only apply to a specific codebase, use your agent\'s native skill directory instead:',
@@ -319,6 +319,8 @@ function generateSkillImportGuide(tool: GatewayToolDefinition): string {
     'The `aai:exec` tool accepts three parameters: `app`, `tool`, and `args`.',
     'Leave `app` empty, set `tool` to `"skill:import"`, and pass the skill directory path in `args`.',
     '',
+    '**Before importing**, ask the user whether this skill should be enabled for the current agent only or for all agents.',
+    '',
     '```json',
     JSON.stringify(example, null, 2),
     '```',
@@ -326,6 +328,7 @@ function generateSkillImportGuide(tool: GatewayToolDefinition): string {
     '| Parameter | Type | Required | Description |',
     '|-----------|------|----------|-------------|',
     '| `path` | string | yes | Absolute path to a directory containing a `SKILL.md` file |',
+    '| `enableScope` | `"current"` \\| `"all"` | no | Enable for current agent or all agents (default: `"current"`) |',
   ].join('\n');
 }
 

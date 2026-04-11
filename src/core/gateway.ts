@@ -356,7 +356,10 @@ export class Gateway {
         'Skill import request started'
       );
 
-      const result = await this.importService.importSkill({ path: options.path }, caller);
+      const result = await this.importService.importSkill(
+        { path: options.path, enableScope: options.enableScope },
+        caller
+      );
 
       logger.info(
         {
@@ -395,7 +398,7 @@ export class Gateway {
           `App tool prefix: app:${result.appId}`,
           `Skill directory: ${result.managedPath}`,
           `Summary: ${result.descriptor.exposure.summary}`,
-          'Default enabled for: importing agent only',
+          `Default enabled for: ${options.enableScope === 'all' ? 'all agents' : 'importing agent only'}`,
           '',
           this.guideService.generateAppGuide(result.appId, result.descriptor, capabilities),
         ].join('\n'),
