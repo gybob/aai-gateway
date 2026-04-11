@@ -80,6 +80,12 @@ codex mcp add aai-gateway -- npx -y aai-gateway
 }
 ```
 
+**[OpenClaw](https://openclaw.ai):**
+
+```bash
+openclaw plugins install openclaw-aai-gateway-plugin
+```
+
 Once installed, just tell your Agent what you want to do.
 
 ---
