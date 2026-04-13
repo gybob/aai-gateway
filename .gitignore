@@ -31,9 +31,6 @@ pino-debug.log*
 # TypeScript cache
 *.tsbuildinfo
 
-# Slides (local presentation assets)
-slides/
-
 # Temporary files
 tmp/
 temp/
