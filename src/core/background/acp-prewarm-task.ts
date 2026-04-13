@@ -25,7 +25,7 @@ export class AcpPrewarmBackgroundTask implements BackgroundTask {
       return;
     }
 
-    logger.info({ count: acpApps.length }, 'Pre-warming ACP agents');
+    logger.debug({ count: acpApps.length }, 'Pre-warming ACP agents');
 
     for (const app of acpApps) {
       const { getAcpExecutor } = await import('../../executors/acp.js');
@@ -33,7 +33,7 @@ export class AcpPrewarmBackgroundTask implements BackgroundTask {
       void getAcpExecutor()
         .connect(app.appId, config)
         .then(() => {
-          logger.info({ appId: app.appId }, 'ACP agent pre-warm completed');
+          logger.debug({ appId: app.appId }, 'ACP agent pre-warm completed');
         })
         .catch((err) => {
           logger.warn({ appId: app.appId, err }, 'ACP agent pre-warm failed (will retry lazily)');

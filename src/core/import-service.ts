@@ -69,13 +69,14 @@ export class ImportService {
   }
 
   async importSkill(
-    options: { path: string },
+    options: { path: string; enableScope?: 'current' | 'all' },
     caller: CallerContext
   ): Promise<ImportResult> {
     const result = await importSkill({ path: options.path });
 
+    const scope = options.enableScope ?? 'current';
     await saveAppPolicyState(result.appId, {
-      defaultEnabled: 'importer-only',
+      defaultEnabled: scope === 'current' ? 'importer-only' : 'all',
       importerAgentId: caller.id,
       updatedAt: new Date().toISOString(),
     });
@@ -109,5 +110,8 @@ export class ImportService {
     await deleteAppPolicyState(appId);
     await removeAppFromAllAgents(appId);
     await rm(getManagedAppDir(appId), { recursive: true, force: true });
+
+    // Remove from in-memory app registry so the app disappears immediately
+    this.appRegistry.delete(appId);
   }
 }

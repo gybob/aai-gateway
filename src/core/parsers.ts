@@ -24,6 +24,7 @@ export interface ParsedMcpImportArgs {
 
 export interface ParsedSkillImportArgs {
   path: string;
+  enableScope?: 'current' | 'all';
 }
 
 export function parseMcpImportArguments(args: Record<string, unknown> | undefined): ParsedMcpImportArgs {
@@ -76,7 +77,15 @@ export function parseSkillImportArguments(args: Record<string, unknown> | undefi
       path: asOptionalString(args?.path),
     });
 
-    return { path: source.path! };
+    const enableScope = args?.enableScope;
+    if (enableScope !== undefined && enableScope !== 'current' && enableScope !== 'all') {
+      throw new Error("skill:import 'enableScope' must be either 'current' or 'all'");
+    }
+
+    return {
+      path: source.path!,
+      ...(enableScope ? { enableScope } : {}),
+    };
   } catch (err) {
     throw new AaiError('INVALID_REQUEST', err instanceof Error ? err.message : String(err));
   }
@@ -303,7 +312,10 @@ export function summarizeMcpImportRequest(options: ParsedMcpImportArgs): Record<
 }
 
 export function summarizeSkillImportRequest(options: ParsedSkillImportArgs): Record<string, unknown> {
-  return { path: options.path };
+  return {
+    path: options.path,
+    ...(options.enableScope ? { enableScope: options.enableScope } : {}),
+  };
 }
 
 function summarizeMcpConfig(config: McpConfig): Record<string, unknown> {

@@ -333,7 +333,7 @@ export class AcpExecutor implements TaskCapableExecutor {
       this.states.delete(appId);
     }
 
-    logger.info({ appId, command: config.command, args: config.args }, 'ACP initialize started');
+    logger.debug({ appId, command: config.command, args: config.args }, 'ACP initialize started');
 
     const proc = spawn(config.command, config.args ?? [], {
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -381,7 +381,7 @@ export class AcpExecutor implements TaskCapableExecutor {
 
     nextState.initialized = true;
     nextState.initializeResult = initializeResult as Record<string, unknown>;
-    logger.info({ appId }, 'ACP initialize completed');
+    logger.debug({ appId }, 'ACP initialize completed');
     return initializeResult;
   }
 
@@ -754,7 +754,7 @@ export class AcpExecutor implements TaskCapableExecutor {
       params,
     });
 
-    logger.info(
+    logger.debug(
       {
         appId,
         method,
@@ -775,11 +775,11 @@ export class AcpExecutor implements TaskCapableExecutor {
           : undefined;
       this.pendingRequests.set(String(id), {
         resolve: (value) => {
-          logger.info({ appId, method }, 'ACP request completed');
+          logger.debug({ appId, method }, 'ACP request completed');
           resolve(value);
         },
         reject: (error) => {
-          logger.error({ appId, method, error }, 'ACP request failed');
+          logger.error({ appId, method, error: error?.message ?? error }, 'ACP request failed');
           reject(error);
         },
         timer,
@@ -1339,7 +1339,7 @@ export class AcpExecutor implements TaskCapableExecutor {
       params,
     });
 
-    logger.info(
+    logger.debug(
       {
         appId,
         method,
@@ -1367,7 +1367,7 @@ export class AcpExecutor implements TaskCapableExecutor {
       result,
     });
 
-    logger.info({ appId, responseTo: id }, 'ACP response sent');
+    logger.debug({ appId, responseTo: id }, 'ACP response sent');
     state.proc.stdin.write(`${payload}\n`);
   }
 
@@ -1380,14 +1380,14 @@ export class AcpExecutor implements TaskCapableExecutor {
       this.cleanupFinishedTurns(retentionMs);
     }, intervalMs);
 
-    logger.info({ intervalMs, retentionMs }, 'Turn cleanup scheduled');
+    logger.debug({ intervalMs, retentionMs }, 'Turn cleanup scheduled');
   }
 
   unscheduleTurnCleanup(): void {
     if (this.turnCleanupInterval) {
       clearInterval(this.turnCleanupInterval);
       this.turnCleanupInterval = undefined;
-      logger.info('Turn cleanup unscheduled');
+      logger.debug('Turn cleanup unscheduled');
     }
   }
 

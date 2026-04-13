@@ -47,7 +47,7 @@ export function buildGatewayToolDefinitions(): GatewayToolDefinition[] {
     },
     {
       name: 'mcp:import',
-      description: 'Import an MCP server as a new app. Call this first to get the import guide, then use aai:exec to perform the import. Never ask the user for API keys or secrets in chat.',
+      description: 'Import an MCP server as a GLOBAL app (visible to all projects). For project-level MCP, use your agent\'s native config instead (e.g. .mcp.json, .cursor/mcp.json). Call this first to get the import guide. Never ask the user for API keys or secrets in chat.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -134,7 +134,7 @@ export function buildGatewayToolDefinitions(): GatewayToolDefinition[] {
     },
     {
       name: 'skill:import',
-      description: 'Import a local skill as a new app. Call this first to get the import guide, then use aai:exec to perform the import.',
+      description: 'Import a local skill as a GLOBAL app (visible to all projects). For project-level skills, use your agent\'s native skill directory instead (e.g. .claude/skills/). Call this first to get the import guide.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -245,6 +245,9 @@ export function generateGatewayToolGuide(tool: GatewayToolDefinition): string {
   if (tool.name === 'mcp:import') {
     return generateMcpImportGuide(tool);
   }
+  if (tool.name === 'skill:import') {
+    return generateSkillImportGuide(tool);
+  }
 
   const examples = extractGuideExamples(tool.inputSchema, tool.name);
   return [
@@ -275,6 +278,57 @@ export function generateGatewayToolGuide(tool: GatewayToolDefinition): string {
           ]),
         ]
       : []),
+  ].join('\n');
+}
+
+function generateSkillImportGuide(tool: GatewayToolDefinition): string {
+  const example = {
+    tool: 'aai:exec',
+    args: {
+      tool: 'skill:import',
+      args: { path: '/absolute/path/to/skill-directory', enableScope: 'all' },
+    },
+  };
+
+  return [
+    `# ${tool.name}`,
+    '',
+    '> **Important**: Do NOT call `skill:import` directly with arguments. It will only return this guide.',
+    '> To perform the actual import, you must call the `aai:exec` tool (another tool in this same MCP server).',
+    '',
+    '## Global vs Project-Level Skills',
+    '',
+    '`skill:import` imports a skill **globally** — it becomes visible across all projects.',
+    'Use this for skills that are not tied to any specific project (e.g. a universal code review workflow).',
+    '',
+    'For **project-level** skills that only apply to a specific codebase, use your agent\'s native skill directory instead:',
+    '',
+    '| Agent | Project-level skill path |',
+    '|-------|------------------------|',
+    '| Claude Code | `.claude/skills/<name>/SKILL.md` |',
+    '| Cursor | `.cursor/skills/<name>/SKILL.md` |',
+    '| Codex CLI | `.codex/skills/<name>/SKILL.md` |',
+    '| VS Code Copilot | `.github/prompts/<name>.prompt.md` |',
+    '| Windsurf | `.windsurf/workflows/<name>.md` |',
+    '| Cline | `.clinerules/workflows/<name>.md` |',
+    '',
+    'Project-level skills support slash-command invocation (`/name`) and are version-controlled with the repo.',
+    '',
+    '## How to Import a Global Skill',
+    '',
+    'The `aai:exec` tool accepts three parameters: `app`, `tool`, and `args`.',
+    'Leave `app` empty, set `tool` to `"skill:import"`, and pass the skill directory path in `args`.',
+    '',
+    '**Before importing**, ask the user whether this skill should be enabled for the current agent only or for all agents.',
+    '',
+    '```json',
+    JSON.stringify(example, null, 2),
+    '```',
+    '',
+    '| Parameter | Type | Required | Description |',
+    '|-----------|------|----------|-------------|',
+    '| `path` | string | yes | Absolute path to a directory containing a `SKILL.md` file |',
+    '| `enableScope` | `"current"` \\| `"all"` | no | Enable for current agent or all agents (default: `"current"`) |',
   ].join('\n');
 }
 
@@ -314,6 +368,22 @@ function generateMcpImportGuide(tool: GatewayToolDefinition): string {
     '',
     '> **Important**: Do NOT call `mcp:import` directly with arguments. It will only return this guide.',
     '> To perform the actual import, you must call the `aai:exec` tool (another tool in this same MCP server).',
+    '',
+    '## Global vs Project-Level MCP',
+    '',
+    '`mcp:import` imports an MCP server **globally** — it becomes visible across all projects and all agents.',
+    'Use this for MCP servers you want available everywhere (e.g. web search, image generation).',
+    '',
+    'For **project-level** MCP servers that only apply to a specific codebase, use your agent\'s native config instead:',
+    '',
+    '| Agent | Project-level MCP config |',
+    '|-------|------------------------|',
+    '| Claude Code | `.mcp.json` (project root) |',
+    '| Cursor | `.cursor/mcp.json` |',
+    '| VS Code Copilot | `.vscode/mcp.json` |',
+    '| Codex CLI | `.codex/config.toml` `[mcp_servers.*]` |',
+    '',
+    '## How to Import',
     '',
     'The `aai:exec` tool accepts three parameters: `app`, `tool`, and `args`.',
     'For this operation, leave `app` empty, set `tool` to `"mcp:import"`, and refer to the examples below for `args`.',

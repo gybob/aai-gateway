@@ -51,6 +51,7 @@ import { BackgroundTaskManager } from './background/task-manager.js';
 import { AcpPrewarmBackgroundTask } from './background/acp-prewarm-task.js';
 import { TurnCleanupTask } from './background/turn-cleanup.js';
 import { deriveCallerId } from '../storage/agent-state.js';
+import { bumpGeneration, readGeneration, watchGeneration } from '../storage/generation.js';
 
 // ============================================================
 // Result types (protocol-agnostic)
@@ -193,17 +194,6 @@ export class Gateway {
     const resolved = await this.resolveApp(appIdOrUrl, caller);
     const startedAt = Date.now();
 
-    logger.info(
-      {
-        requestId,
-        app: resolved.appId,
-        protocol: resolved.descriptor.access.protocol,
-        tool: toolName,
-        args: summarizeExecArgs(args),
-      },
-      'aai:exec received'
-    );
-
     try {
       const result = await this.executionCoordinator.executeWithInactivityTimeout(
         resolved.appId,
@@ -215,9 +205,9 @@ export class Gateway {
         {
           requestId,
           app: resolved.appId,
-          protocol: resolved.descriptor.access.protocol,
           tool: toolName,
           durationMs: Date.now() - startedAt,
+          args: summarizeExecArgs(args),
           result: summarizeExecResult(result),
         },
         'aai:exec completed'
@@ -228,7 +218,6 @@ export class Gateway {
         {
           requestId,
           app: resolved.appId,
-          protocol: resolved.descriptor.access.protocol,
           tool: toolName,
           durationMs: Date.now() - startedAt,
           err,
@@ -367,7 +356,10 @@ export class Gateway {
         'Skill import request started'
       );
 
-      const result = await this.importService.importSkill({ path: options.path }, caller);
+      const result = await this.importService.importSkill(
+        { path: options.path, enableScope: options.enableScope },
+        caller
+      );
 
       logger.info(
         {
@@ -406,7 +398,7 @@ export class Gateway {
           `App tool prefix: app:${result.appId}`,
           `Skill directory: ${result.managedPath}`,
           `Summary: ${result.descriptor.exposure.summary}`,
-          'Default enabled for: importing agent only',
+          `Default enabled for: ${options.enableScope === 'all' ? 'all agents' : 'importing agent only'}`,
           '',
           this.guideService.generateAppGuide(result.appId, result.descriptor, capabilities),
         ].join('\n'),
@@ -528,12 +520,37 @@ export class Gateway {
   }
 
   // ============================================================
-  // Notification hook (called by server after state changes)
+  // Cross-process app registry sync
   // ============================================================
 
-  get toolsChanged(): boolean {
-    // marker for server to check; or use callback
-    return false;
+  /**
+   * Bump the shared generation file so other gateway processes
+   * detect the change and reload their app registries.
+   */
+  async bumpGeneration(): Promise<void> {
+    await bumpGeneration();
+  }
+
+  /**
+   * Reload the app registry from disk.
+   */
+  async reloadApps(): Promise<void> {
+    await this.appRegistry.loadFromDiscovery(() => loadManagedDescriptors());
+  }
+
+  /**
+   * Start watching the generation file for changes made by other processes.
+   * When a change is detected, reloads the app registry and calls `onToolsChanged`.
+   * Returns a cleanup function.
+   */
+  async startGenerationWatcher(onToolsChanged: () => void): Promise<() => void> {
+    const initialGen = await readGeneration();
+    return watchGeneration(initialGen, (newGen) => {
+      logger.info({ generation: newGen }, 'External app registry change detected, reloading');
+      void this.reloadApps().then(() => {
+        onToolsChanged();
+      });
+    });
   }
 
   // ============================================================

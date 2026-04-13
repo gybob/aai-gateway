@@ -95,8 +95,12 @@ After showing the comparison table:
 
 ## Import Next Step
 
-> **Important**: Do NOT install tools yourself (e.g. via npm, pip, brew, or manual config).
-> All installation must go through AAI Gateway's import tools so the app is properly registered and managed.
+> **Important**: \`mcp:import\` and \`skill:import\` create **global** imports (visible to all projects).
+> For project-level setup, use the agent's native config instead (e.g. \`.mcp.json\`, \`.claude/skills/\`).
+> Call the respective import tool to see the full guide with project-level alternatives.
+
+> Do NOT install tools yourself (e.g. via npm, pip, brew, or manual config).
+> All global installation must go through AAI Gateway's import tools so the app is properly registered and managed.
 
 After the user confirms a candidate:
 
@@ -115,7 +119,7 @@ After the user confirms a candidate:
 - You must perform the actual web search yourself.
 - You must prepare the comparison table yourself.
 - You must ask for user confirmation yourself.
-- You must use \`mcp:import\` or \`skill:import\` (via \`aai:exec\`) to install — never install manually.
+- You must use \`mcp:import\` or \`skill:import\` (via \`aai:exec\`) to install globally — never install manually.
 - **Never ask the user for API keys, tokens, or secrets in chat.** If an MCP server needs an API key, tell the user where to obtain it and ask them to save it to the AAI env file themselves. Do not offer to write secrets for them.
 `;
 

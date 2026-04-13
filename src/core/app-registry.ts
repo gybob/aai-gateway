@@ -49,6 +49,8 @@ export class AppRegistry {
   async loadFromDiscovery(discoveryFn: () => Promise<RuntimeAppRecord[]>): Promise<number> {
     try {
       const discoveredApps = await discoveryFn();
+      // Clear existing entries so removed apps don't linger in memory
+      this.registry.clear();
       for (const app of discoveredApps) {
         this.registry.set(app.appId, app);
       }
