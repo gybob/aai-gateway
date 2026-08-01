@@ -2,18 +2,18 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 
 import { AaiError } from '../errors/errors.js';
+import type { AppCapabilities } from '../types/capabilities.js';
 import type {
   AcpAgentConfig,
   AcpExecutorConfig,
   DetailedCapability,
   ExecutionResult,
 } from '../types/index.js';
-import type { AppCapabilities } from '../types/capabilities.js';
 import { logger } from '../utils/logger.js';
-import { AAI_GATEWAY_NAME, AAI_GATEWAY_VERSION } from '../version.js';
-import { ACP_TOOL_SCHEMAS } from './acp-tool-schemas.js';
 import { validateArgs, formatValidationErrors } from '../utils/schema-validator.js';
+import { AAI_GATEWAY_NAME, AAI_GATEWAY_VERSION } from '../version.js';
 
+import { ACP_TOOL_SCHEMAS } from './acp-tool-schemas.js';
 import type { ExecutionObserver, TaskCapableExecutor } from './events.js';
 
 interface PendingRequest {
@@ -461,7 +461,7 @@ export class AcpExecutor implements TaskCapableExecutor {
     const permissionId = requirePermissionId(args);
     const pending = this.pendingPermissionRequests.get(permissionId);
 
-    if (!pending || pending.turnId !== turn.turnId) {
+    if (pending?.turnId !== turn.turnId) {
       // Permission expired or already resolved — return gracefully instead of throwing
       return {
         turnId: turn.turnId,
@@ -1163,7 +1163,7 @@ export class AcpExecutor implements TaskCapableExecutor {
 
     turn.drainTimer = setTimeout(() => {
       const nextTurn = this.promptTurns.get(turn.turnId);
-      if (!nextTurn || !nextTurn.awaitingDownstreamResponse) {
+      if (!nextTurn?.awaitingDownstreamResponse) {
         return;
       }
 
@@ -1723,8 +1723,7 @@ function appendAccumulatedContentBlock(target: AcpContentBlock[], block: AcpCont
   }
 
   if (
-    last &&
-    last.type === 'text' &&
+    last?.type === 'text' &&
     block.type === 'text' &&
     typeof last.text === 'string' &&
     typeof block.text === 'string'

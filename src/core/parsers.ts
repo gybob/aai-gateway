@@ -5,8 +5,10 @@
  * These are MCP-protocol-specific input normalization functions.
  */
 
-import type { McpConfig } from '../types/aai-json.js';
 import { AaiError } from '../errors/errors.js';
+import type { McpConfig } from '../types/aai-json.js';
+
+import type { McpAppPatch } from './import-service.js';
 import {
   buildMcpImportConfig,
   buildSkillImportSource,
@@ -89,6 +91,48 @@ export function parseSkillImportArguments(args: Record<string, unknown> | undefi
   } catch (err) {
     throw new AaiError('INVALID_REQUEST', err instanceof Error ? err.message : String(err));
   }
+}
+
+/**
+ * Parse a partial MCP app config patch (for updateAppConfig).
+ * Only fields the caller provides are included; everything else is preserved.
+ */
+export function parseMcpAppPatch(args: Record<string, unknown> | undefined): McpAppPatch {
+  const patch: McpAppPatch = {};
+  if (!args) return patch;
+
+  const command = asOptionalString(args.command);
+  if (command !== undefined) patch.command = command;
+
+  const url = asOptionalString(args.url);
+  if (url !== undefined) patch.url = url;
+
+  const cwd = asOptionalString(args.cwd);
+  if (cwd !== undefined) patch.cwd = cwd;
+
+  const name = asOptionalString(args.name);
+  if (name !== undefined) patch.name = name;
+
+  const summary = asOptionalString(args.summary);
+  if (summary !== undefined) patch.summary = summary;
+
+  const timeout = asOptionalPositiveInteger(args.timeout, 'timeout');
+  if (timeout !== undefined) patch.timeout = timeout;
+
+  const argsArray = asOptionalStringArray(args.args, 'args');
+  if (argsArray !== undefined) patch.args = argsArray;
+
+  const env = asOptionalStringRecord(args.env ?? args.environment, 'env');
+  if (env !== undefined) patch.env = env;
+
+  const headers = asOptionalStringRecord(args.headers, 'headers');
+  if (headers !== undefined) patch.headers = headers;
+
+  if (args.transport === 'streamable-http' || args.transport === 'sse') {
+    patch.transport = args.transport;
+  }
+
+  return patch;
 }
 
 function parseOptionalMcpImportMetadata(args: Record<string, unknown> | undefined):
@@ -318,7 +362,7 @@ export function summarizeSkillImportRequest(options: ParsedSkillImportArgs): Rec
   };
 }
 
-function summarizeMcpConfig(config: McpConfig): Record<string, unknown> {
+export function summarizeMcpConfig(config: McpConfig): Record<string, unknown> {
   switch (config.transport) {
     case 'stdio':
       return {

@@ -8,8 +8,8 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import type { AaiJson } from '../types/aai-json.js';
 import { getManagedAppDir } from '../storage/paths.js';
+import type { AaiJson } from '../types/aai-json.js';
 import { logger } from '../utils/logger.js';
 
 interface PrebuiltDescriptor {

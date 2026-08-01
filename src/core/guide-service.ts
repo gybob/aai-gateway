@@ -4,12 +4,12 @@
  * Handles generation of guides and tool summaries.
  */
 
-import type { AaiJson, RuntimeAppRecord } from '../types/aai-json.js';
-import type { AppCapabilities } from '../types/capabilities.js';
 import {
   generateAppGuideMarkdown,
   generateGuideToolSummary,
 } from '../guides/app-guide-generator.js';
+import type { AaiJson, RuntimeAppRecord } from '../types/aai-json.js';
+import type { AppCapabilities } from '../types/capabilities.js';
 
 export class GuideService {
   generateAppGuide(appId: string, descriptor: AaiJson, capabilities: AppCapabilities): string {

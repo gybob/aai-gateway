@@ -8,8 +8,9 @@
  */
 
 import { logger } from '../../utils/logger.js';
-import type { BackgroundTask } from './task-manager.js';
 import type { AppRegistry } from '../app-registry.js';
+
+import type { BackgroundTask } from './task-manager.js';
 
 export class AcpPrewarmBackgroundTask implements BackgroundTask {
   readonly name = 'acp-prewarm';

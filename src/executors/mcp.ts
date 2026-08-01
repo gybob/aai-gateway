@@ -3,17 +3,17 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
+import { resolveImportedMcpRuntimeValues } from '../core/importer.js';
 import { AaiError } from '../errors/errors.js';
-import { getDotenvPath } from '../utils/dotenv.js';
+import type { AppCapabilities } from '../types/capabilities.js';
 import type {
   McpConfig,
   ExecutionResult,
 } from '../types/index.js';
-import type { AppCapabilities } from '../types/capabilities.js';
+import { getDotenvPath } from '../utils/dotenv.js';
 import { logger } from '../utils/logger.js';
-import { AAI_GATEWAY_NAME, AAI_GATEWAY_VERSION } from '../version.js';
 import { validateArgs, formatValidationErrors } from '../utils/schema-validator.js';
-import { resolveImportedMcpRuntimeValues } from '../core/importer.js';
+import { AAI_GATEWAY_NAME, AAI_GATEWAY_VERSION } from '../version.js';
 
 import type { ExecutionObserver } from './events.js';
 import type { Executor } from './interface.js';
@@ -64,7 +64,7 @@ export class McpExecutor implements Executor {
   async connect(appId: string, config: McpConfig): Promise<void> {
     const targetKey = JSON.stringify({ config });
     const existing = this.clients.get(appId);
-    if (existing && existing.targetKey === targetKey) {
+    if (existing?.targetKey === targetKey) {
       return;
     }
 

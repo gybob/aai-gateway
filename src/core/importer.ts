@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 
+import { AaiError } from '../errors/errors.js';
 import type { McpExecutor, McpListedTool } from '../executors/mcp.js';
 import {
   getMcpRegistryEntry,
@@ -9,14 +10,16 @@ import {
 } from '../storage/mcp-registry.js';
 import { getManagedAppDir } from '../storage/paths.js';
 import { getSkillRegistryEntry, upsertSkillRegistryEntry } from '../storage/skill-registry.js';
-import type { AaiJson, McpConfig } from '../types/aai-json.js';
-import { deriveAppId, slugify } from '../utils/ids.js';
+import type { AaiJson, McpConfig, SkillConfig } from '../types/aai-json.js';
+import { isSkillPathConfig } from '../types/aai-json.js';
 import {
   getDotenvPath,
   hasEnvPlaceholders,
   loadDotenv,
   substituteConfigEnvVars,
+  findEnvPlaceholders,
 } from '../utils/dotenv.js';
+import { deriveAppId, slugify } from '../utils/ids.js';
 
 export const IMPORT_LIMITS = {
   nameLength: 128,
@@ -311,7 +314,7 @@ export async function importSkill(
   return { appId: preview.appId, descriptor, managedPath: finalManagedSkillDir };
 }
 
-function buildSensitiveValueWarnings(options: McpImportOptions): string[] {
+export function buildSensitiveValueWarnings(options: McpImportOptions): string[] {
   const env = options.config.transport === 'stdio' ? options.config.env : undefined;
   const headers = options.config.transport !== 'stdio' ? (options.config as { headers?: Record<string, string> }).headers : undefined;
   if (containsPlaintextSensitiveValues(env) || containsPlaintextSensitiveValues(headers)) {
@@ -329,16 +332,188 @@ function containsPlaintextSensitiveValues(values?: Record<string, string>): bool
   );
 }
 
-function isSensitiveKey(key: string): boolean {
+// ============================================================
+// Config query / export (getAppConfig)
+// ============================================================
+
+export type AppConfigExportFormat = 'aai' | 'mcp-json' | 'all';
+
+export interface AppConfigExport {
+  protocol: 'mcp' | 'skill';
+  name: string;
+  summary: string;
+  config: McpConfig | SkillConfig;
+  requiredEnvVars: string[];
+  install: {
+    aai?: Record<string, unknown>;
+    mcpJson?: Record<string, unknown>;
+  };
+  skill?: {
+    path: string;
+    note: string;
+  };
+}
+
+/** Mask plaintext sensitive values in an MCP config as ${VAR_NAME} placeholders. */
+export function sanitizeMcpConfig(config: McpConfig): McpConfig {
+  if (config.transport === 'stdio') {
+    return config.env ? { ...config, env: sanitizeStringRecord(config.env) } : { ...config };
+  }
+  return config.headers ? { ...config, headers: sanitizeStringRecord(config.headers) } : { ...config };
+}
+
+function sanitizeStringRecord(record: Record<string, string>): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (isSensitiveKey(key) && !hasEnvPlaceholders(value)) {
+      result[key] = `\${${toEnvVarName(key)}}`;
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
+function toEnvVarName(key: string): string {
+  const cleaned = key.toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  return cleaned || key.toUpperCase();
+}
+
+/** Collect all ${VAR} placeholders referenced anywhere in a config object. */
+export function extractConfigEnvVars(config: Record<string, unknown>): string[] {
+  const found = new Set<string>();
+  const walk = (value: unknown): void => {
+    if (typeof value === 'string') {
+      for (const v of findEnvPlaceholders(value)) found.add(v);
+    } else if (Array.isArray(value)) {
+      value.forEach(walk);
+    } else if (value && typeof value === 'object') {
+      for (const v of Object.values(value as Record<string, unknown>)) walk(v);
+    }
+  };
+  walk(config);
+  return [...found].sort();
+}
+
+/** Convert a sanitized McpConfig into mcp:import input args (no transport field for stdio). */
+export function mcpConfigToAaiImportArgs(config: McpConfig): Record<string, unknown> {
+  if (config.transport === 'stdio') {
+    const args: Record<string, unknown> = { command: config.command };
+    if (config.args?.length) args.args = config.args;
+    if (config.env) args.env = config.env;
+    if (config.cwd) args.cwd = config.cwd;
+    if (config.timeout !== undefined) args.timeout = config.timeout;
+    return args;
+  }
+  const args: Record<string, unknown> = { url: config.url, transport: config.transport };
+  if (config.headers) args.headers = config.headers;
+  if (config.timeout !== undefined) args.timeout = config.timeout;
+  return args;
+}
+
+/** Convert a sanitized McpConfig into a standard mcpServers entry value ({ command, args, ... } | { url, ... }). */
+export function buildMcpServersEntry(config: McpConfig): Record<string, unknown> {
+  if (config.transport === 'stdio') {
+    const entry: Record<string, unknown> = { command: config.command };
+    if (config.args?.length) entry.args = config.args;
+    if (config.env) entry.env = config.env;
+    if (config.cwd) entry.cwd = config.cwd;
+    return entry;
+  }
+  const entry: Record<string, unknown> = { url: config.url };
+  if (config.transport === 'sse') entry.type = 'sse';
+  if (config.headers) entry.headers = config.headers;
+  return entry;
+}
+
+/**
+ * Build a shareable, desensitized view of an app's configuration.
+ * Secrets stored in plaintext are masked as ${VAR_NAME}; required env vars are listed.
+ */
+export function exportAppConfig(
+  descriptor: AaiJson,
+  format: AppConfigExportFormat = 'all'
+): AppConfigExport {
+  const name = descriptor.app.name.default;
+  const summary = descriptor.exposure.summary;
+  const access = descriptor.access;
+
+  if (access.protocol === 'skill') {
+    const config = access.config;
+    if (!isSkillPathConfig(config)) {
+      throw new AaiError('INVALID_REQUEST', 'getAppConfig does not support URL-based skills.');
+    }
+    const requiredEnvVars = extractConfigEnvVars(config as unknown as Record<string, unknown>);
+    return {
+      protocol: 'skill',
+      name,
+      summary,
+      config,
+      requiredEnvVars,
+      install: {},
+      skill: {
+        path: config.path,
+        note: 'Skills are local directories. To share, package this directory and have the recipient import it via skill:import pointing at their local copy.',
+      },
+    };
+  }
+
+  if (access.protocol !== 'mcp') {
+    throw new AaiError(
+      'INVALID_REQUEST',
+      `getAppConfig does not support '${access.protocol}' apps.`
+    );
+  }
+  const config = sanitizeMcpConfig(access.config);
+  const requiredEnvVars = extractConfigEnvVars(config as unknown as Record<string, unknown>);
+
+  const install: AppConfigExport['install'] = {};
+  if (format === 'aai' || format === 'all') {
+    install.aai = {
+      tool: 'aai:exec',
+      args: {
+        tool: 'mcp:import',
+        args: {
+          ...mcpConfigToAaiImportArgs(config),
+          name,
+          summary,
+        },
+      },
+    };
+  }
+  if (format === 'mcp-json' || format === 'all') {
+    install.mcpJson = {
+      mcpServers: {
+        [name]: buildMcpServersEntry(config),
+      },
+    };
+  }
+
+  return { protocol: 'mcp', name, summary, config, requiredEnvVars, install };
+}
+
+export function isSensitiveKey(key: string): boolean {
   const normalized = key.toLowerCase();
-  return (
+  if (
     normalized === 'authorization' ||
+    normalized === 'api_key' ||
+    normalized === 'apikey' ||
+    normalized === 'token' ||
+    normalized === 'secret' ||
+    normalized === 'password'
+  ) {
+    return true;
+  }
+  return (
     normalized.includes('api-key') ||
     normalized.includes('apikey') ||
-    normalized.endsWith('_api_key') ||
+    normalized.includes('api_key') ||
     normalized.endsWith('_token') ||
     normalized.endsWith('_secret') ||
-    normalized.endsWith('_password')
+    normalized.endsWith('_password') ||
+    normalized.endsWith('-token') ||
+    normalized.endsWith('-secret') ||
+    normalized.endsWith('-password')
   );
 }
 
@@ -405,7 +580,7 @@ async function deriveImportName(
   return config.transport === 'stdio' ? basename(config.command) : new URL(config.url).hostname;
 }
 
-function buildImportedMcpDescriptor(name: string, config: McpConfig, exposure: SummaryDraft): AaiJson {
+export function buildImportedMcpDescriptor(name: string, config: McpConfig, exposure: SummaryDraft): AaiJson {
   return {
     schemaVersion: '2.0',
     version: '1.0.0',
@@ -518,7 +693,7 @@ function simplifyImportedName(value: string): string {
   return slug || 'mcp';
 }
 
-function normalizeImportedAppName(name: string | undefined): string | undefined {
+export function normalizeImportedAppName(name: string | undefined): string | undefined {
   validateOptionalStringLength(name, 'name', IMPORT_LIMITS.nameLength);
   const normalized = name?.trim();
   return normalized && normalized.length > 0 ? normalized : undefined;

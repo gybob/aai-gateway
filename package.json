@@ -1,6 +1,6 @@
 {
   "name": "aai-gateway",
-  "version": "1.1.11-beta.1",
+  "version": "1.1.12",
   "mcpName": "io.github.gybob/aai-gateway",
   "type": "module",
   "main": "dist/index.js",
@@ -17,8 +17,8 @@
     "build": "tsc && vite build && npm run fix-perms",
     "fix-perms": "node -e \"if(process.platform!='win32')require('child_process').execSync('chmod +x dist/cli.js')\"",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src --ext .ts",
-    "lint:fix": "eslint src --ext .ts --fix",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix",
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
     "test": "vitest run --passWithNoTests",

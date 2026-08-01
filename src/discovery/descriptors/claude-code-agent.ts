@@ -22,7 +22,7 @@ export const descriptor: AaiJson = {
     protocol: 'acp-agent',
     config: {
       command: 'npx',
-      args: ['-y', '@zed-industries/claude-agent-acp'],
+      args: ['-y', '@agentclientprotocol/claude-agent-acp'],
     },
   },
   exposure: {
