@@ -107,7 +107,7 @@ export class McpRegistry {
           entry,
           descriptor: parseAaiJson(JSON.parse(raw)),
         });
-      } catch (err) {
+      } catch {
         // Skip entries with missing or invalid descriptors
       }
     }

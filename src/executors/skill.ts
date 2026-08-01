@@ -3,13 +3,13 @@ import { join } from 'node:path';
 
 import { AaiError } from '../errors/errors.js';
 import { isSkillPathConfig } from '../types/aai-json.js';
+import type { AppCapabilities } from '../types/capabilities.js';
 import type {
   DetailedCapability,
   SkillConfig,
   SkillExecutorConfig,
   ExecutionResult,
 } from '../types/index.js';
-import type { AppCapabilities } from '../types/capabilities.js';
 
 import type { Executor } from './interface.js';
 

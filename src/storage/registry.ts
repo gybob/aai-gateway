@@ -47,7 +47,7 @@ export class FileRegistry<T extends RegistryItem> implements Registry<T> {
           }
         }
       }
-    } catch (err) {
+    } catch {
       // File doesn't exist or is invalid, start fresh
       this.items = [];
     }

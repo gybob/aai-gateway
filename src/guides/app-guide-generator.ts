@@ -1,11 +1,11 @@
 import type { AaiJson } from '../types/aai-json.js';
-import type { AppCapabilities, ToolSchema } from '../types/capabilities.js';
 import {
   getLocalizedName,
   isSkillAccess,
   isSkillPathConfig,
   type InternationalizedName,
 } from '../types/aai-json.js';
+import type { AppCapabilities, ToolSchema } from '../types/capabilities.js';
 import { getSystemLocale } from '../utils/locale.js';
 
 // ============================================================================

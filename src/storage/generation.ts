@@ -6,12 +6,13 @@
  * Other processes watch this file and reload when it changes.
  */
 
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { watch, type FSWatcher } from 'node:fs';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 
-import { getManagedAppsRoot } from './paths.js';
 import { logger } from '../utils/logger.js';
+
+import { getManagedAppsRoot } from './paths.js';
 
 function getGenerationFilePath(): string {
   return join(getManagedAppsRoot(), '.generation');

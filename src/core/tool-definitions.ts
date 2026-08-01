@@ -5,12 +5,13 @@
  * Separated from protocol handling for clarity.
  */
 
+import { getDotenvPath } from '../utils/dotenv.js';
+
 import { EXPOSURE_LIMITS, IMPORT_LIMITS } from './importer.js';
 import {
   SEARCH_DISCOVER_TOOL_NAME,
   searchDiscoverInputSchema,
 } from './search-guidance.js';
-import { getDotenvPath } from '../utils/dotenv.js';
 
 export interface GatewayToolDefinition {
   name: string;
@@ -208,6 +209,88 @@ export function buildGatewayToolDefinitions(): GatewayToolDefinition[] {
       },
     },
     {
+      name: 'getAppConfig',
+      description:
+        'Get the full configuration of an imported app plus ready-to-share install snippets. Use this when: (1) the user wants to inspect or check an app\'s config, or (2) the user wants to share an app\'s install instructions with someone else (e.g. via chat or email). Secrets are masked as ${VAR_NAME} and required env vars are listed. Works for both MCP and skill apps. If you do not know the app id, call listAllAaiApps first.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          app: {
+            type: 'string',
+            description: 'Required. The app id. Use listAllAaiApps to look up available app ids.',
+          },
+          format: {
+            type: 'string',
+            enum: ['aai', 'mcp-json', 'all'],
+            description:
+              'Optional. Install snippet format. "aai" = aai-gateway mcp:import args (recipient also uses aai-gateway), "mcp-json" = standard mcpServers JSON (Claude .mcp.json / Cursor), "all" = both. Defaults to "all". MCP only; skills have no install snippet.',
+          },
+        },
+        required: ['app'],
+      },
+    },
+    {
+      name: 'updateAppConfig',
+      description:
+        'Update an imported MCP server\'s configuration. Only provided fields are applied; all others are preserved — so the user can change a single parameter (e.g. add an arg, set a timeout) without re-entering the whole config. Use this instead of remove + re-import when modifying an existing MCP. Only MCP apps are supported (not skills). Env and headers, when provided, replace the existing values. After updating, call the app to verify it still works. If you do not know the app id, call listAllAaiApps first.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          app: {
+            type: 'string',
+            description: 'Required. The MCP app id to update. Use listAllAaiApps to look it up.',
+          },
+          command: {
+            type: 'string',
+            description: 'stdio MCP only. New executable, e.g. "npx", "uvx".',
+          },
+          args: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'stdio MCP only. New command arguments. Replaces the existing args.',
+          },
+          env: {
+            type: 'object',
+            additionalProperties: { type: 'string' },
+            description:
+              'stdio MCP only. New environment variables. Replaces the existing env. Use ${VAR_NAME} placeholders for secrets (stored in the AAI env file), never paste raw keys.',
+          },
+          cwd: {
+            type: 'string',
+            description: 'stdio MCP only. New working directory.',
+          },
+          timeout: {
+            type: 'integer',
+            description: 'Tool execution timeout in milliseconds.',
+          },
+          url: {
+            type: 'string',
+            description: 'remote MCP only. New endpoint URL.',
+          },
+          headers: {
+            type: 'object',
+            additionalProperties: { type: 'string' },
+            description:
+              'remote MCP only. New HTTP headers. Replaces the existing headers. Use ${VAR_NAME} placeholders for secrets.',
+          },
+          transport: {
+            type: 'string',
+            enum: ['streamable-http', 'sse'],
+            description: 'remote MCP only. New transport.',
+          },
+          name: {
+            type: 'string',
+            description: 'Optional. New display name.',
+          },
+          summary: {
+            type: 'string',
+            description: 'Optional. New short English summary of when to use this MCP.',
+          },
+        },
+        required: ['app'],
+      },
+    },
+    {
       name: SEARCH_DISCOVER_TOOL_NAME,
       description:
         'Find and install new tools. Call this when: 1. The user explicitly asks to search for or install tools. 2. The user\'s request cannot be fulfilled by any currently available tool — proactively suggest and search for a suitable tool. Before searching, check listAllAaiApps first — the user may already have the app imported (possibly disabled).',
@@ -237,7 +320,9 @@ export function isGatewayExecutionTool(toolName: string): boolean {
     toolName === 'listAllAaiApps' ||
     toolName === 'disableApp' ||
     toolName === 'enableApp' ||
-    toolName === 'removeApp'
+    toolName === 'removeApp' ||
+    toolName === 'getAppConfig' ||
+    toolName === 'updateAppConfig'
   );
 }
 
@@ -317,9 +402,11 @@ function generateSkillImportGuide(tool: GatewayToolDefinition): string {
     '## How to Import a Global Skill',
     '',
     'The `aai:exec` tool accepts three parameters: `app`, `tool`, and `args`.',
-    'Leave `app` empty, set `tool` to `"skill:import"`, and pass the skill directory path in `args`.',
+    'For this import, leave `app` empty, set `tool` to `"skill:import"`, and pass the skill directory path in `args`.',
     '',
     '**Before importing**, ask the user whether this skill should be enabled for the current agent only or for all agents.',
+    '',
+    '## Examples',
     '',
     '```json',
     JSON.stringify(example, null, 2),

@@ -40,7 +40,7 @@ export function validateArgs(
 
   // Validate provided fields
   for (const [key, value] of Object.entries(args)) {
-    if (!properties || !properties[key]) {
+    if (!properties?.[key]) {
       // Unknown field - skip for now (allow additionalProperties)
       continue;
     }

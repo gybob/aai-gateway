@@ -5,15 +5,15 @@
  * and inactivity timeout management.
  */
 
-import type { AaiJson } from '../types/aai-json.js';
-import { logger } from '../utils/logger.js';
 import { getAcpExecutor } from '../executors/acp.js';
+import type { ExecutionObserver } from '../executors/events.js';
+import type { Executor } from '../executors/interface.js';
 import { getMcpExecutor } from '../executors/mcp.js';
 import { legacyExecuteSkill as executeSkill } from '../executors/skill.js';
 import { getSkillExecutor } from '../executors/skill.js';
-import type { Executor } from '../executors/interface.js';
-import type { ExecutionObserver } from '../executors/events.js';
+import type { AaiJson } from '../types/aai-json.js';
 import { isAcpAgentAccess, isMcpAccess, isSkillAccess } from '../types/aai-json.js';
+import { logger } from '../utils/logger.js';
 
 const DOWNSTREAM_INACTIVITY_TIMEOUT_MS = 10 * 60_000;
 

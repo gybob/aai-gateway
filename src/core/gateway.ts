@@ -6,35 +6,49 @@
  * Protocol-agnostic — does not depend on MCP types.
  */
 
-import type { RuntimeAppRecord } from '../types/aai-json.js';
-import { logger } from '../utils/logger.js';
 import { AaiError } from '../errors/errors.js';
 import { getMcpExecutor } from '../executors/mcp.js';
-import { loadManagedDescriptors } from '../storage/managed-registry.js';
 import {
   disableAppForAgent,
   enableAppForAgent,
   loadAppPolicyState,
   upsertAgentState,
 } from '../storage/agent-state.js';
+import { deriveCallerId } from '../storage/agent-state.js';
+import { bumpGeneration, readGeneration, watchGeneration } from '../storage/generation.js';
+import { loadManagedDescriptors } from '../storage/managed-registry.js';
+import type { RuntimeAppRecord } from '../types/aai-json.js';
+import type { CallerContext } from '../types/caller.js';
 import { getDotenvPath } from '../utils/dotenv.js';
-import { discoverMcpImport, EXPOSURE_LIMITS } from './importer.js';
-import {
-  SEARCH_DISCOVER_TOOL_NAME,
-  buildSearchDiscoverResponse,
-  parseSearchDiscoverArguments,
-} from './search-guidance.js';
+import { logger } from '../utils/logger.js';
+
+import { AppRegistry } from './app-registry.js';
+import { AcpPrewarmBackgroundTask } from './background/acp-prewarm-task.js';
+import { BackgroundTaskManager } from './background/task-manager.js';
+import { TurnCleanupTask } from './background/turn-cleanup.js';
+import { ExecutionCoordinator } from './execution-coordinator.js';
+import { GuideService } from './guide-service.js';
+import { ImportService } from './import-service.js';
+import { discoverMcpImport, EXPOSURE_LIMITS, exportAppConfig } from './importer.js';
+import type { AppConfigExportFormat } from './importer.js';
 import type { ParsedMcpImportArgs, ParsedSkillImportArgs } from './parsers.js';
 import {
   parseMcpImportArguments,
   parseSkillImportArguments,
+  parseMcpAppPatch,
   summarizeMcpImportRequest,
   summarizeSkillImportRequest,
   summarizeRawImportArgs,
   summarizeExecArgs,
   summarizeExecResult,
+  summarizeMcpConfig,
 } from './parsers.js';
-import type { CallerContext } from '../types/caller.js';
+import {
+  SEARCH_DISCOVER_TOOL_NAME,
+  buildSearchDiscoverResponse,
+  parseSearchDiscoverArguments,
+} from './search-guidance.js';
+import { seedPrebuiltDescriptors } from './seed.js';
 import {
   buildGatewayToolDefinitions,
   getGatewayToolDefinition,
@@ -42,16 +56,7 @@ import {
   isGatewayExecutionTool,
   type GatewayToolDefinition,
 } from './tool-definitions.js';
-import { AppRegistry } from './app-registry.js';
-import { ExecutionCoordinator } from './execution-coordinator.js';
-import { GuideService } from './guide-service.js';
-import { ImportService } from './import-service.js';
-import { seedPrebuiltDescriptors } from './seed.js';
-import { BackgroundTaskManager } from './background/task-manager.js';
-import { AcpPrewarmBackgroundTask } from './background/acp-prewarm-task.js';
-import { TurnCleanupTask } from './background/turn-cleanup.js';
-import { deriveCallerId } from '../storage/agent-state.js';
-import { bumpGeneration, readGeneration, watchGeneration } from '../storage/generation.js';
+
 
 // ============================================================
 // Result types (protocol-agnostic)
@@ -274,7 +279,7 @@ export class Gateway {
             '',
             'Next step:',
             '1. Summarize when this MCP should be used.',
-            `2. Confirm a summary (in English, max ${EXPOSURE_LIMITS.summaryLength} chars) with the user. Communicate in the user\'s preferred language, but the actual summary value must be English.`,
+            `2. Confirm a summary (in English, max ${EXPOSURE_LIMITS.summaryLength} chars) with the user. Communicate in the user's preferred language, but the actual summary value must be English.`,
             '3. Ask the user whether this imported MCP should be enabled only for the current agent or for all agents.',
             '4. Call `mcp:import` again with the same source config plus `summary` and `enableScope`.',
           ].join('\n'),
@@ -520,6 +525,68 @@ export class Gateway {
   }
 
   // ============================================================
+  // Get / Update config
+  // ============================================================
+
+  async handleGetAppConfig(
+    args: Record<string, unknown> | undefined
+  ): Promise<GatewayTextResult> {
+    const appId = typeof args?.app === 'string' ? args.app.trim() : '';
+    if (!appId) {
+      throw new AaiError('INVALID_REQUEST', "getAppConfig requires 'app'");
+    }
+
+    const rawFormat = args?.format;
+    const format: AppConfigExportFormat =
+      rawFormat === 'aai' || rawFormat === 'mcp-json' || rawFormat === 'all'
+        ? rawFormat
+        : 'all';
+
+    const record = await this.resolveManageableApp(appId);
+    const payload = { app: appId, ...exportAppConfig(record.descriptor, format) };
+    return { text: JSON.stringify(payload, null, 2), structuredContent: payload };
+  }
+
+  async handleUpdateAppConfig(
+    args: Record<string, unknown> | undefined
+  ): Promise<GatewayTextResult> {
+    const appId = typeof args?.app === 'string' ? args.app.trim() : '';
+    if (!appId) {
+      throw new AaiError('INVALID_REQUEST', "updateAppConfig requires 'app'");
+    }
+
+    const record = await this.resolveManageableApp(appId);
+    if (record.descriptor.access.protocol !== 'mcp') {
+      throw new AaiError(
+        'INVALID_REQUEST',
+        `updateAppConfig only supports MCP apps. '${appId}' is a '${record.descriptor.access.protocol}' app.`
+      );
+    }
+
+    const patch = parseMcpAppPatch(args);
+    try {
+      const result = await this.importService.updateMcpApp(appId, patch, record);
+
+      const payload = {
+        app: appId,
+        updated: {
+          name: result.descriptor.app.name.default,
+          summary: result.descriptor.exposure.summary,
+          config: summarizeMcpConfig(result.config),
+        },
+        warnings: result.warnings,
+        note: 'Change applied for all agents. Other gateway processes will reload automatically.',
+      };
+      return { text: JSON.stringify(payload, null, 2), structuredContent: payload };
+    } catch (err) {
+      if (isMissingEnvVarsError(err)) {
+        return buildMissingEnvVarsResult(err);
+      }
+      throw err;
+    }
+  }
+
+  // ============================================================
   // Cross-process app registry sync
   // ============================================================
 
@@ -576,6 +643,12 @@ export class Gateway {
     }
     if (toolName === 'removeApp') {
       return this.handleRemoveApp(args, caller);
+    }
+    if (toolName === 'getAppConfig') {
+      return this.handleGetAppConfig(args);
+    }
+    if (toolName === 'updateAppConfig') {
+      return this.handleUpdateAppConfig(args);
     }
     if (toolName === 'mcp:import') {
       return this.handleMcpImport(parseMcpImportArguments(args), args, caller);
@@ -747,7 +820,7 @@ function buildMissingEnvVarsResult(err: unknown): GatewayTextResult {
     '',
     ...varList.map(
       (v) =>
-        `- \`${v}\`: search the web for where to obtain this key (e.g. the provider\'s developer portal or API dashboard).`
+        `- \`${v}\`: search the web for where to obtain this key (e.g. the provider's developer portal or API dashboard).`
     ),
     '',
     '### Step 2 — Save to the AAI env file',

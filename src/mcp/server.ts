@@ -13,15 +13,15 @@ import {
   type CallToolResult,
 } from '@modelcontextprotocol/sdk/types.js';
 
+import { Gateway, type GatewayTextResult } from '../core/gateway.js';
+import { normalizeArgumentsWithSchema } from '../core/parsers.js';
 import { AaiError } from '../errors/errors.js';
 import type { CallerContext } from '../types/caller.js';
 import { logger } from '../utils/logger.js';
 import { AAI_GATEWAY_NAME, AAI_GATEWAY_VERSION } from '../version.js';
-import { Gateway, type GatewayTextResult } from '../core/gateway.js';
-import { normalizeArgumentsWithSchema } from '../core/parsers.js';
 
 const TOOLS_CHANGING_OPERATIONS = new Set([
-  'mcp:import', 'skill:import', 'disableApp', 'enableApp', 'removeApp',
+  'mcp:import', 'skill:import', 'disableApp', 'enableApp', 'removeApp', 'updateAppConfig',
 ]);
 
 export class AaiGatewayServer {
@@ -124,9 +124,11 @@ export class AaiGatewayServer {
         name === 'listAllAaiApps' ||
         name === 'disableApp' ||
         name === 'enableApp' ||
-        name === 'removeApp'
+        name === 'removeApp' ||
+        name === 'getAppConfig' ||
+        name === 'updateAppConfig'
       ) {
-        const toolArgs = (args as Record<string, unknown> | undefined) ?? {};
+        const toolArgs = (args) ?? {};
         let result: GatewayTextResult;
 
         switch (name) {
@@ -148,6 +150,14 @@ export class AaiGatewayServer {
             break;
           case 'removeApp':
             result = await this.gateway.handleRemoveApp(toolArgs, caller);
+            await this.gateway.bumpGeneration();
+            await this.notifyToolsListChanged();
+            break;
+          case 'getAppConfig':
+            result = await this.gateway.handleGetAppConfig(toolArgs);
+            break;
+          case 'updateAppConfig':
+            result = await this.gateway.handleUpdateAppConfig(toolArgs);
             await this.gateway.bumpGeneration();
             await this.notifyToolsListChanged();
             break;

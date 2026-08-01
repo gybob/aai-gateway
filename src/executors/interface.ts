@@ -1,5 +1,5 @@
-import type { ExecutionResult } from '../types/index.js';
 import type { AppCapabilities } from '../types/capabilities.js';
+import type { ExecutionResult } from '../types/index.js';
 
 /**
  * Unified Executor Interface

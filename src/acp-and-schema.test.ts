@@ -3,16 +3,15 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { Gateway } from './core/gateway.js';
+import { importMcpServer } from './core/importer.js';
+import { buildGatewayToolDefinitions } from './core/tool-definitions.js';
+import { appId, descriptor } from './discovery/descriptors/codex-agent.js';
+import { AcpExecutor } from './executors/acp.js';
 import {
   generateAppGuideMarkdown,
   generateGuideToolSummary,
 } from './guides/app-guide-generator.js';
-import { AcpExecutor } from './executors/acp.js';
-import { appId, descriptor } from './discovery/descriptors/codex-agent.js';
-import { AaiGatewayServer } from './mcp/server.js';
-import { buildGatewayToolDefinitions } from './core/tool-definitions.js';
-import { Gateway } from './core/gateway.js';
-import { importMcpServer } from './core/importer.js';
 
 describe('ACP guide metadata', () => {
   it('renders ACP app guides with exec instructions and examples but without schemas', async () => {
@@ -129,12 +128,12 @@ describe('Gateway guide formatting', () => {
     const guide = result.text;
 
     expect(guide).toContain(
-      'To perform the actual operation, you must call the `aai:exec` tool (another tool in this same MCP server).'
+      'To perform the actual import, you must call the `aai:exec` tool (another tool in this same MCP server).'
     );
     expect(guide).toContain(
       'The `aai:exec` tool accepts three parameters: `app`, `tool`, and `args`.'
     );
-    expect(guide).toContain('leave `app` empty, set `tool` to "skill:import"');
+    expect(guide).toContain('leave `app` empty, set `tool` to `"skill:import"`');
     expect(guide).toContain('## Examples');
     expect(guide).toContain('"tool": "aai:exec"');
     expect(guide).not.toContain('## Schema');
@@ -734,10 +733,10 @@ describe('Gateway progressive disclosure schemas', () => {
       'Execute any AAI tool action. Read the guide first (call app:*, mcp:import, skill:import, or search:discover) — it contains the required schema and parameters.'
     );
     expect(byName.get('mcp:import')?.description).toBe(
-      'Import an MCP server as a new app. Call this first to get the import guide, then use aai:exec to perform the import. Never ask the user for API keys or secrets in chat.'
+      'Import an MCP server as a GLOBAL app (visible to all projects). For project-level MCP, use your agent\'s native config instead (e.g. .mcp.json, .cursor/mcp.json). Call this first to get the import guide. Never ask the user for API keys or secrets in chat.'
     );
     expect(byName.get('skill:import')?.description).toBe(
-      'Import a local skill as a new app. Call this first to get the import guide, then use aai:exec to perform the import.'
+      'Import a local skill as a GLOBAL app (visible to all projects). For project-level skills, use your agent\'s native skill directory instead (e.g. .claude/skills/). Call this first to get the import guide.'
     );
     expect(byName.get('search:discover')?.description).toBe(
       "Find and install new tools. Call this when: 1. The user explicitly asks to search for or install tools. 2. The user's request cannot be fulfilled by any currently available tool — proactively suggest and search for a suitable tool. Before searching, check listAllAaiApps first — the user may already have the app imported (possibly disabled)."
