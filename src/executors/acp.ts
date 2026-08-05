@@ -339,6 +339,7 @@ export class AcpExecutor implements TaskCapableExecutor {
       stdio: ['pipe', 'pipe', 'pipe'],
       cwd: config.cwd,
       env: { ...process.env, ...config.env },
+      shell: process.platform === 'win32',
     });
 
     const nextState: ProcessState = {
